@@ -1,0 +1,10 @@
+python-binance>=1.0.19
+pandas>=2.0.0
+numpy>=1.24.0
+torch>=2.0.0
+opencv-python>=4.8.0
+mplfinance>=0.12.10b0
+matplotlib>=3.7.0
+python-telegram-bot>=20.0
+python-dotenv>=1.0.0
+aiogram>=3.0.0

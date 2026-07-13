@@ -1,0 +1,17 @@
+# Environment variables
+.env
+
+# Python caching
+__pycache__/
+*.pyc
+
+# Data files / Logs
+*.csv
+real_history_log.csv
+virtual_success_log.csv
+data/
+
+# IDE/System files
+.vscode/
+.idea/
+.DS_Store
