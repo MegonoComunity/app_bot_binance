@@ -23,7 +23,7 @@ import os
 
 # Global state for bot
 bot_state = {
-    "is_running": True
+    "is_running": False
 }
 
 def get_main_keyboard():
@@ -189,6 +189,23 @@ async def btn_pengaturan_handler(message: types.Message):
         "`/set_leverage <angka>`"
     )
     await message.answer(text, parse_mode="Markdown")
+
+@dp.message(Command("pause"))
+@dp.message(Command("stop"))
+async def cmd_pause_handler(message: types.Message):
+    if bot_state["is_running"]:
+        bot_state["is_running"] = False
+        await message.answer("🛑 Bot Scanner dihentikan sementara.")
+    else:
+        await message.answer("⚠️ Bot sudah dalam keadaan berhenti. Gunakan /resume untuk menjalankan.")
+
+@dp.message(Command("resume"))
+async def cmd_resume_handler(message: types.Message):
+    if not bot_state["is_running"]:
+        bot_state["is_running"] = True
+        await message.answer("▶️ Bot Scanner dijalankan kembali.")
+    else:
+        await message.answer("⚠️ Bot sudah berjalan.")
 
 @dp.message(F.text == "⏯️ Pause / Resume")
 async def btn_pause_resume_handler(message: types.Message):

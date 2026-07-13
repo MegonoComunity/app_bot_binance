@@ -83,8 +83,20 @@ async def scanner_loop():
     bot_state["client"] = client
     bot_state["active_trade_reasons"] = {}
     
-    print(f"Bot Started in {TRADING_MODE} Mode. Timeframe: {TIMEFRAME}")
+    print(f"Bot Started in {TRADING_MODE} Mode. Timeframe: {TIMEFRAME}. Status: PAUSED.")
     
+    # Kirim Notifikasi Awal ke Telegram Admin
+    try:
+        startup_msg = (
+            "✅ **Sistem Bot Telah Dinyalakan (Host Started)!**\n\n"
+            "Status saat ini: 🛑 **PAUSED (BERHENTI)**.\n"
+            "Bot tidak akan melakukan *scan* koin hingga Anda memerintahkannya.\n\n"
+            "Ketik `/resume` atau tekan tombol **⏯️ Pause / Resume** untuk memulai bot."
+        )
+        await bot.send_message(TELEGRAM_ADMIN_CHAT_ID, startup_msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Gagal mengirim pesan startup: {e}")
+        
     try:
         while True:
             if not bot_state["is_running"]:
