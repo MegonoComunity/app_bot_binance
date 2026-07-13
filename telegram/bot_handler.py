@@ -105,14 +105,14 @@ async def status_handler(message: types.Message):
             f"💰 Saldo Total: `{total_margin:.2f} USDT`\n"
             f"📈 Unr. PNL  : `{unrealized_pnl:+.2f} USDT`\n"
             f"──────────────\n"
-            f"**🟢 POSISI LONG ({len(longs)}/4)**\n"
+            f"**🟢 POSISI LONG ({len(longs)}/{bot_config.max_open_positions})**\n"
         )
         if longs:
             text += "".join(longs)
         else:
             text += "   _Tidak ada posisi_\n"
             
-        text += f"\n**🔴 POSISI SHORT ({len(shorts)}/4)**\n"
+        text += f"\n**🔴 POSISI SHORT ({len(shorts)}/{bot_config.max_open_positions})**\n"
         if shorts:
             text += "".join(shorts)
         else:
@@ -172,21 +172,86 @@ async def set_leverage_handler(message: types.Message, command: CommandObject):
     else:
         await message.answer(f"ℹ️ Leverage saat ini: {bot_config.leverage}x (Gunakan /set_leverage <angka> untuk mengubah)")
 
+@dp.message(Command("set_max_positions"))
+async def set_max_positions_handler(message: types.Message, command: CommandObject):
+    if command.args:
+        try:
+            val = int(command.args)
+            if val < 1:
+                await message.answer("❌ Maksimal posisi harus lebih besar dari 0")
+                return
+            bot_config.update_max_positions(val)
+            await message.answer(f"✅ Maksimal open posisi berhasil diubah menjadi {val}")
+        except ValueError:
+            await message.answer("❌ Format salah. Contoh: /set_max_positions 5")
+    else:
+        await message.answer(f"ℹ️ Maksimal posisi saat ini: {bot_config.max_open_positions} (Gunakan /set_max_positions <angka> untuk mengubah)")
+
+@dp.message(Command("set_ts_use"))
+async def set_ts_use_handler(message: types.Message, command: CommandObject):
+    if command.args:
+        val_str = command.args.lower()
+        if val_str in ['true', '1', 'on']:
+            bot_config.update_use_trailing_stop(True)
+            await message.answer("✅ Trailing Stop diaktifkan (ON)")
+        elif val_str in ['false', '0', 'off']:
+            bot_config.update_use_trailing_stop(False)
+            await message.answer("✅ Trailing Stop dinonaktifkan (OFF)")
+        else:
+            await message.answer("❌ Format salah. Contoh: /set_ts_use True atau /set_ts_use False")
+    else:
+        status = "ON" if bot_config.use_trailing_stop else "OFF"
+        await message.answer(f"ℹ️ Trailing Stop saat ini: {status} (Gunakan /set_ts_use <True/False> untuk mengubah)")
+
+@dp.message(Command("set_ts_activation"))
+async def set_ts_activation_handler(message: types.Message, command: CommandObject):
+    if command.args:
+        try:
+            val = float(command.args)
+            bot_config.update_ts_activation(val)
+            await message.answer(f"✅ TS Activation berhasil diubah menjadi {val}%")
+        except ValueError:
+            await message.answer("❌ Format salah. Contoh: /set_ts_activation 15.0")
+    else:
+        await message.answer(f"ℹ️ TS Activation saat ini: {bot_config.ts_activation_percent}% (Gunakan /set_ts_activation <angka> untuk mengubah)")
+
+@dp.message(Command("set_ts_callback"))
+async def set_ts_callback_handler(message: types.Message, command: CommandObject):
+    if command.args:
+        try:
+            val = float(command.args)
+            bot_config.update_ts_callback_rate(val)
+            await message.answer(f"✅ TS Callback Rate berhasil diubah menjadi {val}%")
+        except ValueError:
+            await message.answer("❌ Format salah. Contoh: /set_ts_callback 1.0")
+    else:
+        await message.answer(f"ℹ️ TS Callback saat ini: {bot_config.ts_callback_rate}% (Gunakan /set_ts_callback <angka> untuk mengubah)")
+
 @dp.message(F.text == "📊 Status Bot")
 async def btn_status_handler(message: types.Message):
     await status_handler(message)
 
 @dp.message(F.text == "⚙️ Pengaturan")
 async def btn_pengaturan_handler(message: types.Message):
+    ts_status = "ON" if bot_config.use_trailing_stop else "OFF"
     text = (
         "⚙️ **PENGATURAN SAAT INI** ⚙️\n\n"
         f"🎯 Take Profit : {bot_config.tp_percent}%\n"
         f"🛑 Stop Loss   : {bot_config.sl_percent}%\n"
-        f"⚡ Leverage    : {bot_config.leverage}x\n\n"
+        f"⚡ Leverage    : {bot_config.leverage}x\n"
+        f"📊 Max Posisi  : {bot_config.max_open_positions}\n"
+        f"──────────────\n"
+        f"🚀 **Trailing Stop**: {ts_status}\n"
+        f"📈 TS Activation : {bot_config.ts_activation_percent}%\n"
+        f"📉 TS Callback   : {bot_config.ts_callback_rate}%\n\n"
         "Gunakan perintah berikut untuk mengubah:\n"
         "`/set_tp <angka>`\n"
         "`/set_sl <angka>`\n"
-        "`/set_leverage <angka>`"
+        "`/set_leverage <angka>`\n"
+        "`/set_max_positions <angka>`\n"
+        "`/set_ts_use <True/False>`\n"
+        "`/set_ts_activation <angka>`\n"
+        "`/set_ts_callback <angka>`"
     )
     await message.answer(text, parse_mode="Markdown")
 
@@ -270,6 +335,20 @@ async def btn_histori_sl_handler(message: types.Message):
 async def btn_upload_dataset_handler(message: types.Message, state: FSMContext):
     await add_data_start(message, state)
 
+import asyncio
+from ml_vision.train import train_model
+
+@dp.message(Command("train_model"))
+async def train_model_handler(message: types.Message):
+    await message.answer("🔄 Memulai proses belajar... Ini mungkin memakan waktu beberapa menit. Bot (scanner utama) mungkin sedikit lambat selama proses ini berlangsung.")
+    loop = asyncio.get_event_loop()
+    try:
+        # Run training in background so we don't block the telegram bot updates
+        result = await loop.run_in_executor(None, train_model)
+        await message.answer(result)
+    except Exception as e:
+        await message.answer(f"❌ Terjadi kesalahan saat training: {e}")
+
 @dp.message(Command("help"))
 @dp.message(F.text == "📞 Bantuan")
 async def btn_bantuan_handler(message: types.Message):
@@ -281,9 +360,14 @@ async def btn_bantuan_handler(message: types.Message):
         "🔹 `/stop` atau `/pause` - Menghentikan bot\n"
         "🔹 `/resume` - Menjalankan bot kembali\n"
         "🔹 `/add_data` - Upload gambar untuk ML\n"
+        "🔹 `/train_model` - Melatih otak ML Vision\n"
         "🔹 `/set_tp` - Mengatur persentase TP\n"
         "🔹 `/set_sl` - Mengatur persentase SL\n"
         "🔹 `/set_leverage` - Mengatur leverage\n"
+        "🔹 `/set_max_positions` - Mengatur batas maksimal open posisi\n"
+        "🔹 `/set_ts_use` - Menyalakan/Mematikan Trailing Stop\n"
+        "🔹 `/set_ts_activation` - Mengatur aktivasi Trailing Stop\n"
+        "🔹 `/set_ts_callback` - Mengatur callback Trailing Stop\n"
         "🔹 `/download_summary` - Mengunduh rekaman sukses paper trading\n"
         "🔹 `/getidgroup` - Mengecek ID Grup (untuk setting error log)\n"
     )
@@ -363,3 +447,58 @@ async def process_label(message: types.Message, state: FSMContext):
     
     await message.answer(f"✅ Gambar berhasil disimpan ke folder dataset/{label}", reply_markup=types.ReplyKeyboardRemove())
     await state.clear()
+
+import cv2
+import numpy as np
+from ml_vision.model import get_model
+from ml_vision.preprocessor import preprocess_chart_image
+from ml_vision.inference import predict_candle_pattern
+from io import BytesIO
+
+# Variabel global untuk model inferensi agar tidak diload berulang-ulang
+handler_ml_model = None
+
+@dp.message(F.photo)
+async def predict_photo_handler(message: types.Message):
+    global handler_ml_model
+    
+    # Ambil resolusi terbesar
+    photo = message.photo[-1]
+    file_id = photo.file_id
+    file = await bot.get_file(file_id)
+    
+    wait_msg = await message.answer("🔍 Menganalisis gambar chart...")
+    
+    try:
+        # Download file ke memori
+        image_stream = BytesIO()
+        await bot.download_file(file.file_path, image_stream)
+        
+        # Convert image stream ke opencv
+        file_bytes = np.asarray(bytearray(image_stream.read()), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        
+        if img is None:
+            await wait_msg.edit_text("❌ Gagal membaca gambar.")
+            return
+            
+        # Proses gambar
+        processed_img = preprocess_chart_image(img)
+        
+        # Load model jika belum ada (lazy loading)
+        if handler_ml_model is None:
+            handler_ml_model = get_model("ml_vision/candle_model.pth")
+            
+        # Prediksi
+        label, confidence = predict_candle_pattern(processed_img, handler_ml_model)
+        
+        text = (
+            f"🧠 **Hasil Analisis ML Vision**\n\n"
+            f"📊 Prediksi Pola: **{label}**\n"
+            f"📈 Akurasi / Confidence: `{confidence*100:.2f}%`\n\n"
+            f"_(Ini adalah hasil analisis otomatis dari model AI yang Anda latih)_"
+        )
+        await wait_msg.edit_text(text, parse_mode="Markdown")
+        
+    except Exception as e:
+        await wait_msg.edit_text(f"❌ Terjadi kesalahan saat prediksi: {e}")

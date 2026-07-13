@@ -10,7 +10,7 @@ from config.settings import (
     BINANCE_API_KEY, BINANCE_API_SECRET, TRADING_MODE,
     SCAN_INTERVAL_SECONDS, TIMEFRAME, API_REQUEST_DELAY,
     TELEGRAM_ADMIN_CHAT_ID, TELEGRAM_ERROR_CHAT_ID, MARGIN_USDT,
-    bot_config
+    bot_config, HTF_TIMEFRAME
 )
 
 from core.scanner import get_top_futures_by_volume, fetch_ohlcv
@@ -19,6 +19,7 @@ from indicators.bollinger import calculate_bollinger_bands
 from indicators.support_resistance import detect_support_zones, is_near_support, detect_resistance_zones, is_near_resistance
 from indicators.rsi import calculate_rsi
 from indicators.patterns import detect_candlestick_patterns, is_bull_trap
+from indicators.trend import get_htf_trend
 from core.learner import is_pattern_reliable, record_trade_result
 
 from ml_vision.chart_renderer import render_ohlcv_to_image
@@ -38,7 +39,7 @@ if not os.path.exists("virtual_success_log.csv"):
 virtual_trades = {}
 
 # Muat ML Model sekali di awal
-ml_model = get_model() # Bisa diisi parameter model_path jika sudah ada weight
+ml_model = get_model("ml_vision/candle_model.pth") # Bisa diisi parameter model_path jika sudah ada weight
 
 from collections import deque
 
@@ -126,10 +127,14 @@ async def scanner_loop():
                         # 2. Ambil data OHLCV
                         df = await fetch_ohlcv(client, symbol, interval=TIMEFRAME, limit=100)
                         
-                        if df.empty:
+                        # Ambil data Higher Timeframe (MTFA)
+                        df_htf = await fetch_ohlcv(client, symbol, interval=HTF_TIMEFRAME, limit=100)
+                        
+                        if df.empty or df_htf.empty:
                             continue
                             
                         current_price = df.iloc[-1]['close']
+                        htf_trend = get_htf_trend(df_htf)
                         
                         # --- MONITORING PAPER TRADING (VIRTUAL TRADES) ---
                         if symbol in virtual_trades:
@@ -197,17 +202,17 @@ async def scanner_loop():
                         pattern_name = pattern_info['pattern']
                         pattern_type = pattern_info['type']
                         
-                        syarat_teknikal_long = near_lower_bb and near_support and is_oversold
-                        syarat_pola_long = near_support and pattern_detected and pattern_type == 'LONG'
+                        syarat_teknikal_long = near_lower_bb and near_support and is_oversold and htf_trend in ["UPTREND", "SIDEWAYS"]
+                        syarat_pola_long = near_support and pattern_detected and pattern_type == 'LONG' and htf_trend in ["UPTREND", "SIDEWAYS"]
                         
-                        syarat_teknikal_short = near_upper_bb and near_resistance and is_overbought
-                        syarat_pola_short = near_resistance and pattern_detected and pattern_type == 'SHORT'
+                        syarat_teknikal_short = near_upper_bb and near_resistance and is_overbought and htf_trend in ["DOWNTREND", "SIDEWAYS"]
+                        syarat_pola_short = near_resistance and pattern_detected and pattern_type == 'SHORT' and htf_trend in ["DOWNTREND", "SIDEWAYS"]
                         
                         # Anti-Bull Trap (Untuk LONG)
                         bull_trap_detected = is_bull_trap(last_row['open'], last_row['high'], last_row['low'], last_row['close'])
                         
-                        alasan_long = f"Pola {pattern_name} Terdeteksi!" if syarat_pola_long else f"RSI Oversold ({rsi_value:.2f})"
-                        alasan_short = f"Pola {pattern_name} Terdeteksi!" if syarat_pola_short else f"RSI Overbought ({rsi_value:.2f})"
+                        alasan_long = f"Pola {pattern_name} Terdeteksi! (HTF: {htf_trend})" if syarat_pola_long else f"RSI Oversold ({rsi_value:.2f}) (HTF: {htf_trend})"
+                        alasan_short = f"Pola {pattern_name} Terdeteksi! (HTF: {htf_trend})" if syarat_pola_short else f"RSI Overbought ({rsi_value:.2f}) (HTF: {htf_trend})"
                         
                         # Evaluasi Keandalan dari Learner
                         reliable_long = is_pattern_reliable(alasan_long) if (syarat_teknikal_long or syarat_pola_long) else True
@@ -248,10 +253,10 @@ async def scanner_loop():
                                     continue
                                 
                                 # Batasan maksimal open posisi
-                                if trade_type == "LONG" and active_longs >= 4:
+                                if trade_type == "LONG" and active_longs >= bot_config.max_open_positions:
                                     if symbol not in virtual_trades:
                                         if len(virtual_trades) < 15:
-                                            print(f"⏩ Lewati {symbol}: Limit 4 posisi LONG tercapai. Memasukkan ke mode Paper Trading.")
+                                            print(f"⏩ Lewati {symbol}: Limit {bot_config.max_open_positions} posisi LONG tercapai. Memasukkan ke mode Paper Trading.")
                                             
                                             # Kalkulasi pergerakan harga berbasis ROI
                                             pm_tp = (bot_config.tp_percent / 100) / bot_config.leverage
@@ -269,10 +274,10 @@ async def scanner_loop():
                                             print(f"⏩ Lewati {symbol}: Kapasitas Paper Trading penuh (15 koin).")
                                     continue
                                     
-                                if trade_type == "SHORT" and active_shorts >= 4:
+                                if trade_type == "SHORT" and active_shorts >= bot_config.max_open_positions:
                                     if symbol not in virtual_trades:
                                         if len(virtual_trades) < 15:
-                                            print(f"⏩ Lewati {symbol}: Limit 4 posisi SHORT tercapai. Memasukkan ke mode Paper Trading.")
+                                            print(f"⏩ Lewati {symbol}: Limit {bot_config.max_open_positions} posisi SHORT tercapai. Memasukkan ke mode Paper Trading.")
                                             
                                             # Kalkulasi pergerakan harga berbasis ROI
                                             pm_tp = (bot_config.tp_percent / 100) / bot_config.leverage
@@ -317,7 +322,11 @@ async def scanner_loop():
                                 entry_price = order_res['price']
                                 
                                 # Hitung pergerakan harga berdasarkan Target ROI dan Leverage
-                                pm_tp = (bot_config.tp_percent / 100) / bot_config.leverage
+                                if bot_config.use_trailing_stop:
+                                    pm_tp = (bot_config.ts_activation_percent / 100) / bot_config.leverage
+                                else:
+                                    pm_tp = (bot_config.tp_percent / 100) / bot_config.leverage
+                                    
                                 pm_sl = (bot_config.sl_percent / 100) / bot_config.leverage
                                 
                                 if trade_type == "LONG":
@@ -331,7 +340,9 @@ async def scanner_loop():
                                 
                                 # Pasang TP / SL
                                 await place_take_profit_stop_loss(
-                                    client, symbol, tp_sl_side, quantity, tp_price, sl_price
+                                    client, symbol, tp_sl_side, quantity, tp_price, sl_price,
+                                    use_trailing_stop=bot_config.use_trailing_stop,
+                                    callback_rate=bot_config.ts_callback_rate
                                 )
                                 
                                 # 7. Kirim Notifikasi
@@ -343,7 +354,7 @@ async def scanner_loop():
                                     'margin': f"{current_margin:.2f} (Modal: {modal:.2f})",
                                     'leverage': bot_config.leverage,
                                     'tp_sl_info': f"TP: {tp_price:.4f} ({bot_config.tp_percent}%), SL: {sl_price:.4f} ({bot_config.sl_percent}%)",
-                                    'syarat_1': f"Area {'Support' if trade_type == 'LONG' else 'Resistance'} Divalidasi",
+                                    'syarat_1': f"Area {'Support' if trade_type == 'LONG' else 'Resistance'} Divalidasi. Tren {HTF_TIMEFRAME}: {htf_trend}",
                                     'syarat_2': alasan,
                                     'pola_ml': "-"
                                 }

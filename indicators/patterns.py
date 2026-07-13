@@ -75,146 +75,96 @@ def check_morning_star(o1, c1, o2, c2, o3, c3, h2, l2):
     
     return c1_is_red and is_c2_small and c3_is_green and is_c3_strong
 
-def check_consecutive_small_marubozu_bullish(df: pd.DataFrame, min_consecutive: int = 3) -> bool:
+def is_small_body(open_p, high_p, low_p, close_p, threshold=0.3):
+    """
+    Mendeteksi apakah body candle kecil (<= threshold dari total range).
+    """
+    body = abs(close_p - open_p)
+    range_total = high_p - low_p
+    if range_total == 0:
+        return True
+    return body <= (threshold * range_total)
+
+def is_large_body(open_p, high_p, low_p, close_p, threshold=0.7):
+    """
+    Mendeteksi apakah body candle besar (>= threshold dari total range).
+    """
+    body = abs(close_p - open_p)
+    range_total = high_p - low_p
+    if range_total == 0:
+        return False
+    return body >= (threshold * range_total)
+
+def check_small_bodies_followed_by_green(df: pd.DataFrame, min_small_candles: int = 3) -> bool:
     """
     Syarat:
-    - 3 sampai 5 candle hijau berturut-turut.
-    - Ukuran kecil dan hampir tidak ada sumbu atas/bawah (Marubozu-like).
+    - 3 sampai 5 candle dengan body kecil berturut-turut.
+    - Dipastikan tidak ada body candle besar.
+    - Diikuti oleh 1 candle terakhir (ke-6 atau setelahnya) berwarna hijau (bullish).
     """
-    if len(df) < min_consecutive:
+    if len(df) < min_small_candles + 1:
         return False
         
-    consecutive_count = 0
+    last_row = df.iloc[-1]
+    last_o, last_c = last_row['open'], last_row['close']
+    is_last_green = last_c > last_o
     
-    for i in range(len(df)-1, -1, -1):
+    if not is_last_green:
+        return False
+        
+    small_count = 0
+    for i in range(len(df)-2, -1, -1):
         row = df.iloc[i]
         o, h, l, c = row['open'], row['high'], row['low'], row['close']
         
-        is_green = c > o
-        range_tot = h - l
-        
-        if range_tot == 0 or not is_green:
+        # Jika menemukan candle dengan body besar, langsung batalkan deteksi
+        if is_large_body(o, h, l, c):
             break
             
-        upper_shadow = h - c
-        lower_shadow = o - l
-        
-        # Hampir tidak ada sumbu (toleransi <= 10% dari total range untuk masing-masing sumbu)
-        is_no_shadows = (upper_shadow <= 0.1 * range_tot) and (lower_shadow <= 0.1 * range_tot)
-        
-        if is_no_shadows:
-            consecutive_count += 1
-            if consecutive_count >= 5: # Max cek 5 saja sudah cukup
+        if is_small_body(o, h, l, c):
+            small_count += 1
+            if small_count >= 5: # Maksimal cek 5
                 break
         else:
             break
             
-    return consecutive_count >= min_consecutive
+    return small_count >= min_small_candles
 
-# --- POLA BEARISH (UNTUK SHORT/SELL) ---
+# --- POLA BEARISH / TRAP (UNTUK CLOSE LONG ATAU SHORT) ---
 
-def check_shooting_star(open_p, high_p, low_p, close_p):
+def is_bull_trap(open_p, high_p, low_p, close_p):
     """
-    Syarat Shooting Star:
-    - Ekor (shadow) atas sangat panjang (>= 60% dari range)
-    - Body kecil di bawah (<= 30% dari range)
-    - Ekor bawah sangat pendek (<= 10% dari range)
+    Mendeteksi Bull Trap: Candle dengan range besar (tiba-tiba naik tinggi) 
+    namun ditutup dengan sumbu atas (upper shadow) yang panjang (penolakan).
     """
-    body = abs(close_p - open_p)
-    range_total = high_p - low_p
-    
-    if range_total == 0:
+    range_tot = high_p - low_p
+    if range_tot == 0:
         return False
         
-    lower_shadow = min(open_p, close_p) - low_p
-    upper_shadow = high_p - max(open_p, close_p)
+    is_green = close_p > open_p
+    upper_shadow = high_p - close_p
     
-    is_body_small = body <= (0.3 * range_total)
-    is_upper_long = upper_shadow >= (0.6 * range_total)
-    is_lower_short = lower_shadow <= (0.1 * range_total)
-    
-    return is_body_small and is_upper_long and is_lower_short
-
-def check_bearish_engulfing(prev_open, prev_close, open_p, close_p):
-    """
-    Syarat Bearish Engulfing:
-    - Candle 1: Hijau (prev_close > prev_open)
-    - Candle 2: Merah (close_p < open_p)
-    - Body Candle 2 menutupi Body Candle 1 sepenuhnya.
-    """
-    prev_is_green = prev_close > prev_open
-    curr_is_red = close_p < open_p
-    
-    is_engulfing = (close_p < prev_open) and (open_p > prev_close)
-    
-    return prev_is_green and curr_is_red and is_engulfing
-
-def check_evening_star(o1, c1, o2, c2, o3, c3, h2, l2):
-    """
-    Syarat Evening Star (3 Candles):
-    - Candle 1: Hijau kuat
-    - Candle 2: Body kecil (keraguan) di atas
-    - Candle 3: Merah kuat, menembus ke bawah 50% body Candle 1
-    """
-    # Candle 1: Bullish
-    c1_is_green = c1 > o1
-    body_1 = abs(o1 - c1)
-    
-    # Candle 2: Body kecil
-    body_2 = abs(o2 - c2)
-    range_2 = h2 - l2
-    is_c2_small = body_2 <= (0.3 * range_2) if range_2 > 0 else True
-    
-    # Candle 3: Bearish, close melewati 50% body candle 1
-    c3_is_red = c3 < o3
-    midpoint_1 = (o1 + c1) / 2
-    is_c3_strong = c3 < midpoint_1
-    
-    return c1_is_green and is_c2_small and c3_is_red and is_c3_strong
+    # Sumbu atas >= 50% dari keseluruhan panjang candle = indikasi trap/penolakan kuat
+    return is_green and (upper_shadow >= 0.5 * range_tot)
 
 def detect_candlestick_patterns(df: pd.DataFrame) -> dict:
     """
-    Mendeteksi keberadaan pola Bullish (LONG) atau Bearish (SHORT)
-    pada bar terakhir. Mengembalikan tipe, pattern, dan boolean.
+    Mendeteksi keberadaan pola Bullish (LONG) atau Bull Trap (CLOSE_LONG).
+    Sesuai instruksi: hanya gunakan untuk sinyal long/buy serta trap bull.
     """
     if len(df) < 3:
         return {"pattern": None, "type": None, "detected": False}
         
-    last_3 = df.tail(3)
-    c1, c2, c3 = last_3.iloc[0], last_3.iloc[1], last_3.iloc[2]
+    last_row = df.iloc[-1]
     
     # === POLA BULLISH (LONG) ===
-    # Cek pola marubozu berturut-turut terlebih dahulu (paling kuat)
-    if check_consecutive_small_marubozu_bullish(df):
-        return {"pattern": "3+ Consecutive Small Bullish Marubozu", "type": "LONG", "detected": True}
+    # 3-5 candle kecil tanpa ada besar, diikuti candle hijau (LONG)
+    if check_small_bodies_followed_by_green(df):
+        return {"pattern": "3-5 Small Bodies Followed by Green", "type": "LONG", "detected": True}
         
-    if check_morning_star(
-        c1['open'], c1['close'],
-        c2['open'], c2['close'],
-        c3['open'], c3['close'],
-        c2['high'], c2['low']
-    ):
-        return {"pattern": "Morning Star", "type": "LONG", "detected": True}
-        
-    if check_bullish_engulfing(c2['open'], c2['close'], c3['open'], c3['close']):
-        return {"pattern": "Bullish Engulfing", "type": "LONG", "detected": True}
-        
-    if check_hammer(c3['open'], c3['high'], c3['low'], c3['close']):
-        return {"pattern": "Hammer", "type": "LONG", "detected": True}
-        
-    # === POLA BEARISH (SHORT) ===
-    if check_evening_star(
-        c1['open'], c1['close'],
-        c2['open'], c2['close'],
-        c3['open'], c3['close'],
-        c2['high'], c2['low']
-    ):
-        return {"pattern": "Evening Star", "type": "SHORT", "detected": True}
-        
-    if check_bearish_engulfing(c2['open'], c2['close'], c3['open'], c3['close']):
-        return {"pattern": "Bearish Engulfing", "type": "SHORT", "detected": True}
-        
-    if check_shooting_star(c3['open'], c3['high'], c3['low'], c3['close']):
-        return {"pattern": "Shooting Star", "type": "SHORT", "detected": True}
+    # === TRAP BULL (CLOSE LONG) ===
+    # Deteksi candle besar tiba-tiba yang merupakan trap bull
+    if is_bull_trap(last_row['open'], last_row['high'], last_row['low'], last_row['close']):
+        return {"pattern": "Bull Trap", "type": "CLOSE_LONG", "detected": True}
         
     return {"pattern": None, "type": None, "detected": False}

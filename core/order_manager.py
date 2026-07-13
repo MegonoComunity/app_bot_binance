@@ -132,7 +132,7 @@ async def place_short_order(client: AsyncClient, symbol: str, current_price: flo
         print(f"Error placing short order for {symbol}: {e}")
         return {"status": "error", "message": str(e)}
 
-async def place_take_profit_stop_loss(client: AsyncClient, symbol: str, side: str, quantity: float, tp_price: float, sl_price: float):
+async def place_take_profit_stop_loss(client: AsyncClient, symbol: str, side: str, quantity: float, tp_price: float, sl_price: float, use_trailing_stop: bool = False, callback_rate: float = 1.0):
     """
     Memasang TP dan SL (Oco / Terpisah di Futures)
     Untuk Long, side untuk menutup adalah SELL.
@@ -140,16 +140,34 @@ async def place_take_profit_stop_loss(client: AsyncClient, symbol: str, side: st
     try:
         precision_info = await get_symbol_precision(client, symbol)
         price_precision = precision_info['price']
+        qty_precision = precision_info['qty']
         
-        # Take profit market
-        tp_order = await client.futures_create_order(
-            symbol=symbol,
-            side=side,
-            type='TAKE_PROFIT_MARKET',
-            stopPrice=round(tp_price, price_precision),
-            closePosition=True,
-            timeInForce='GTC'
-        )
+        if qty_precision == 0:
+            quantity_str = str(int(quantity))
+        else:
+            quantity_str = f"{quantity:.{qty_precision}f}"
+        
+        if use_trailing_stop:
+            # Trailing stop market
+            tp_order = await client.futures_create_order(
+                symbol=symbol,
+                side=side,
+                type='TRAILING_STOP_MARKET',
+                activationPrice=round(tp_price, price_precision),
+                callbackRate=callback_rate,
+                quantity=quantity_str,
+                reduceOnly=True
+            )
+        else:
+            # Take profit market
+            tp_order = await client.futures_create_order(
+                symbol=symbol,
+                side=side,
+                type='TAKE_PROFIT_MARKET',
+                stopPrice=round(tp_price, price_precision),
+                closePosition=True,
+                timeInForce='GTC'
+            )
         
         # Stop loss market
         sl_order = await client.futures_create_order(

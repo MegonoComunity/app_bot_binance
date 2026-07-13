@@ -1,0 +1,1 @@
+2026-07-13 19:09:13,906 - ERROR - [SHORT_ORDER_ARKMUSDT] APIError(code=-2027): Exceeded the maximum allowable position at current leverage.
