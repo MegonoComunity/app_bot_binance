@@ -1,1 +1,30 @@
 2026-07-13 19:09:13,906 - ERROR - [SHORT_ORDER_ARKMUSDT] APIError(code=-2027): Exceeded the maximum allowable position at current leverage.
+2026-09-10 11:25:35,597 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:26:36,067 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:27:36,582 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:28:37,147 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:29:37,601 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:30:38,203 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:31:38,649 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:32:39,112 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:33:39,534 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:34:40,020 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:35:41,746 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:36:42,326 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:37:42,790 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:38:43,252 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:39:43,727 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:40:44,194 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:41:44,680 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:42:45,189 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:43:45,625 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:44:46,524 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:45:46,974 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:46:49,975 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:47:50,467 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:48:51,030 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:49:51,496 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 11:50:52,001 - ERROR - [TELEGRAM_NOTIFY_ERROR] Gagal kirim notif error ke 296883310: Telegram server says - Unauthorized
+2026-09-10 12:07:03,866 - ERROR - [LONG_ORDER_FXSUSDT] APIError(code=-4131): The counterparty's best price does not meet the PERCENT_PRICE filter limit.
+2026-09-10 12:27:52,396 - ERROR - [LONG_ORDER_PORTALUSDT] APIError(code=-4005): Quantity greater than max quantity.
+2026-09-10 12:57:54,567 - ERROR - [LONG_ORDER_FXSUSDT] APIError(code=-4131): The counterparty's best price does not meet the PERCENT_PRICE filter limit.

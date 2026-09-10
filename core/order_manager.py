@@ -12,6 +12,24 @@ async def set_leverage(client: AsyncClient, symbol: str, leverage: int):
 
 _exchange_info_cache = {}
 
+
+def _get_average_fill_price(order: dict, fallback_price: float) -> float:
+    average_price = order.get("avgPrice") or order.get("averagePrice")
+    if average_price and float(average_price) > 0:
+        return float(average_price)
+
+    fills = order.get("fills", [])
+    total_quantity = sum(float(fill.get("qty", 0)) for fill in fills)
+    if total_quantity > 0:
+        total_value = sum(
+            float(fill.get("price", 0)) * float(fill.get("qty", 0))
+            for fill in fills
+        )
+        if total_value > 0:
+            return total_value / total_quantity
+
+    return fallback_price
+
 async def get_symbol_precision(client: AsyncClient, symbol: str):
     if not _exchange_info_cache:
         try:
@@ -89,7 +107,12 @@ async def place_long_order(client: AsyncClient, symbol: str, current_price: floa
             type=ORDER_TYPE_MARKET,
             quantity=quantity_str
         )
-        return {"status": "success", "order": order, "quantity": quantity, "price": current_price}
+        return {
+            "status": "success",
+            "order": order,
+            "quantity": quantity,
+            "price": _get_average_fill_price(order, current_price),
+        }
     except Exception as e:
         log_error(f"LONG_ORDER_{symbol}", str(e))
         print(f"Error placing long order for {symbol}: {e}")
@@ -126,7 +149,12 @@ async def place_short_order(client: AsyncClient, symbol: str, current_price: flo
             type=ORDER_TYPE_MARKET,
             quantity=quantity_str
         )
-        return {"status": "success", "order": order, "quantity": quantity, "price": current_price}
+        return {
+            "status": "success",
+            "order": order,
+            "quantity": quantity,
+            "price": _get_average_fill_price(order, current_price),
+        }
     except Exception as e:
         log_error(f"SHORT_ORDER_{symbol}", str(e))
         print(f"Error placing short order for {symbol}: {e}")
@@ -178,8 +206,37 @@ async def place_take_profit_stop_loss(client: AsyncClient, symbol: str, side: st
             closePosition=True,
             timeInForce='GTC'
         )
-        return True
+        return {
+            "status": "success",
+            "tp_order": tp_order,
+            "sl_order": sl_order,
+        }
     except Exception as e:
         log_error(f"TP_SL_{symbol}", str(e))
         print(f"Error placing TP/SL for {symbol}: {e}")
-        return False
+        return {"status": "error", "message": str(e)}
+
+
+async def emergency_close_position(client: AsyncClient, symbol: str, side: str, quantity: float):
+    """Cancel pending orders and close an unprotected position at market."""
+    try:
+        await client.futures_cancel_all_open_orders(symbol=symbol)
+        close_order = await client.futures_create_order(
+            symbol=symbol,
+            side=side,
+            type=ORDER_TYPE_MARKET,
+            quantity=quantity,
+            reduceOnly=True,
+        )
+        return {"status": "success", "order": close_order}
+    except Exception as e:
+        log_error(f"EMERGENCY_CLOSE_{symbol}", str(e))
+        print(f"Error closing unprotected position for {symbol}: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+async def close_profitable_position(client: AsyncClient, symbol: str, position_amount: float):
+    """Cancel protection orders and close a profitable position at market."""
+    close_side = SIDE_SELL if position_amount > 0 else SIDE_BUY
+    quantity = abs(position_amount)
+    return await emergency_close_position(client, symbol, close_side, quantity)

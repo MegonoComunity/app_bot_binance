@@ -9,6 +9,11 @@ BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
 TELEGRAM_ERROR_CHAT_ID = os.getenv("TELEGRAM_ERROR_CHAT_ID") or TELEGRAM_ADMIN_CHAT_ID
+TELEGRAM_ADMIN_USER_IDS = {
+    int(value.strip())
+    for value in os.getenv("TELEGRAM_ADMIN_USER_IDS", "").split(",")
+    if value.strip().lstrip("-").isdigit()
+}
 
 TRADING_MODE = os.getenv("TRADING_MODE", "TESTNET").upper()
 LEVERAGE_ENV = int(os.getenv("LEVERAGE", "20"))
@@ -19,6 +24,19 @@ SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", "60"))
 API_REQUEST_DELAY = float(os.getenv("API_REQUEST_DELAY", "0.5"))
 TIMEFRAME = os.getenv("TIMEFRAME", "5m")
 MAX_OPEN_POSITIONS_ENV = int(os.getenv("MAX_OPEN_POSITIONS", "4"))
+SCAN_UNIVERSE_SIZE_ENV = int(os.getenv("SCAN_UNIVERSE_SIZE", "50"))
+TOP_N_COINS_ENV = max(int(os.getenv("TOP_N_COINS", str(SCAN_UNIVERSE_SIZE_ENV))), 20)
+SCAN_BATCH_SIZE_ENV = int(os.getenv("SCAN_BATCH_SIZE", "10"))
+SMART_BUY_LOOKBACK_DAYS_ENV = int(os.getenv("SMART_BUY_LOOKBACK_DAYS", "20"))
+SMART_BUY_TOLERANCE_ENV = float(os.getenv("SMART_BUY_TOLERANCE", "0.005"))
+AUTO_CLOSE_PROFIT_HOURS_ENV = float(os.getenv("AUTO_CLOSE_PROFIT_HOURS", "24"))
+POSITION_MONITOR_INTERVAL_ENV = int(os.getenv("POSITION_MONITOR_INTERVAL", "60"))
+RISK_PER_TRADE_PERCENT_ENV = float(os.getenv("RISK_PER_TRADE_PERCENT", "1.0"))
+RSI_LENGTH_ENV = int(os.getenv("RSI_LENGTH", "14"))
+RSI_OVERSOLD_ENV = float(os.getenv("RSI_OVERSOLD", "35"))
+RSI_OVERBOUGHT_ENV = float(os.getenv("RSI_OVERBOUGHT", "75"))
+SCANNER_MODE_ENV = os.getenv("SCANNER_MODE", "per_coin").lower()
+ANALYSIS_LOOKBACK_DAYS_ENV = max(int(os.getenv("ANALYSIS_LOOKBACK_DAYS", "20")), 20)
 
 # Fitur Baru: Trailing Stop & MTFA
 USE_TRAILING_STOP = os.getenv("USE_TRAILING_STOP", "True").lower() == "true"
@@ -31,6 +49,14 @@ if not BINANCE_API_KEY or not BINANCE_API_SECRET:
 
 if not TELEGRAM_BOT_TOKEN or not TELEGRAM_ADMIN_CHAT_ID:
     raise ValueError("Missing Telegram credentials in .env")
+
+try:
+    TELEGRAM_ADMIN_CHAT_ID = int(TELEGRAM_ADMIN_CHAT_ID)
+except ValueError as exc:
+    raise ValueError("TELEGRAM_ADMIN_CHAT_ID must be an integer") from exc
+
+if not TELEGRAM_ADMIN_USER_IDS:
+    TELEGRAM_ADMIN_USER_IDS = {TELEGRAM_ADMIN_CHAT_ID}
 
 class BotSettings:
     """
@@ -46,6 +72,12 @@ class BotSettings:
             cls._instance.sl_percent = SL_PERCENT_ENV
             cls._instance.leverage = LEVERAGE_ENV
             cls._instance.max_open_positions = MAX_OPEN_POSITIONS_ENV
+            cls._instance.risk_per_trade_percent = RISK_PER_TRADE_PERCENT_ENV
+            cls._instance.rsi_length = RSI_LENGTH_ENV
+            cls._instance.rsi_oversold = RSI_OVERSOLD_ENV
+            cls._instance.rsi_overbought = RSI_OVERBOUGHT_ENV
+            cls._instance.scanner_mode = SCANNER_MODE_ENV if SCANNER_MODE_ENV in {"per_coin", "batch"} else "per_coin"
+            cls._instance.analysis_lookback_days = ANALYSIS_LOOKBACK_DAYS_ENV
             cls._instance.use_trailing_stop = USE_TRAILING_STOP
             cls._instance.ts_activation_percent = TS_ACTIVATION_PERCENT_ENV
             cls._instance.ts_callback_rate = TS_CALLBACK_RATE_ENV
@@ -66,6 +98,33 @@ class BotSettings:
     def update_max_positions(self, val: int):
         self.max_open_positions = val
         self._update_env("MAX_OPEN_POSITIONS", str(val))
+
+    def update_risk_per_trade(self, val: float):
+        self.risk_per_trade_percent = val
+        self._update_env("RISK_PER_TRADE_PERCENT", str(val))
+
+    def update_rsi(self, length: int, oversold: float, overbought: float):
+        if length < 2 or not 0 < oversold < overbought < 100:
+            raise ValueError("RSI harus: length >= 2 dan 0 < oversold < overbought < 100")
+        self.rsi_length = length
+        self.rsi_oversold = oversold
+        self.rsi_overbought = overbought
+        self._update_env("RSI_LENGTH", str(length))
+        self._update_env("RSI_OVERSOLD", str(oversold))
+        self._update_env("RSI_OVERBOUGHT", str(overbought))
+
+    def update_scanner_mode(self, mode: str):
+        mode = mode.lower()
+        if mode not in {"per_coin", "batch"}:
+            raise ValueError("Mode scanner harus per_coin atau batch")
+        self.scanner_mode = mode
+        self._update_env("SCANNER_MODE", mode)
+
+    def update_analysis_lookback_days(self, days: int):
+        if days < 20:
+            raise ValueError("Analisis minimal menggunakan 20 candle Daily")
+        self.analysis_lookback_days = days
+        self._update_env("ANALYSIS_LOOKBACK_DAYS", str(days))
         
     def update_use_trailing_stop(self, val: bool):
         self.use_trailing_stop = val
