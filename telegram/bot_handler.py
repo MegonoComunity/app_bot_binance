@@ -109,6 +109,27 @@ async def status_handler(message: types.Message):
         positions = account_info.get('positions', [])
         active_positions = [p for p in positions if float(p['positionAmt']) != 0]
         
+        # Ambil semua open orders sekaligus (lebih efisien)
+        try:
+            all_open_orders = await client.futures_get_open_orders()
+        except Exception:
+            all_open_orders = []
+
+        # Buat map: symbol -> {tp_price, sl_price}
+        tp_sl_map: dict = {}
+        for o in all_open_orders:
+            sym = o.get('symbol')
+            otype = o.get('type', '')
+            sp = float(o.get('stopPrice', 0) or 0)
+            if sp <= 0:
+                continue
+            if sym not in tp_sl_map:
+                tp_sl_map[sym] = {'tp': None, 'sl': None}
+            if 'TAKE_PROFIT' in otype:
+                tp_sl_map[sym]['tp'] = sp
+            elif 'STOP' in otype:
+                tp_sl_map[sym]['sl'] = sp
+
         longs = []
         shorts = []
         
@@ -120,7 +141,10 @@ async def status_handler(message: types.Message):
             entry = float(p['entryPrice'])
             mark = float(p.get('markPrice', entry))
             
-            # Gunakan updateTime sebagai acuan (waktu transaksi terakhir di posisi ini)
+            # Warna PNL
+            pnl_icon = "📈" if pnl >= 0 else "📉"
+            
+            # Hold time
             update_time_ms = int(p.get('updateTime', 0))
             if update_time_ms > 0:
                 open_time = datetime.fromtimestamp(update_time_ms / 1000)
@@ -130,15 +154,37 @@ async def status_handler(message: types.Message):
                 hold_time = f"{int(hours)}j {int(minutes)}m"
             else:
                 hold_time = "N/A"
-                
-            # Format harga agar presisi koin micin tidak terpotong (dinamis 4-8 desimal)
-            entry_str = f"{entry:.8f}".rstrip('0').rstrip('.')
-            mark_str = f"{mark:.8f}".rstrip('0').rstrip('.')
 
-            p_info = (f"🔸 **{symbol}**\n"
-                      f"   PNL berjalan: `{pnl:+.2f} USDT ({pnl_percent:+.2f}%)`\n"
-                      f"   Hold: {hold_time}\n"
-                      f"   Entry: {entry_str} | Mark: {mark_str}\n")
+            # Format harga dinamis
+            def fmt(v: float) -> str:
+                return f"{v:.8f}".rstrip('0').rstrip('.')
+
+            entry_str = fmt(entry)
+            mark_str  = fmt(mark)
+
+            # Hitung jarak harga saat ini vs entry
+            if entry > 0:
+                move_pct = (mark - entry) / entry * 100
+                move_str = f"{move_pct:+.2f}%"
+            else:
+                move_str = "N/A"
+
+            # TP / SL dari open orders
+            targets = tp_sl_map.get(symbol, {})
+            tp_val  = targets.get('tp')
+            sl_val  = targets.get('sl')
+            tp_str  = fmt(tp_val) if tp_val else "—"
+            sl_str  = fmt(sl_val) if sl_val else "—"
+
+            p_info = (
+                f"🔸 **{symbol}**\n"
+                f"   {pnl_icon} PNL: `{pnl:+.2f} USDT ({pnl_percent:+.2f}%)`\n"
+                f"   ⏱️ Hold: {hold_time}\n"
+                f"   📥 Entry : `{entry_str}`\n"
+                f"   📊 Harga: `{mark_str}` ({move_str})\n"
+                f"   🎯 Target TP : `{tp_str}`\n"
+                f"   🛡️ Target SL : `{sl_str}`\n"
+            )
                       
             if amt > 0:
                 longs.append(p_info)
@@ -147,12 +193,13 @@ async def status_handler(message: types.Message):
                 
         websocket_status = "connected" if bot_state.get("websocket_connected") else "disconnected"
         account_pnl_percent = calculate_account_pnl_percent(unrealized_pnl, total_margin)
+        pnl_icon_acc = "📈" if unrealized_pnl >= 0 else "📉"
         text = (
             f"🤖 **PROFIL & STATUS BOT**\n"
             f"Status: {status_emoji}\n"
             f"WebSocket: `{websocket_status}`\n"
             f"💰 Saldo Total: `{total_margin:.2f} USDT`\n"
-            f"📈 Unr. PNL  : `{unrealized_pnl:+.2f} USDT ({account_pnl_percent:+.2f}%)`\n"
+            f"{pnl_icon_acc} Unr. PNL  : `{unrealized_pnl:+.2f} USDT ({account_pnl_percent:+.2f}%)`\n"
             f"──────────────\n"
             f"**🟢 POSISI LONG ({len(longs)}/{bot_config.max_open_positions})**\n"
         )
@@ -821,3 +868,300 @@ async def predict_photo_handler(message: types.Message):
         
     except Exception as e:
         await wait_msg.edit_text(f"❌ Terjadi kesalahan saat prediksi: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 🧠 NATURAL LANGUAGE COMMAND HANDLER
+# Aktif ketika pesan diawali dengan: "latihan", "belajar dari", "belajar"
+# Bot akan cerdas mengenali intent meskipun kalimat berubah-ubah.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import re
+
+def _extract_number(text: str) -> float | None:
+    """Cari angka pertama dalam teks."""
+    m = re.search(r"[-+]?\d+(?:[.,]\d+)?", text)
+    if m:
+        return float(m.group().replace(",", "."))
+    return None
+
+def _extract_symbol(text: str) -> str | None:
+    """Cari simbol koin (misal: BTCUSDT, BTC, ETH) dalam teks."""
+    m = re.search(r"\b([A-Z]{2,10}(?:USDT|BUSD|BTC)?)\b", text.upper())
+    return m.group(1) if m else None
+
+def _parse_nlp_intent(text: str) -> dict:
+    """
+    Mengenali intent dari teks bebas (case-insensitive, toleran ejaan).
+    Return: {'intent': str, 'value': any, 'symbol': str|None, 'raw': str}
+    """
+    t = text.lower().strip()
+    # Hapus prefix trigger
+    for prefix in ["latihan", "belajar dari", "belajar"]:
+        if t.startswith(prefix):
+            t = t[len(prefix):].strip(" /:-")
+            break
+
+    num = _extract_number(t)
+    sym = _extract_symbol(t)
+
+    # ── Setting Leverage ──────────────────────────────────────────────────────
+    if any(k in t for k in ["leverage", "lev", "kali lipat", "x leverage"]):
+        return {"intent": "set_leverage", "value": num, "symbol": sym, "raw": t}
+
+    # ── Setting TP ────────────────────────────────────────────────────────────
+    if any(k in t for k in ["take profit", "tp", "target profit", "target untung"]):
+        return {"intent": "set_tp", "value": num, "symbol": sym, "raw": t}
+
+    # ── Setting SL ────────────────────────────────────────────────────────────
+    if any(k in t for k in ["stop loss", "sl", "batas rugi", "stop rugi"]):
+        return {"intent": "set_sl", "value": num, "symbol": sym, "raw": t}
+
+    # ── Setting RSI ───────────────────────────────────────────────────────────
+    if any(k in t for k in ["rsi", "relative strength"]):
+        return {"intent": "set_rsi_info", "value": num, "symbol": sym, "raw": t}
+
+    # ── Max Posisi ────────────────────────────────────────────────────────────
+    if any(k in t for k in ["max posisi", "maksimal posisi", "batas posisi", "max position"]):
+        return {"intent": "set_max_positions", "value": num, "symbol": sym, "raw": t}
+
+    # ── Analisa Koin ──────────────────────────────────────────────────────────
+    if any(k in t for k in ["analisa", "analisis", "cek koin", "lihat koin", "scan", "analyze"]):
+        return {"intent": "analyze", "value": None, "symbol": sym, "raw": t}
+
+    # ── Status ────────────────────────────────────────────────────────────────
+    if any(k in t for k in ["status", "kondisi", "posisi sekarang", "posisi saat ini", "cek status"]):
+        return {"intent": "status", "value": None, "symbol": sym, "raw": t}
+
+    # ── Pause / Stop ──────────────────────────────────────────────────────────
+    if any(k in t for k in ["stop", "pause", "berhenti", "istirahat", "hentikan"]):
+        return {"intent": "pause", "value": None, "symbol": sym, "raw": t}
+
+    # ── Resume / Mulai ────────────────────────────────────────────────────────
+    if any(k in t for k in ["resume", "mulai", "lanjut", "jalankan", "aktif", "start"]):
+        return {"intent": "resume", "value": None, "symbol": sym, "raw": t}
+
+    # ── Close Semua ───────────────────────────────────────────────────────────
+    if any(k in t for k in ["close semua", "tutup semua", "close all", "keluar semua"]):
+        return {"intent": "close_all", "value": None, "symbol": sym, "raw": t}
+
+    # ── Close Satu ───────────────────────────────────────────────────────────
+    if any(k in t for k in ["close", "tutup posisi", "keluar", "exit"]):
+        return {"intent": "close", "value": None, "symbol": sym, "raw": t}
+
+    # ── Mode Scanner ─────────────────────────────────────────────────────────
+    if any(k in t for k in ["mode", "scanner mode", "per coin", "batch"]):
+        mode = "per_coin" if "per" in t or "coin" in t else "batch"
+        return {"intent": "set_scanner_mode", "value": mode, "symbol": sym, "raw": t}
+
+    # ── Belajar / Tidak dikenali → fallback cerdas ──────────────────────────
+    return {"intent": "unknown", "value": num, "symbol": sym, "raw": t}
+
+
+def _nlp_trigger(message: types.Message) -> bool:
+    """Filter: pesan diawali 'latihan' atau 'belajar'."""
+    text = (message.text or "").lower().strip()
+    return text.startswith(("latihan", "belajar dari", "belajar"))
+
+
+@dp.message(_nlp_trigger)
+async def natural_language_handler(message: types.Message):
+    """
+    Menangani perintah natural language dari admin.
+    Bot akan cerdas mengenali intent bahkan jika kalimat bervariasi.
+    """
+    original = message.text or ""
+    parsed = _parse_nlp_intent(original)
+    intent = parsed["intent"]
+    value = parsed["value"]
+    symbol = parsed["symbol"]
+
+    # Respon cerdas berdasarkan intent
+    if intent == "set_leverage":
+        if value is None:
+            await message.answer(
+                "🤖 Saya mengerti kamu ingin ubah **Leverage**.\n"
+                "Tapi saya perlu angkanya. Contoh:\n`latihan leverage 20`",
+                parse_mode="Markdown"
+            )
+            return
+        val = int(value)
+        if val < 1 or val > 125:
+            await message.answer("❌ Leverage harus antara 1–125.")
+            return
+        bot_config.update_leverage(val)
+        await message.answer(
+            f"✅ Oke! Leverage berhasil diubah ke **{val}x**.\n"
+            f"_Bot tetap berjalan, perubahan berlaku pada order berikutnya._",
+            parse_mode="Markdown"
+        )
+
+    elif intent == "set_tp":
+        if value is None:
+            await message.answer(
+                "🤖 Saya mengerti kamu ingin ubah **Take Profit**.\n"
+                "Contoh: `latihan tp 25`",
+                parse_mode="Markdown"
+            )
+            return
+        bot_config.update_tp(value)
+        await message.answer(
+            f"✅ Take Profit diubah ke **{value}%**.\n_Bot tetap berjalan._",
+            parse_mode="Markdown"
+        )
+
+    elif intent == "set_sl":
+        if value is None:
+            await message.answer(
+                "🤖 Saya mengerti kamu ingin ubah **Stop Loss**.\n"
+                "Contoh: `latihan stop loss 15`",
+                parse_mode="Markdown"
+            )
+            return
+        bot_config.update_sl(value)
+        await message.answer(
+            f"✅ Stop Loss diubah ke **{value}%**.\n_Bot tetap berjalan._",
+            parse_mode="Markdown"
+        )
+
+    elif intent == "set_max_positions":
+        if value is None:
+            await message.answer(
+                "🤖 Saya mengerti kamu ingin ubah **batas maksimal posisi**.\n"
+                "Contoh: `latihan max posisi 5`",
+                parse_mode="Markdown"
+            )
+            return
+        val = int(value)
+        bot_config.update_max_positions(val)
+        await message.answer(
+            f"✅ Maksimal posisi diubah ke **{val}**.\n_Bot tetap berjalan._",
+            parse_mode="Markdown"
+        )
+
+    elif intent == "analyze":
+        if not symbol:
+            await message.answer(
+                "🤖 Saya mengerti kamu ingin **analisa koin**.\n"
+                "Sebutkan simbolnya. Contoh: `latihan analisa BTCUSDT`",
+                parse_mode="Markdown"
+            )
+            return
+        # Pastikan simbol berakhiran USDT
+        if not symbol.endswith("USDT"):
+            symbol = symbol + "USDT"
+        await message.answer(f"🔎 Menganalisa **{symbol}** sebentar...", parse_mode="Markdown")
+        client = bot_state.get("client")
+        if not client:
+            await message.answer("⚠️ Koneksi Binance belum siap.")
+            return
+        try:
+            from core.scanner import fetch_ohlcv
+            daily_df = await fetch_ohlcv(client, symbol, interval="1d", limit=bot_config.analysis_lookback_days + 2)
+            from core.market_analysis import analyze_daily_market
+            result = analyze_daily_market(daily_df, bot_config.analysis_lookback_days,
+                                          bot_config.rsi_length, bot_config.rsi_oversold,
+                                          bot_config.rsi_overbought, 0.005)
+            level = result.get("smart_level")
+            level_text = f"{level:.8f}" if level else "N/A"
+            await message.answer(
+                f"📊 **Analisa Natural {symbol}**\n"
+                f"──────────────\n"
+                f"Harga terakhir: `{result['current_price']:.8f}`\n"
+                f"RSI: `{result['rsi']:.2f}`\n"
+                f"Tren Daily: `{result['trend']}`\n"
+                f"Level Sering Diperdagangkan: `{level_text}`\n"
+                f"──────────────\n"
+                f"**Kesimpulan: {result['decision']}**",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            await message.answer(f"❌ Analisa gagal: {e}")
+
+    elif intent == "status":
+        await status_handler(message)
+
+    elif intent == "pause":
+        bot_state["is_running"] = False
+        bot_state["state"] = "PAUSED"
+        await message.answer(
+            "🛑 **Bot dihentikan sementara.**\n"
+            "_Posisi aktif tetap terlindungi TP/SL. "
+            "Tidak ada order baru sampai kamu resume._",
+            parse_mode="Markdown"
+        )
+
+    elif intent == "resume":
+        bot_state["is_running"] = True
+        bot_state["state"] = "RUNNING"
+        await message.answer(
+            "▶️ **Bot dilanjutkan kembali!**\n_Scanner aktif mencari sinyal baru._",
+            parse_mode="Markdown"
+        )
+
+    elif intent == "close_all":
+        await message.answer("⛔ Menutup semua posisi...")
+        try:
+            from telegram.bot_handler import close_position_from_telegram
+            results = await close_position_from_telegram("", close_all=True)
+            await message.answer("⛔ Close all:\n" + "\n".join(results))
+        except Exception as e:
+            await message.answer(f"❌ Gagal close all: {e}")
+
+    elif intent == "close":
+        if not symbol:
+            await message.answer(
+                "🤖 Saya mengerti kamu ingin **close posisi**.\n"
+                "Sebutkan simbolnya. Contoh: `latihan close BTCUSDT`",
+                parse_mode="Markdown"
+            )
+            return
+        if not symbol.endswith("USDT"):
+            symbol = symbol + "USDT"
+        await message.answer(f"⛔ Menutup posisi **{symbol}**...", parse_mode="Markdown")
+        try:
+            results = await close_position_from_telegram(symbol)
+            await message.answer(f"⛔ {results[0]}")
+        except Exception as e:
+            await message.answer(f"❌ Gagal: {e}")
+
+    elif intent == "set_scanner_mode":
+        mode = str(value) if value else "per_coin"
+        try:
+            bot_config.update_scanner_mode(mode)
+            await message.answer(f"✅ Scanner mode diubah ke `{mode}`.", parse_mode="Markdown")
+        except ValueError as e:
+            await message.answer(f"❌ {e}")
+
+    elif intent == "set_rsi_info":
+        await message.answer(
+            f"ℹ️ **RSI saat ini:**\n"
+            f"  Length: `{bot_config.rsi_length}`\n"
+            f"  Oversold: `{bot_config.rsi_oversold}`\n"
+            f"  Overbought: `{bot_config.rsi_overbought}`\n\n"
+            f"Untuk ubah, ketik:\n`latihan rsi 14 35 75`",
+            parse_mode="Markdown"
+        )
+
+    else:
+        # Fallback cerdas — tampilkan apa yang dimengerti + panduan
+        detected_sym = f" (Koin: `{symbol}`)" if symbol else ""
+        detected_num = f" (Angka: `{value}`)" if value else ""
+        await message.answer(
+            f"🤖 **Saya mendengarmu!**{detected_sym}{detected_num}\n"
+            f"Tapi saya belum yakin apa yang ingin dilakukan.\n\n"
+            f"📚 **Contoh perintah natural yang saya mengerti:**\n"
+            f"• `latihan leverage 20`\n"
+            f"• `latihan tp 25`\n"
+            f"• `latihan stop loss 15`\n"
+            f"• `latihan analisa BTCUSDT`\n"
+            f"• `latihan max posisi 5`\n"
+            f"• `latihan status`\n"
+            f"• `latihan pause` / `latihan lanjut`\n"
+            f"• `latihan close BTCUSDT`\n"
+            f"• `latihan close semua`\n"
+            f"• `belajar dari sinyal ini` _(bot akan catat untuk evaluasi)_\n\n"
+            f"_Bot tetap berjalan secara normal._",
+            parse_mode="Markdown"
+        )
+

@@ -24,8 +24,8 @@ SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", "60"))
 API_REQUEST_DELAY = float(os.getenv("API_REQUEST_DELAY", "0.5"))
 TIMEFRAME = os.getenv("TIMEFRAME", "5m")
 MAX_OPEN_POSITIONS_ENV = int(os.getenv("MAX_OPEN_POSITIONS", "4"))
-SCAN_UNIVERSE_SIZE_ENV = int(os.getenv("SCAN_UNIVERSE_SIZE", "50"))
-TOP_N_COINS_ENV = max(int(os.getenv("TOP_N_COINS", str(SCAN_UNIVERSE_SIZE_ENV))), 20)
+SCAN_UNIVERSE_SIZE_ENV = int(os.getenv("SCAN_UNIVERSE_SIZE", "200"))
+TOP_N_COINS_ENV = max(int(os.getenv("TOP_N_COINS", str(SCAN_UNIVERSE_SIZE_ENV))), 200)
 SCAN_BATCH_SIZE_ENV = int(os.getenv("SCAN_BATCH_SIZE", "10"))
 SMART_BUY_LOOKBACK_DAYS_ENV = int(os.getenv("SMART_BUY_LOOKBACK_DAYS", "20"))
 SMART_BUY_TOLERANCE_ENV = float(os.getenv("SMART_BUY_TOLERANCE", "0.005"))
@@ -37,6 +37,13 @@ RSI_OVERSOLD_ENV = float(os.getenv("RSI_OVERSOLD", "35"))
 RSI_OVERBOUGHT_ENV = float(os.getenv("RSI_OVERBOUGHT", "75"))
 SCANNER_MODE_ENV = os.getenv("SCANNER_MODE", "per_coin").lower()
 ANALYSIS_LOOKBACK_DAYS_ENV = max(int(os.getenv("ANALYSIS_LOOKBACK_DAYS", "20")), 20)
+
+# Fitur Lanjutan: Risk Management, Liquidity, Funding, & Limit Order
+DAILY_LOSS_LIMIT_PERCENT_ENV = float(os.getenv("DAILY_LOSS_LIMIT_PERCENT", "5.0"))
+MIN_ORDER_BOOK_DEPTH_USDT_ENV = float(os.getenv("MIN_ORDER_BOOK_DEPTH_USDT", "50000.0"))
+MAX_FUNDING_RATE_PERCENT_ENV = float(os.getenv("MAX_FUNDING_RATE_PERCENT", "0.05"))
+ATR_MULTIPLIER_SL_ENV = float(os.getenv("ATR_MULTIPLIER_SL", "1.5"))
+LIMIT_ORDER_TIMEOUT_SECONDS_ENV = int(os.getenv("LIMIT_ORDER_TIMEOUT_SECONDS", "30"))
 
 # Fitur Baru: Trailing Stop & MTFA
 USE_TRAILING_STOP = os.getenv("USE_TRAILING_STOP", "True").lower() == "true"
@@ -81,6 +88,13 @@ class BotSettings:
             cls._instance.use_trailing_stop = USE_TRAILING_STOP
             cls._instance.ts_activation_percent = TS_ACTIVATION_PERCENT_ENV
             cls._instance.ts_callback_rate = TS_CALLBACK_RATE_ENV
+            
+            # Fitur Lanjutan
+            cls._instance.daily_loss_limit_percent = DAILY_LOSS_LIMIT_PERCENT_ENV
+            cls._instance.min_order_book_depth_usdt = MIN_ORDER_BOOK_DEPTH_USDT_ENV
+            cls._instance.max_funding_rate_percent = MAX_FUNDING_RATE_PERCENT_ENV
+            cls._instance.atr_multiplier_sl = ATR_MULTIPLIER_SL_ENV
+            cls._instance.limit_order_timeout_seconds = LIMIT_ORDER_TIMEOUT_SECONDS_ENV
         return cls._instance
         
     def update_tp(self, val: float):

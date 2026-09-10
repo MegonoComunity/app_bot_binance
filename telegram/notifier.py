@@ -1,6 +1,96 @@
 from aiogram import Bot
 from core.logger import log_error
 from core.trade_stats import trade_summary
+from datetime import datetime
+
+async def send_position_analysis_alert(bot: Bot, chat_id: str, data: dict):
+    """
+    Kirim peringatan analisa posisi aktif (HOLD dengan alert).
+    data keys: symbol, side, health_score, alerts, entry_price, current_price, pnl, pnl_pct
+    """
+    side = data.get("side", "LONG")
+    side_icon = "🟢" if side == "LONG" else "🔴"
+    health = data.get("health_score", 100)
+    health_bar = "🟩" * int(health / 10) + "⬜" * (10 - int(health / 10))
+    alerts = data.get("alerts", [])
+    entry = data.get("entry_price", 0)
+    current = data.get("current_price", 0)
+    pnl = data.get("pnl", 0)
+    pnl_pct = data.get("pnl_pct", 0)
+    pnl_icon = "📈" if pnl >= 0 else "📉"
+
+    def fmt(v): return f"{v:.8f}".rstrip('0').rstrip('.')
+
+    alert_lines = "\n".join(f"   ⚠️ {a}" for a in alerts) if alerts else "   _Tidak ada_"
+    message = (
+        f"🔍 **ANALISA POSISI AKTIF**\n"
+        f"──────────────\n"
+        f"{side_icon} **{data.get('symbol')}** ({side})\n"
+        f"📥 Entry  : `{fmt(entry)}`\n"
+        f"📊 Harga  : `{fmt(current)}`\n"
+        f"{pnl_icon} PNL      : `{pnl:+.4f} USDT ({pnl_pct:+.2f}%)`\n"
+        f"──────────────\n"
+        f"💚 Health Score: **{health:.0f}/100**\n"
+        f"{health_bar}\n"
+        f"──────────────\n"
+        f"⚠️ **Peringatan:**\n{alert_lines}\n"
+        f"──────────────\n"
+        f"📌 Keputusan: **HOLD** — Kondisi masih aman\n"
+    )
+    try:
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
+    except Exception as e:
+        log_error("TELEGRAM_POSITION_ALERT", str(e))
+
+async def send_early_close_notification(bot: Bot, chat_id: str, data: dict):
+    """
+    Kirim notifikasi ketika bot menutup posisi lebih awal berdasarkan analisa teknikal.
+    data keys: symbol, side, health_score, confidence, reasons, entry_price, close_price, pnl, pnl_pct
+    """
+    side = data.get("side", "LONG")
+    side_icon = "🟢" if side == "LONG" else "🔴"
+    pnl = data.get("pnl", 0)
+    pnl_icon = "📈 PROFIT" if pnl >= 0 else "📉 LOSS"
+    reasons = data.get("reasons", [])
+    confidence = data.get("confidence", 0)
+    health = data.get("health_score", 0)
+    entry = data.get("entry_price", 0)
+    close_p = data.get("close_price", 0)
+    pnl_pct = data.get("pnl_pct", 0)
+    waktu = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    summary = trade_summary()
+    net_pnl_hari_ini = summary['daily_net_pnl']
+    net_pnl_icon = "🟢" if net_pnl_hari_ini >= 0 else "🔴"
+    win_rate_hari_ini = (summary['daily_wins'] / summary['daily_total'] * 100) if summary['daily_total'] else 0
+
+    def fmt(v): return f"{v:.8f}".rstrip('0').rstrip('.')
+
+    reason_lines = "\n".join(f"   🔺 {r}" for r in reasons) if reasons else "   —"
+
+    message = (
+        f"🤖 **SMART EXIT — POSISI DITUTUP OTOMATIS**\n"
+        f"──────────────\n"
+        f"{side_icon} **{data.get('symbol')}** ({side})\n"
+        f"🏆 Hasil  : **{pnl_icon}**\n"
+        f"──────────────\n"
+        f"📥 Entry     : `{fmt(entry)}`\n"
+        f"📤 Close     : `{fmt(close_p)}`\n"
+        f"💰 PNL       : `{pnl:+.4f} USDT ({pnl_pct:+.2f}%)`\n"
+        f"⏱️ Waktu     : {waktu} WIB\n"
+        f"──────────────\n"
+        f"🧠 **Alasan Smart Exit (Confidence {confidence:.0f}%):**\n"
+        f"{reason_lines}\n"
+        f"💚 Health Score terakhir: **{health:.0f}/100**\n"
+        f"──────────────\n"
+        f"📊 **Rekap PNL Hari Ini**\n"
+        f"💰 Total PNL Bersih: {net_pnl_icon} {net_pnl_hari_ini:+.4f} USDT\n"
+        f"🎯 Win Rate Hari Ini: {win_rate_hari_ini:.1f}% ({summary['daily_wins']}W / {summary['daily_losses']}L)\n"
+    )
+    try:
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
+    except Exception as e:
+        log_error("TELEGRAM_EARLY_CLOSE", str(e))
+
 
 async def send_trade_notification(bot: Bot, chat_id: str, trade_data: dict):
     """
@@ -19,25 +109,23 @@ async def send_trade_notification(bot: Bot, chat_id: str, trade_data: dict):
 
     message = f"""
 🚨 **BOT ORDER**
-━━━━━━━━━━━━━━━━
-🪙 Koin: **{trade_data.get('symbol')}**
-{direction_icon} Arah: **{direction}**
-💰 Margin Target: **{float(trade_data.get('margin_usdt', 0) or 0):.6f} USDT**
-⚙️ Leverage Efektif: **{trade_data.get('leverage')}x**
-💼 Notional Target: **{float(trade_data.get('notional_usdt', 0) or 0):.2f} USDT**
-📦 Kuantitas: **{quantity:.8f}**
-💵 Harga Masuk: **{entry_price:.8f}**
-━━━━━━━━━━━━━━━━
-🎯 Score Sinyal: **{score}**
-🧠 Confidence Rule: **{confidence}**
-━━━━━━━━━━━━━━━━
-🎯 Target TP: **{tp_price:.8f}** *(+{tp_value:.2f} USDT)*
-🛡️ Target SL: **{sl_price:.8f}** *(-{sl_value:.2f} USDT)*
-━━━━━━━━━━━━━━━━
-📊 **Analisa:** {trade_data.get('syarat_1', '')}
-📝 **Alasan:** {trade_data.get('syarat_2', '')}
-🧠 **ML:** {trade_data.get('pola_ml', 'N/A')}
-⏱️ Timeframe: `{trade_data.get('tf')}` | `{trade_data.get('datetime')}`
+──────────────
+🪙 **Koin:** {trade_data.get('symbol')}
+{direction_icon} **Arah:** {direction}
+💰 **Margin Target:** {float(trade_data.get('margin_usdt', 0) or 0):.6f} USDT
+⚙️ **Leverage Efektif:** {trade_data.get('leverage')}x
+💼 **Notional Target:** {float(trade_data.get('notional_usdt', 0) or 0):.2f} USDT
+📦 **Kuantitas:** {quantity}
+💵 **Harga Masuk:** {entry_price}
+──────────────
+🎯 **Score:** {score}
+🧠 **Confidence:** {confidence}
+──────────────
+🎯 **Target TP:**
+{tp_price} (+${tp_value:.2f})
+──────────────
+🛡️ **Target SL:**
+{sl_price} (-${sl_value:.2f})
 """
     try:
         await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
@@ -80,25 +168,28 @@ async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dic
         title = "🔔 **ORDER FILLED** 🔔"
 
     result_icon = "🟢" if float(realized_pnl) > 0 else "🔴"
+    result_text = "PROFIT" if float(realized_pnl) > 0 else "LOSS"
+    net_pnl_hari_ini = summary['daily_net_pnl']
+    net_pnl_icon = "🟢" if net_pnl_hari_ini > 0 else "🔴"
+    win_rate_hari_ini = (summary['daily_wins'] / summary['daily_total'] * 100) if summary['daily_total'] else 0
+    waktu_tutup = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
     message = f"""
-📊 **BOT CLOSED ORDER**
-━━━━━━━━━━━━━━
-🪙 Koin: **{symbol}**
-🏆 Hasil Akhir: {result_icon} **{'PROFIT' if float(realized_pnl) > 0 else 'LOSS'}**
-━━━━━━━━━━━━━━
-💰 Realisasi PNL: **{float(realized_pnl):+.4f} USDT**
-💸 Total Komisi: **{commission:.4f} USDT**
-💵 Harga Keluar: `{price}`
-📈 MFE Teramati: **{mfe} USDT**
-📉 MAE Teramati: **{mae} USDT**
-⏱️ Waktu Pegang: **{duration}**
-━━━━━━━━━━━━━━
-📊 **REKAP TRADING**
-💰 Total PNL Bersih: **{summary['net_pnl']:+.4f} USDT**
-🎯 Win Rate: **{summary['win_rate']:.1f}% ({summary['wins']}W/{summary['losses']}L)**
-📅 PNL Hari Ini: **{summary['daily_net_pnl']:+.4f} USDT**
-📊 Win Rate Hari Ini: **{(summary['daily_wins'] / summary['daily_total'] * 100) if summary['daily_total'] else 0:.1f}% ({summary['daily_wins']}W/{summary['daily_losses']}L)**
-━━━━━━━━━━━━━━
+🏁 **BOT CLOSED ORDER**
+──────────────
+🪙 **Koin:** {symbol}
+🏆 **Hasil Akhir:** {result_icon} **{result_text}**
+──────────────
+💰 **Realisasi PNL Total:** {float(realized_pnl):+.4f} USDT
+💵 **Harga Keluar Akhir:** {price}
+💸 **Total Biaya Komisi:** {commission:.4f} USDT
+📈 **MFE Teramati:** {mfe} USDT
+📉 **MAE Teramati:** {mae} USDT
+⏱️ **Waktu Tutup:** {waktu_tutup} WIB
+──────────────
+📊 **Rekap PNL Hari Ini**
+💰 **Total PNL Bersih:** {net_pnl_icon} {net_pnl_hari_ini:+.4f} USDT
+🎯 **Win Rate Hari Ini:** {win_rate_hari_ini:.1f}% ({summary['daily_wins']}W / {summary['daily_losses']}L)
 """
     try:
         await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')

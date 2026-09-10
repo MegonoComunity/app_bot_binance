@@ -1,10 +1,17 @@
 import asyncio
 import time
 import os
+import sys
 import csv
 from datetime import datetime
 from binance import AsyncClient
 import pandas as pd
+
+# Fix encoding agar emoji/karakter Unicode tidak crash di console Windows (charmap)
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.stderr.encoding != 'utf-8':
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 from config.settings import (
     BINANCE_API_KEY, BINANCE_API_SECRET, TRADING_MODE,
@@ -29,9 +36,11 @@ from indicators.rsi import calculate_rsi
 from indicators.patterns import detect_candlestick_patterns, is_bull_trap
 from indicators.trend import get_htf_trend
 from core.learner import is_pattern_reliable, record_trade_result
-from core.risk_manager import calculate_risk_margin, count_open_positions
+from core.risk_manager import calculate_risk_margin, count_open_positions, check_daily_loss_limit, calculate_atr_based_stop_loss
 from core.trade_stats import record_closed_trade
 from indicators.smart_buy import find_frequent_open_close_level, is_near_frequent_level
+from indicators.volatility_breakout import calculate_squeeze_score, check_breakout
+from core.scanner import get_funding_rate, check_order_book_depth
 
 from ml_vision.chart_renderer import render_ohlcv_to_image
 from ml_vision.preprocessor import preprocess_chart_image
@@ -39,7 +48,13 @@ from ml_vision.model import get_model
 from ml_vision.inference import predict_candle_pattern
 
 from telegram.bot_handler import bot, dp, bot_state
-from telegram.notifier import send_trade_notification, send_error_log
+from telegram.notifier import (
+    send_trade_notification,
+    send_error_log,
+    send_position_analysis_alert,
+    send_early_close_notification,
+)
+from core.position_monitor import analyze_position
 
 # Inisialisasi file log sukses virtual trading
 if not os.path.exists("virtual_success_log.csv"):
@@ -139,6 +154,8 @@ async def scanner_loop():
                         
                         # 2. Ambil data OHLCV
                         df = await fetch_ohlcv(client, symbol, interval=TIMEFRAME, limit=100)
+                        if df.empty:
+                            continue
                         
                         # Ambil data Higher Timeframe (MTFA)
                         df_htf = await fetch_ohlcv(client, symbol, interval=HTF_TIMEFRAME, limit=100)
@@ -239,6 +256,9 @@ async def scanner_loop():
                         pattern_name = pattern_info['pattern']
                         pattern_type = pattern_info['type']
                         
+                        squeeze_score = calculate_squeeze_score(df)
+                        breakout_info = check_breakout(df)
+                        
                         syarat_teknikal_long = near_lower_bb and near_support and is_oversold and htf_trend in ["UPTREND", "SIDEWAYS"]
                         syarat_pola_long = near_support and pattern_detected and pattern_type == 'LONG' and htf_trend in ["UPTREND", "SIDEWAYS"]
                         syarat_smart_buy_long = (
@@ -250,10 +270,16 @@ async def scanner_loop():
                         syarat_teknikal_short = near_upper_bb and near_resistance and is_overbought and htf_trend in ["DOWNTREND", "SIDEWAYS"]
                         syarat_pola_short = near_resistance and pattern_detected and pattern_type == 'SHORT' and htf_trend in ["DOWNTREND", "SIDEWAYS"]
                         
+                        # Gabungkan logika Breakout
+                        is_breakout_long = breakout_info['detected'] and htf_trend in ["UPTREND", "SIDEWAYS"]
+                        is_breakout_short = breakout_info['detected'] and htf_trend in ["DOWNTREND", "SIDEWAYS"]
+                        
                         # Anti-Bull Trap (Untuk LONG)
                         bull_trap_detected = is_bull_trap(last_row['open'], last_row['high'], last_row['low'], last_row['close'])
                         
-                        if syarat_smart_buy_long:
+                        if is_breakout_long:
+                            alasan_long = f"Breakout Squeeze ({squeeze_score}) - {breakout_info['reason']} (HTF: {htf_trend})"
+                        elif syarat_smart_buy_long:
                             alasan_long = (
                                 f"Smart Buy level {smart_buy_level['level']:.8f} "
                                 f"({smart_buy_level['touches']}x open/close 20D, HTF: {htf_trend})"
@@ -262,21 +288,41 @@ async def scanner_loop():
                             alasan_long = f"Pola {pattern_name} Terdeteksi! (HTF: {htf_trend})"
                         else:
                             alasan_long = f"RSI Oversold ({rsi_value:.2f}) (HTF: {htf_trend})"
-                        alasan_short = f"Pola {pattern_name} Terdeteksi! (HTF: {htf_trend})" if syarat_pola_short else f"RSI Overbought ({rsi_value:.2f}) (HTF: {htf_trend})"
+                            
+                        if is_breakout_short:
+                            alasan_short = f"Breakout Squeeze ({squeeze_score}) - {breakout_info['reason']} (HTF: {htf_trend})"
+                        elif syarat_pola_short:
+                            alasan_short = f"Pola {pattern_name} Terdeteksi! (HTF: {htf_trend})"
+                        else:
+                            alasan_short = f"RSI Overbought ({rsi_value:.2f}) (HTF: {htf_trend})"
                         
                         # Evaluasi Keandalan dari Learner
-                        reliable_long = is_pattern_reliable(alasan_long) if (syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long) else True
-                        reliable_short = is_pattern_reliable(alasan_short) if (syarat_teknikal_short or syarat_pola_short) else True
+                        reliable_long = is_pattern_reliable(alasan_long) if (syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or is_breakout_long) else True
+                        reliable_short = is_pattern_reliable(alasan_short) if (syarat_teknikal_short or syarat_pola_short or is_breakout_short) else True
                         
-                        trigger_long = (syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long) and not bull_trap_detected and reliable_long
-                        trigger_short = (syarat_teknikal_short or syarat_pola_short) and reliable_short
+                        trigger_long = (syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or is_breakout_long) and not bull_trap_detected and reliable_long
+                        trigger_short = (syarat_teknikal_short or syarat_pola_short or is_breakout_short) and reliable_short
                         
                         if trigger_long or trigger_short:
                             batch_signal_found = True
                             trade_type = "LONG" if trigger_long else "SHORT"
                             alasan = alasan_long if trade_type == "LONG" else alasan_short
                             
-                            print(f"SETUP TEKNIKAL {trade_type} DITEMUKAN PADA {symbol}! Alasan: {alasan}")
+                            print(f"SETUP {trade_type} DITEMUKAN PADA {symbol}! Squeeze Score: {squeeze_score}. Alasan: {alasan}")
+                            
+                            # Validasi Ekstra Lanjutan: Funding Rate & Liquidity
+                            funding_rate = await get_funding_rate(client, symbol)
+                            if abs(funding_rate) > bot_config.max_funding_rate_percent / 100.0:
+                                print(f"⏩ Lewati {symbol}: Funding Rate terlalu tinggi ({funding_rate*100:.3f}%).")
+                                continue
+                                
+                            liquidity = await check_order_book_depth(client, symbol, 1.0)
+                            if trade_type == "LONG" and liquidity['asks_usdt'] < bot_config.min_order_book_depth_usdt:
+                                print(f"⏩ Lewati {symbol}: Liquidity asks terlalu tipis (${liquidity['asks_usdt']:.2f}).")
+                                continue
+                            elif trade_type == "SHORT" and liquidity['bids_usdt'] < bot_config.min_order_book_depth_usdt:
+                                print(f"⏩ Lewati {symbol}: Liquidity bids terlalu tipis (${liquidity['bids_usdt']:.2f}).")
+                                continue
                             
                             # 5.5 Cek Modal dan Sesuaikan Margin (Modal harus 50x Margin)
                             try:
@@ -302,6 +348,20 @@ async def scanner_loop():
                                 if is_position_open:
                                     print(f"⏩ Lewati {symbol}: Sudah ada posisi terbuka.")
                                     continue
+                                
+                                # Cek Daily Loss Limit (Circuit Breaker)
+                                limit_reached, current_loss = await check_daily_loss_limit(client, bot_config.daily_loss_limit_percent, modal)
+                                if limit_reached:
+                                    print(f"🛑 DAILY LOSS LIMIT TERCAPAI ({current_loss:.2f}%). Pause bot...")
+                                    bot_state["is_running"] = False
+                                    bot_state["state"] = "PAUSED"
+                                    await bot.send_message(
+                                        TELEGRAM_ADMIN_CHAT_ID,
+                                        f"🛑 **CIRCUIT BREAKER AKTIF!**\nKerugian hari ini telah mencapai batas: `{current_loss:.2f}%` (Limit: {bot_config.daily_loss_limit_percent}%).\n\n"
+                                        f"Bot otomatis dihentikan sementara untuk menghindari kerugian lebih lanjut.\n"
+                                        f"Ketik `/resume` jika Anda ingin tetap melanjutkan."
+                                    )
+                                    break # Keluar dari loop koin
                                 
                                 # Batasan maksimal open posisi
                                 active_positions = count_open_positions(positions)
@@ -335,12 +395,12 @@ async def scanner_loop():
                                     print(f"[WARNING] Margin ({current_margin:.2f}) terlalu kecil, batal beli.")
                                     continue
 
-                                planned_sl_move = (bot_config.sl_percent / 100) / bot_config.leverage
-                                planned_sl_price = (
-                                    current_price * (1 - planned_sl_move)
-                                    if trade_type == "LONG"
-                                    else current_price * (1 + planned_sl_move)
+                                # Hitung Stop Price berbasis ATR untuk Volatility sizing
+                                atr_value = float(df['ATR'].iloc[-1]) if 'ATR' in df else (current_price * 0.015)
+                                planned_sl_price = calculate_atr_based_stop_loss(
+                                    current_price, atr_value, bot_config.atr_multiplier_sl, trade_type
                                 )
+                                
                                 risk_margin = calculate_risk_margin(
                                     modal,
                                     current_price,
@@ -356,35 +416,42 @@ async def scanner_loop():
                                 print(f"[ERROR] Gagal mengecek saldo: {e_bal}")
                                 continue
                                 
+                            # Tentukan apakah pakai Limit atau Market
+                            use_limit_order = (trade_type == "LONG" and liquidity['asks_usdt'] < bot_config.min_order_book_depth_usdt * 2) or \
+                                              (trade_type == "SHORT" and liquidity['bids_usdt'] < bot_config.min_order_book_depth_usdt * 2)
+                            
+                            limit_price = liquidity['best_ask'] if trade_type == "LONG" else liquidity['best_bid']
+                            execution_price = limit_price if use_limit_order else current_price
+
                             # 6. Eksekusi Order
                             if trade_type == "LONG":
                                 order_res = await place_long_order(
-                                    client, symbol, current_price, current_margin, bot_config.leverage
+                                    client, symbol, execution_price, current_margin, bot_config.leverage,
+                                    use_limit=use_limit_order, limit_timeout=bot_config.limit_order_timeout_seconds
                                 )
                             else:
                                 order_res = await place_short_order(
-                                    client, symbol, current_price, current_margin, bot_config.leverage
+                                    client, symbol, execution_price, current_margin, bot_config.leverage,
+                                    use_limit=use_limit_order, limit_timeout=bot_config.limit_order_timeout_seconds
                                 )
                                 
                             if order_res.get('status') == 'success':
                                 quantity = order_res['quantity']
                                 entry_price = order_res['price']
                                 
-                                # Hitung pergerakan harga berdasarkan Target ROI dan Leverage
+                                # Hitung pergerakan harga TP dan jadikan Stop Price sebelumnya sebagai SL
                                 if bot_config.use_trailing_stop:
                                     pm_tp = (bot_config.ts_activation_percent / 100) / bot_config.leverage
                                 else:
                                     pm_tp = (bot_config.tp_percent / 100) / bot_config.leverage
                                     
-                                pm_sl = (bot_config.sl_percent / 100) / bot_config.leverage
-                                
                                 if trade_type == "LONG":
                                     tp_price = entry_price * (1 + pm_tp)
-                                    sl_price = entry_price * (1 - pm_sl)
+                                    sl_price = planned_sl_price
                                     tp_sl_side = 'SELL'
                                 else:
                                     tp_price = entry_price * (1 - pm_tp)
-                                    sl_price = entry_price * (1 + pm_sl)
+                                    sl_price = planned_sl_price
                                     tp_sl_side = 'BUY'
                                 
                                 # Pasang TP / SL
@@ -648,13 +715,148 @@ async def profitable_position_monitor_loop():
     finally:
         await client.close_connection()
 
+
+SMART_MONITOR_INTERVAL = 60  # cek posisi aktif tiap 60 detik
+
+async def smart_position_monitor_loop():
+    """
+    Loop cerdas: memantau posisi yang sudah terbuka dan menjalankan
+    analisa teknikal ulang. Jika sinyal berbalik → tutup posisi lebih awal.
+    Juga mengirim peringatan jika Health Score mulai menurun.
+    """
+    testnet = TRADING_MODE == "TESTNET"
+    client = await AsyncClient.create(
+        api_key=BINANCE_API_KEY,
+        api_secret=BINANCE_API_SECRET,
+        testnet=testnet,
+    )
+    # Simpan health score sebelumnya agar tidak spam notif jika tidak berubah
+    last_health: dict[str, float] = {}
+
+    print("[SMART MONITOR] Loop analisa posisi aktif dimulai.")
+    try:
+        while True:
+            await asyncio.sleep(SMART_MONITOR_INTERVAL)
+            if not bot_state.get("is_running", False):
+                continue
+            try:
+                account_info = await client.futures_account()
+                positions = account_info.get("positions", [])
+                active_positions = [
+                    p for p in positions if float(p.get("positionAmt", 0)) != 0
+                ]
+
+                if not active_positions:
+                    continue
+
+                print(f"[SMART MONITOR] Menganalisa {len(active_positions)} posisi aktif...")
+
+                for pos in active_positions:
+                    symbol = pos["symbol"]
+                    amt = float(pos["positionAmt"])
+                    entry_price = float(pos["entryPrice"])
+                    mark_price = float(pos.get("markPrice", entry_price))
+                    unr_pnl = float(pos.get("unrealizedProfit", 0))
+                    leverage = float(pos.get("leverage", bot_config.leverage))
+                    initial_margin = (abs(amt) * entry_price / leverage) if leverage > 0 else 1
+                    pnl_pct = (unr_pnl / initial_margin * 100) if initial_margin > 0 else 0
+                    side = "LONG" if amt > 0 else "SHORT"
+
+                    # Ambil OHLCV untuk analisa
+                    df = await fetch_ohlcv(client, symbol, interval=TIMEFRAME, limit=100)
+                    df_htf = await fetch_ohlcv(client, symbol, interval=HTF_TIMEFRAME, limit=60)
+                    if df.empty or df_htf.empty or len(df) < 20:
+                        continue
+
+                    # Jalankan analisa posisi
+                    result = analyze_position(
+                        side=side,
+                        entry_price=entry_price,
+                        current_price=mark_price,
+                        df=df,
+                        df_htf=df_htf,
+                        rsi_oversold=bot_config.rsi_oversold,
+                        rsi_overbought=bot_config.rsi_overbought,
+                        rsi_length=bot_config.rsi_length,
+                        close_score_threshold=60.0,
+                    )
+
+                    print(
+                        f"[SMART MONITOR] {symbol} {side} | "
+                        f"Health: {result.health_score:.0f} | "
+                        f"Decision: {result.decision} | "
+                        f"Reasons: {result.reasons}"
+                    )
+
+                    # ── CLOSE: tutup posisi lebih awal ───────────────────────
+                    if result.decision == "CLOSE":
+                        print(f"[SMART EXIT] Menutup posisi {symbol} {side} — {result.reasons}")
+                        close_side = "SELL" if side == "LONG" else "BUY"
+                        close_res = await emergency_close_position(
+                            client, symbol, close_side, abs(amt)
+                        )
+                        if close_res.get("status") == "success":
+                            await send_early_close_notification(
+                                bot, TELEGRAM_ADMIN_CHAT_ID,
+                                {
+                                    "symbol": symbol,
+                                    "side": side,
+                                    "health_score": result.health_score,
+                                    "confidence": result.confidence,
+                                    "reasons": result.reasons,
+                                    "entry_price": entry_price,
+                                    "close_price": mark_price,
+                                    "pnl": unr_pnl,
+                                    "pnl_pct": pnl_pct,
+                                }
+                            )
+                            last_health.pop(symbol, None)
+                        else:
+                            await send_error_log(
+                                bot, TELEGRAM_ADMIN_CHAT_ID,
+                                f"[SMART EXIT GAGAL] {symbol}: {close_res.get('message')}"
+                            )
+                        continue
+
+                    # ── HOLD: cek apakah health turun signifikan → kirim alert ─
+                    prev_health = last_health.get(symbol, 100.0)
+                    health_drop = prev_health - result.health_score
+
+                    # Kirim alert hanya jika:
+                    # - Ada peringatan aktif DAN
+                    # - Health turun >= 20 poin dari sebelumnya (bukan spam)
+                    if result.alerts and health_drop >= 20:
+                        await send_position_analysis_alert(
+                            bot, TELEGRAM_ADMIN_CHAT_ID,
+                            {
+                                "symbol": symbol,
+                                "side": side,
+                                "health_score": result.health_score,
+                                "alerts": result.alerts,
+                                "entry_price": entry_price,
+                                "current_price": mark_price,
+                                "pnl": unr_pnl,
+                                "pnl_pct": pnl_pct,
+                            }
+                        )
+
+                    last_health[symbol] = result.health_score
+                    await asyncio.sleep(1)  # jeda antar koin agar tidak rate limit
+
+            except Exception as smart_err:
+                print(f"[SMART MONITOR ERROR] {smart_err}")
+                await send_error_log(bot, TELEGRAM_ADMIN_CHAT_ID, f"Smart Monitor Error: {smart_err}")
+    finally:
+        await client.close_connection()
+
 async def main():
-    # Menjalankan Polling Telegram, Scanner, dan WebSocket secara bersamaan
+    # Menjalankan Polling Telegram, Scanner, WebSocket, dan Smart Monitor secara bersamaan
     await asyncio.gather(
         dp.start_polling(bot),
         scanner_loop(),
         user_data_stream_loop(),
         profitable_position_monitor_loop(),
+        smart_position_monitor_loop(),
     )
 
 if __name__ == "__main__":
