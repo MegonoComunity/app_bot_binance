@@ -41,6 +41,7 @@ from core.trade_stats import record_closed_trade
 from indicators.smart_buy import find_frequent_open_close_level, is_near_frequent_level
 from indicators.volatility_breakout import calculate_squeeze_score, check_breakout
 from core.scanner import get_funding_rate, check_order_book_depth
+from core.pattern_memory import record_entry, record_result, score_entry, is_pattern_blacklisted
 
 from ml_vision.chart_renderer import render_ohlcv_to_image
 from ml_vision.preprocessor import preprocess_chart_image
@@ -199,6 +200,10 @@ async def scanner_loop():
                                 await bot.send_message(TELEGRAM_ERROR_CHAT_ID, msg)
                                 
                                 record_trade_result(v_trade['alasan'], is_profit=True)
+                                # Update pattern memory: pola ini WIN
+                                if 'entry_id' in v_trade:
+                                    record_result(v_trade['entry_id'], is_win=True,
+                                                  pnl=abs(v_trade['entry_price'] * 0.01))
                                 
                                 # Simpan ke CSV
                                 with open("virtual_success_log.csv", "a", newline="") as f:
@@ -212,6 +217,10 @@ async def scanner_loop():
                                 await bot.send_message(TELEGRAM_ERROR_CHAT_ID, msg)
                                 
                                 record_trade_result(v_trade['alasan'], is_profit=False)
+                                # Update pattern memory: pola ini LOSS
+                                if 'entry_id' in v_trade:
+                                    record_result(v_trade['entry_id'], is_win=False,
+                                                  pnl=-abs(v_trade['entry_price'] * 0.005))
                                 del virtual_trades[symbol]
                         # -------------------------------------------------
                         
@@ -309,6 +318,26 @@ async def scanner_loop():
                             alasan = alasan_long if trade_type == "LONG" else alasan_short
                             
                             print(f"SETUP {trade_type} DITEMUKAN PADA {symbol}! Squeeze Score: {squeeze_score}. Alasan: {alasan}")
+
+                            # ── Pattern Memory: Susun kondisi saat ini untuk scoring ──
+                            bb_zone = "LOWER" if near_lower_bb else ("UPPER" if near_upper_bb else "MID")
+                            rsi_zone = ("OVERSOLD" if is_oversold else ("OVERBOUGHT" if is_overbought else "NEUTRAL"))
+                            current_conditions = {
+                                "side": trade_type,
+                                "htf_trend": htf_trend,
+                                "bb_zone": bb_zone,
+                                "rsi_zone": rsi_zone,
+                                "pattern": pattern_name if pattern_detected else "NONE",
+                                "is_breakout": breakout_info.get('detected', False),
+                                "squeeze_score": squeeze_score,
+                            }
+                            # Cek apakah pola ini masuk blacklist (sering rugi)
+                            if is_pattern_blacklisted(current_conditions):
+                                print(f"🚫 [PATTERN MEMORY] {symbol} {trade_type}: Pola ini masuk BLACKLIST berdasarkan riwayat. Skip.")
+                                continue
+                            # Hitung skor kecocokan dengan pola historis
+                            pattern_score = score_entry(current_conditions)
+                            print(f"🧠 [PATTERN MEMORY] {symbol} {trade_type}: Pattern Score = {pattern_score:.1f}")
                             
                             # Validasi Ekstra Lanjutan: Funding Rate & Liquidity
                             funding_rate = await get_funding_rate(client, symbol)
@@ -380,7 +409,9 @@ async def scanner_loop():
                                                 'tp_price': current_price * (1 + pm_tp) if trade_type == 'LONG' else current_price * (1 - pm_tp),
                                                 'sl_price': current_price * (1 - pm_sl) if trade_type == 'LONG' else current_price * (1 + pm_sl),
                                                 'alasan': alasan,
-                                                'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                                'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                                'conditions': current_conditions,
+                                                'entry_id': record_entry(symbol, trade_type, current_price, current_conditions, alasan),
                                             }
                                         else:
                                             print(f"⏩ Lewati {symbol}: Kapasitas Paper Trading penuh (15 koin).")
@@ -476,7 +507,17 @@ async def scanner_loop():
                                     )
                                     continue
                                 
-                                # 7. Kirim Notifikasi
+                                # 7. Simpan snapshot ke Pattern Memory
+                                entry_id = record_entry(
+                                    symbol=symbol,
+                                    side=trade_type,
+                                    entry_price=entry_price,
+                                    conditions=current_conditions,
+                                    alasan=alasan,
+                                )
+                                bot_state.setdefault("active_trade_entry_ids", {})[symbol] = entry_id
+
+                                # 8. Kirim Notifikasi
                                 signal_score = round(
                                     sum([
                                         htf_trend in (["UPTREND", "SIDEWAYS"] if trade_type == "LONG" else ["DOWNTREND", "SIDEWAYS"]),
@@ -484,9 +525,10 @@ async def scanner_loop():
                                         is_oversold if trade_type == "LONG" else is_overbought,
                                         syarat_smart_buy_long if trade_type == "LONG" else syarat_pola_short,
                                         not bull_trap_detected,
-                                    ]) * 20,
+                                    ]) * 20 + pattern_score * 0.2,  # Bobot pattern memory
                                     1,
                                 )
+                                signal_score = min(signal_score, 100)
                                 trade_data = {
                                     'symbol': symbol,
                                     'direction': trade_type,

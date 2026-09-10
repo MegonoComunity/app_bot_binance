@@ -1,4 +1,5 @@
 import os
+import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
@@ -21,6 +22,7 @@ from core.order_manager import close_profitable_position
 from core.market_analysis import analyze_daily_market
 from core.risk_manager import calculate_account_pnl_percent, calculate_position_pnl_percent
 from core.trade_stats import trade_summary
+from core.pattern_memory import get_top_patterns
 
 # Initialize bot and dispatcher
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -868,6 +870,38 @@ async def predict_photo_handler(message: types.Message):
         
     except Exception as e:
         await wait_msg.edit_text(f"❌ Terjadi kesalahan saat prediksi: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 📚 /pola — Tampilkan pola terbaik yang sudah dipelajari bot
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dp.message(Command("pola"))
+async def pola_handler(message: types.Message):
+    """Tampilkan top pola entry yang dipelajari dari riwayat trading."""
+    top = get_top_patterns(top_n=10)
+    if not top:
+        await message.answer(
+            "🧠 **Pattern Memory masih kosong.**\n"
+            "_Bot belum memiliki cukup data untuk belajar. "
+            "Jalankan bot dan biarkan dia melakukan paper trading atau real trading terlebih dahulu._",
+            parse_mode="Markdown"
+        )
+        return
+
+    lines = ["📚 **TOP POLA ENTRY YANG DIPELAJARI BOT**\n──────────────"]
+    for i, p in enumerate(top, 1):
+        fp = p["fingerprint"]
+        bar = "🟩" * int(p["win_rate"] / 10) + "⬜" * (10 - int(p["win_rate"] / 10))
+        lines.append(
+            f"\n**#{i}** `{fp}`\n"
+            f"   🎯 Win Rate : **{p['win_rate']}%** | W:{p['win']} / L:{p['loss']} ({p['total']} trade)\n"
+            f"   💰 Avg PNL  : `{p['avg_pnl']:+.4f} USDT`\n"
+            f"   📅 Terakhir : `{p['last_seen']}`\n"
+            f"   {bar}"
+        )
+    lines.append("\n──────────────\n_Pola dengan Win Rate ≥ 45% digunakan bot sebagai referensi entry._")
+    await message.answer("\n".join(lines), parse_mode="Markdown")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
