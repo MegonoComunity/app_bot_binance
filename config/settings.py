@@ -6,6 +6,10 @@ load_dotenv()
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 
+# ─── PostgreSQL ───────────────────────────────────────────────────────────────
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+DB_ENABLED   = bool(DATABASE_URL)
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
 TELEGRAM_ERROR_CHAT_ID = os.getenv("TELEGRAM_ERROR_CHAT_ID") or TELEGRAM_ADMIN_CHAT_ID
@@ -37,6 +41,10 @@ RSI_OVERSOLD_ENV = float(os.getenv("RSI_OVERSOLD", "35"))
 RSI_OVERBOUGHT_ENV = float(os.getenv("RSI_OVERBOUGHT", "75"))
 SCANNER_MODE_ENV = os.getenv("SCANNER_MODE", "per_coin").lower()
 ANALYSIS_LOOKBACK_DAYS_ENV = max(int(os.getenv("ANALYSIS_LOOKBACK_DAYS", "20")), 20)
+MAX_DAILY_LOSS_PERCENT_ENV = float(os.getenv("MAX_DAILY_LOSS_PERCENT", "3.0"))
+MAX_TOTAL_EXPOSURE_PERCENT_ENV = float(os.getenv("MAX_TOTAL_EXPOSURE_PERCENT", "100.0"))
+BREAKOUT_MIN_SCORE_ENV = float(os.getenv("BREAKOUT_MIN_SCORE", "50.0"))
+BREAKOUT_VOLUME_MULTIPLIER_ENV = float(os.getenv("BREAKOUT_VOLUME_MULTIPLIER", "2.0"))
 
 # Fitur Lanjutan: Risk Management, Liquidity, Funding, & Limit Order
 DAILY_LOSS_LIMIT_PERCENT_ENV = float(os.getenv("DAILY_LOSS_LIMIT_PERCENT", "5.0"))
@@ -85,6 +93,10 @@ class BotSettings:
             cls._instance.rsi_overbought = RSI_OVERBOUGHT_ENV
             cls._instance.scanner_mode = SCANNER_MODE_ENV if SCANNER_MODE_ENV in {"per_coin", "batch"} else "per_coin"
             cls._instance.analysis_lookback_days = ANALYSIS_LOOKBACK_DAYS_ENV
+            cls._instance.max_daily_loss_percent = MAX_DAILY_LOSS_PERCENT_ENV
+            cls._instance.max_total_exposure_percent = MAX_TOTAL_EXPOSURE_PERCENT_ENV
+            cls._instance.breakout_min_score = BREAKOUT_MIN_SCORE_ENV
+            cls._instance.breakout_volume_multiplier = BREAKOUT_VOLUME_MULTIPLIER_ENV
             cls._instance.use_trailing_stop = USE_TRAILING_STOP
             cls._instance.ts_activation_percent = TS_ACTIVATION_PERCENT_ENV
             cls._instance.ts_callback_rate = TS_CALLBACK_RATE_ENV

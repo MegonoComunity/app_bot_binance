@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/pattern_memory.py
 
 Sistem Memori Pola Trading.
@@ -8,10 +8,14 @@ Bot kemudian belajar: kombinasi indikator apa yang paling sering menghasilkan WI
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 MEMORY_FILE = "data/pattern_memory.json"
@@ -82,7 +86,31 @@ def record_entry(
         "pnl": None,
     })
     _save(data)
+
+    # Dual-write ke PostgreSQL (non-blocking)
+    _db_write_entry(entry_id, symbol, side, entry_price, fp, alasan, conditions)
+
     return entry_id
+
+
+def _db_write_entry(
+    entry_id: str, symbol: str, side: str, entry_price: float,
+    fingerprint: str, alasan: str, conditions: dict
+) -> None:
+    """Fire-and-forget: tulis pattern entry ke DB."""
+    try:
+        from database.pattern_repo import record_entry as db_record_entry
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(
+                db_record_entry(entry_id, symbol, side, entry_price, fingerprint, alasan, conditions)
+            )
+        else:
+            loop.run_until_complete(
+                db_record_entry(entry_id, symbol, side, entry_price, fingerprint, alasan, conditions)
+            )
+    except Exception as exc:
+        logger.warning(f"[DB] dual-write pattern entry gagal (non-fatal): {exc}")
 
 
 def record_result(entry_id: str, is_win: bool, pnl: float) -> None:
@@ -120,6 +148,22 @@ def record_result(entry_id: str, is_win: bool, pnl: float) -> None:
     data["patterns"] = patterns
     _save(data)
     print(f"[PATTERN MEMORY] Hasil direkam. Total pola dipelajari: {len(patterns)}")
+
+    # Dual-write ke PostgreSQL (non-blocking)
+    _db_write_result(entry_id, is_win, pnl)
+
+
+def _db_write_result(entry_id: str, is_win: bool, pnl: float) -> None:
+    """Fire-and-forget: tulis pattern result ke DB."""
+    try:
+        from database.pattern_repo import record_result as db_record_result
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(db_record_result(entry_id, is_win, pnl))
+        else:
+            loop.run_until_complete(db_record_result(entry_id, is_win, pnl))
+    except Exception as exc:
+        logger.warning(f"[DB] dual-write pattern result gagal (non-fatal): {exc}")
 
 
 def score_entry(conditions: dict, min_samples: int = MIN_SAMPLES_TO_LEARN) -> float:

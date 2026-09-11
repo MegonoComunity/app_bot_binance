@@ -1,8 +1,11 @@
 import csv
 import json
 import os
+import asyncio
+import logging
 from datetime import datetime
 
+logger = logging.getLogger(__name__)
 
 STATS_FILE = "data/trade_stats.json"
 
@@ -18,12 +21,32 @@ def _load_stats() -> dict:
         return {"trades": []}
 
 
+def _write_to_db_async(trade: dict) -> None:
+    """
+    Fire-and-forget: tulis trade ke PostgreSQL di background.
+    Tidak memblokir caller, tidak raise exception jika DB down.
+    """
+    try:
+        from database.trade_repo import insert_trade
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(insert_trade(trade))
+        else:
+            loop.run_until_complete(insert_trade(trade))
+    except Exception as exc:
+        logger.warning(f"[DB] dual-write trade gagal (non-fatal): {exc}")
+
+
 def record_closed_trade(trade: dict) -> dict:
     os.makedirs(os.path.dirname(STATS_FILE), exist_ok=True)
     stats = _load_stats()
     stats["trades"].append(trade)
     with open(STATS_FILE, "w", encoding="utf-8") as file:
         json.dump(stats, file, indent=2)
+
+    # Dual-write ke PostgreSQL (non-blocking)
+    _write_to_db_async(trade)
+
     return trade_summary()
 
 
@@ -36,7 +59,7 @@ def import_legacy_history() -> None:
         with open("real_history_log.csv", "r", encoding="utf-8") as file:
             for row in csv.DictReader(file):
                 pnl = float(row.get("PnL", 0) or 0)
-                stats["trades"].append({
+                trade = {
                     "time": row.get("Waktu", ""),
                     "symbol": row.get("Symbol", ""),
                     "exit_price": row.get("Harga Eksekusi", ""),
@@ -45,7 +68,8 @@ def import_legacy_history() -> None:
                     "mfe": None,
                     "mae": None,
                     "duration_minutes": None,
-                })
+                }
+                stats["trades"].append(trade)
         os.makedirs(os.path.dirname(STATS_FILE), exist_ok=True)
         with open(STATS_FILE, "w", encoding="utf-8") as file:
             json.dump(stats, file, indent=2)
@@ -75,4 +99,4 @@ def trade_summary() -> dict:
         "daily_wins": daily_wins,
         "daily_losses": len(daily) - daily_wins,
         "commission": sum(float(trade.get("commission", 0)) for trade in trades),
-    }
+    }

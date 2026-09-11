@@ -9,6 +9,7 @@ from core.risk_manager import (
     count_open_positions,
 )
 from indicators.smart_buy import find_frequent_open_close_level, is_near_frequent_level
+from indicators.dormant_breakout import calculate_dormant_breakout_score
 from config.settings import BotSettings
 
 
@@ -63,6 +64,19 @@ class SafetyFoundationTests(unittest.TestCase):
         }
         self.assertEqual(calculate_position_pnl_percent(position), 25.0)
         self.assertEqual(calculate_account_pnl_percent(5, 1000), 0.5)
+
+    def test_dormant_breakout_requires_sufficient_history(self):
+        import pandas as pd
+        data = pd.DataFrame({
+            "open": [100] * 20,
+            "high": [101] * 20,
+            "low": [99] * 20,
+            "close": [100] * 20,
+            "volume": [1000] * 20,
+        })
+        result = calculate_dormant_breakout_score(data)
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["reason"], "insufficient_data")
 
 
 if __name__ == "__main__":

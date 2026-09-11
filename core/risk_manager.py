@@ -1,7 +1,5 @@
 from decimal import Decimal, InvalidOperation
-from binance import AsyncClient
-from datetime import datetime, timezone, timedelta
-import time
+from datetime import datetime
 
 
 def calculate_risk_margin(
@@ -54,41 +52,13 @@ def calculate_account_pnl_percent(unrealized_pnl: float, total_margin_balance: f
         return 0.0
     return unrealized_pnl / total_margin_balance * 100
 
-def calculate_atr_based_stop_loss(entry_price: float, atr_value: float, multiplier: float, side: str) -> float:
-    """Menghitung harga Stop Loss berdasarkan ATR."""
-    if side == "LONG":
-        return entry_price - (atr_value * multiplier)
-    else:
-        return entry_price + (atr_value * multiplier)
 
-async def check_daily_loss_limit(client: AsyncClient, daily_limit_percent: float, total_margin_balance: float) -> tuple[bool, float]:
-    """
-    Mengecek apakah akumulasi kerugian hari ini sudah menyentuh daily loss limit.
-    Mengembalikan (is_limit_reached, current_loss_percent)
-    """
-    try:
-        now = datetime.now(timezone.utc)
-        start_of_day = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
-        start_time_ms = int(start_of_day.timestamp() * 1000)
-        
-        # Method yang benar di python-binance: futures_income_history
-        income_history = await client.futures_income_history(
-            incomeType="REALIZED_PNL",
-            startTime=start_time_ms,
-            limit=1000
-        )
-        
-        today_pnl = sum(float(item['income']) for item in income_history)
-        
-        if total_margin_balance <= 0:
-            return False, 0.0
-            
-        pnl_percent = (today_pnl / total_margin_balance) * 100
-        
-        if pnl_percent <= -daily_limit_percent:
-            return True, abs(pnl_percent)
-            
-        return False, abs(pnl_percent) if pnl_percent < 0 else 0.0
-    except Exception as e:
-        print(f"Error checking daily loss limit: {e}")
-        return False, 0.0
+def daily_loss_limit_reached(realized_pnl: float, equity: float, limit_percent: float) -> bool:
+    """Return true when today's realized loss reaches the configured circuit breaker."""
+    if equity <= 0 or limit_percent <= 0:
+        return False
+    return realized_pnl <= -(equity * limit_percent / 100)
+
+
+def total_position_notional(positions: list[dict]) -> float:
+    return sum(abs(float(p.get("positionAmt", 0))) * float(p.get("markPrice", 0)) for p in positions)

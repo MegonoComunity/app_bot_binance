@@ -214,27 +214,16 @@ async def place_take_profit_stop_loss(client: AsyncClient, symbol: str, side: st
         else:
             quantity_str = f"{quantity:.{qty_precision}f}"
         
-        if use_trailing_stop:
-            # Trailing stop market
-            tp_order = await client.futures_create_order(
-                symbol=symbol,
-                side=side,
-                type='TRAILING_STOP_MARKET',
-                activationPrice=round(tp_price, price_precision),
-                callbackRate=callback_rate,
-                quantity=quantity_str,
-                reduceOnly=True
-            )
-        else:
-            # Take profit market
-            tp_order = await client.futures_create_order(
-                symbol=symbol,
-                side=side,
-                type='TAKE_PROFIT_MARKET',
-                stopPrice=round(tp_price, price_precision),
-                closePosition=True,
-                timeInForce='GTC'
-            )
+        # Fixed TP keeps TP_PERCENT deterministic; trailing is not a substitute for TP.
+        tp_order = await client.futures_create_order(
+            symbol=symbol,
+            side=side,
+            type='TAKE_PROFIT_MARKET',
+            stopPrice=round(tp_price, price_precision),
+            closePosition=True,
+            workingType='MARK_PRICE',
+            priceProtect=True,
+        )
         
         # Stop loss market
         sl_order = await client.futures_create_order(
@@ -243,7 +232,12 @@ async def place_take_profit_stop_loss(client: AsyncClient, symbol: str, side: st
             type='STOP_MARKET',
             stopPrice=round(sl_price, price_precision),
             closePosition=True,
-            timeInForce='GTC'
+            workingType='MARK_PRICE',
+            priceProtect=True,
+        )
+        print(
+            f"Protection orders active for {symbol}: "
+            f"TP={tp_order.get('orderId')} SL={sl_order.get('orderId')}"
         )
         return {
             "status": "success",
@@ -253,6 +247,11 @@ async def place_take_profit_stop_loss(client: AsyncClient, symbol: str, side: st
     except Exception as e:
         log_error(f"TP_SL_{symbol}", str(e))
         print(f"Error placing TP/SL for {symbol}: {e}")
+        if "-4130" in str(e):
+            return {
+                "status": "existing",
+                "message": "Binance already has a close-position protective order",
+            }
         return {"status": "error", "message": str(e)}
 
 
