@@ -76,3 +76,11 @@
 2026-09-10 14:32:52,721 - ERROR - [TP_SL_ARBUSDT] APIError(code=-4130): An open stop or take profit order with GTE and closePosition in the direction is existing.
 2026-09-10 14:32:53,302 - ERROR - [TP_SL_GRASSUSDT] APIError(code=-4130): An open stop or take profit order with GTE and closePosition in the direction is existing.
 2026-09-10 15:12:06,604 - ERROR - [TP_SL_ZECUSDT] APIError(code=-4130): An open stop or take profit order with GTE and closePosition in the direction is existing.
+2026-09-11 07:54:40,499 - ERROR - [TP_SL_RAYSOLUSDT] APIError(code=-4130): An open stop or take profit order with GTE and closePosition in the direction is existing.
+2026-09-11 08:01:44,260 - ERROR - [TP_SL_APTUSDT] APIError(code=-4130): An open stop or take profit order with GTE and closePosition in the direction is existing.
+2026-09-11 08:03:04,012 - ERROR - [LONG_ORDER_SOXSUSDT] APIError(code=-4411): Please sign TradFi-Perps agreement contract fapi.
+2026-09-11 08:07:46,407 - ERROR - [TP_SL_ETHFIUSDT] APIError(code=-4130): An open stop or take profit order with GTE and closePosition in the direction is existing.
+2026-09-11 08:08:38,028 - ERROR - [LONG_ORDER_PORTALUSDT] APIError(code=-4005): Quantity greater than max quantity.
+2026-09-11 08:11:54,467 - ERROR - [TP_SL_HUSDT] APIError(code=-4130): An open stop or take profit order with GTE and closePosition in the direction is existing.
+2026-09-11 08:18:14,675 - ERROR - [TP_SL_CETUSUSDT] APIError(code=-4130): An open stop or take profit order with GTE and closePosition in the direction is existing.
+2026-09-11 08:35:58,998 - ERROR - [TP_SL_FLOCKUSDT] APIError(code=-4130): An open stop or take profit order with GTE and closePosition in the direction is existing.
