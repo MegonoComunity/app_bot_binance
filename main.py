@@ -29,10 +29,20 @@ from indicators.rsi import calculate_rsi
 from indicators.patterns import detect_candlestick_patterns, is_bull_trap
 from indicators.trend import get_htf_trend
 from core.learner import is_pattern_reliable, record_trade_result
-from core.risk_manager import calculate_risk_margin, count_open_positions
-from core.risk_manager import daily_loss_limit_reached, total_position_notional
-from core.trade_stats import trade_summary
-from core.trade_stats import record_closed_trade
+from core.risk_manager import (
+    calculate_risk_margin,
+    count_open_positions,
+    daily_loss_limit_reached,
+    total_position_notional,
+    evaluate_time_based_exit,
+)
+from core.trade_stats import trade_summary, record_closed_trade
+from core.pattern_memory import (
+    record_entry as record_pattern_entry,
+    record_result as record_pattern_result,
+    score_entry as score_pattern_entry,
+    is_pattern_blacklisted as is_pattern_memory_blacklisted,
+)
 from indicators.smart_buy import find_frequent_open_close_level, is_near_frequent_level
 from indicators.dormant_breakout import calculate_dormant_breakout_score
 
@@ -50,11 +60,19 @@ try:
     from database.migrations import create_tables
     from database.trade_repo import migrate_from_json as migrate_trades
     from database.pattern_repo import migrate_from_json as migrate_patterns
+    from database.ohlcv_repo import upsert_candles
     from core.ohlcv_scraper import run_initial_scrape, run_short_term_scraper, run_long_term_scraper
     DB_MODULES_LOADED = True
 except ImportError as _db_import_err:
     print(f"[WARNING] Modul database tidak tersedia: {_db_import_err}")
     DB_MODULES_LOADED = False
+
+try:
+    from dashboard.app import start_dashboard_server
+    DASHBOARD_MODULE_LOADED = True
+except ImportError as _dash_err:
+    print(f"[WARNING] Modul dashboard tidak tersedia: {_dash_err}")
+    DASHBOARD_MODULE_LOADED = False
 
 # Inisialisasi file log sukses virtual trading
 if not os.path.exists("virtual_success_log.csv"):
@@ -194,6 +212,10 @@ async def scanner_loop():
                             
                         current_price = df.iloc[-1]['close']
                         htf_trend = get_htf_trend(df_htf)
+
+                        # Simpan 20 hari candle harian (1d) saja ke PostgreSQL agar data hemat (non-blocking)
+                        if DB_MODULES_LOADED:
+                            asyncio.ensure_future(upsert_candles(symbol, "1d", df_daily.to_dict('records')))
                         
                         # --- MONITORING PAPER TRADING (VIRTUAL TRADES) ---
                         if symbol in virtual_trades:
@@ -332,10 +354,26 @@ async def scanner_loop():
                         trigger_short = (syarat_teknikal_short or syarat_pola_short or syarat_breakout_short) and reliable_short
                         
                         if trigger_long or trigger_short:
-                            batch_signal_found = True
                             trade_type = "LONG" if trigger_long else "SHORT"
                             alasan = alasan_long if trade_type == "LONG" else alasan_short
-                            
+
+                            # Snapshot kondisi indikator untuk Pattern Intelligence
+                            conditions_snapshot = {
+                                "side": trade_type,
+                                "htf_trend": htf_trend,
+                                "bb_zone": "LOWER" if near_lower_bb else ("UPPER" if near_upper_bb else "MID"),
+                                "rsi_zone": "OVERSOLD" if is_oversold else ("OVERBOUGHT" if is_overbought else "NEUTRAL"),
+                                "pattern": pattern_name if pattern_detected else "NONE",
+                                "is_breakout": bool(syarat_breakout_long or syarat_breakout_short),
+                                "squeeze_score": float(breakout.get("score", 0)),
+                            }
+
+                            # Evaluasi Pattern Memory: tolak jika pola terbukti buruk (>= 3 sample, WR < 45%)
+                            if is_pattern_memory_blacklisted(conditions_snapshot):
+                                print(f"🚫 [PATTERN MEMORY] Sinyal {trade_type} pada {symbol} DITOLAK karena pola historis memiliki Win Rate rendah!")
+                                continue
+
+                            batch_signal_found = True
                             print(f"SETUP TEKNIKAL {trade_type} DITEMUKAN PADA {symbol}! Alasan: {alasan}")
                             
                             # 5.5 Cek Modal dan Sesuaikan Margin (Modal harus 50x Margin)
@@ -522,12 +560,23 @@ async def scanner_loop():
                                 }
                                 await send_trade_notification(bot, TELEGRAM_ADMIN_CHAT_ID, trade_data)
                                 bot_state["active_trade_reasons"][symbol] = alasan
+
+                                # Catat ke Pattern Memory
+                                pattern_entry_id = record_pattern_entry(
+                                    symbol=symbol,
+                                    side=trade_type,
+                                    entry_price=entry_price,
+                                    conditions=conditions_snapshot,
+                                    alasan=alasan,
+                                )
+
                                 bot_state.setdefault("active_trade_meta", {})[symbol] = {
                                     "entry_time": datetime.now(),
                                     "entry_price": entry_price,
                                     "side": trade_type,
                                     "mfe": 0.0,
                                     "mae": 0.0,
+                                    "pattern_entry_id": pattern_entry_id,
                                 }
                                 
                             # Hindari spam trade di koin yang sama, beri jeda
@@ -603,13 +652,32 @@ async def user_data_stream_loop():
                             duration_minutes = None
                             if meta.get("entry_time"):
                                 duration_minutes = round((datetime.now() - meta["entry_time"]).total_seconds() / 60, 1)
+
+                            # Ambil riwayat funding fee selama posisi terbuka
+                            funding_fee = 0.0
+                            try:
+                                start_ts = int(meta["entry_time"].timestamp() * 1000) if meta.get("entry_time") else int((time.time() - 86400) * 1000)
+                                income_history = await client.futures_income_history(
+                                    symbol=symbol,
+                                    incomeType="FUNDING_FEE",
+                                    startTime=start_ts,
+                                    limit=50
+                                )
+                                funding_fee = sum(float(item.get("income", 0) or 0) for item in income_history)
+                            except Exception as e_ff:
+                                print(f"[FUNDING FEE] Gagal ambil income funding fee {symbol}: {e_ff}")
+
+                            net_pnl = realized_pnl - commission + funding_fee
+
                             order_data = {
                                 "symbol": symbol,
                                 "order_type": order_type,
                                 "price": order_info.get("ap"),
                                 "quantity": order_info.get("q"),
-                                "realized_pnl": f"{realized_pnl:.2f}",
+                                "realized_pnl": realized_pnl,
                                 "commission": commission,
+                                "funding_fee": funding_fee,
+                                "net_pnl": net_pnl,
                                 "mfe": f"{float(meta.get('mfe', 0)):+.4f}",
                                 "mae": f"{float(meta.get('mae', 0)):+.4f}",
                                 "duration": f"{duration_minutes:.1f} menit" if duration_minutes is not None else "N/A",
@@ -621,6 +689,8 @@ async def user_data_stream_loop():
                                 "exit_price": order_data["price"],
                                 "realized_pnl": realized_pnl,
                                 "commission": commission,
+                                "funding_fee": funding_fee,
+                                "net_pnl": net_pnl,
                                 "mfe": meta.get("mfe"),
                                 "mae": meta.get("mae"),
                                 "duration_minutes": duration_minutes,
@@ -629,14 +699,18 @@ async def user_data_stream_loop():
 
                             alasan = bot_state.get("active_trade_reasons", {}).get(symbol)
                             if alasan:
-                                record_trade_result(alasan, realized_pnl > 0)
+                                record_trade_result(alasan, net_pnl > 0)
                                 del bot_state["active_trade_reasons"][symbol]
+
+                            pattern_entry_id = meta.get("pattern_entry_id")
+                            if pattern_entry_id:
+                                record_pattern_result(pattern_entry_id, net_pnl > 0, net_pnl)
 
                             import csv
                             waktu_sekarang = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             if not os.path.exists("real_history_log.csv"):
                                 with open("real_history_log.csv", "w", newline="", encoding="utf-8") as file:
-                                    csv.writer(file).writerow(["Waktu", "Symbol", "Tipe", "Harga Eksekusi", "PnL"])
+                                    csv.writer(file).writerow(["Waktu", "Symbol", "Tipe", "Harga Eksekusi", "PnL", "Funding Fee", "Net PnL"])
 
                             with open("real_history_log.csv", "a", newline="", encoding="utf-8") as file:
                                 csv.writer(file).writerow([
@@ -644,7 +718,9 @@ async def user_data_stream_loop():
                                     order_data["symbol"],
                                     order_type,
                                     order_data["price"],
-                                    order_data["realized_pnl"],
+                                    f"{realized_pnl:.4f}",
+                                    f"{funding_fee:.4f}",
+                                    f"{net_pnl:.4f}",
                                 ])
 
                         elif res.get("e") == "ACCOUNT_UPDATE":
@@ -717,6 +793,42 @@ async def profitable_position_monitor_loop():
                             TELEGRAM_ADMIN_CHAT_ID,
                             f"ROI AUTO CLOSE {symbol}: {reason} tercapai "
                             f"({roi_percent:+.2f}%). Status: {close_result.get('status')}",
+                        )
+                        continue
+
+                    # Evaluasi Time-Based Risk Exit (Hold > 2h & ROI <= -5% atau Hold > 4h & ROI >= +20%)
+                    meta = bot_state.get("active_trade_meta", {}).get(symbol, {})
+                    entry_time = meta.get("entry_time")
+                    if entry_time:
+                        hold_duration_hours = (datetime.now() - entry_time).total_seconds() / 3600.0
+                    else:
+                        update_time_ms = int(position.get("updateTime", 0))
+                        hold_duration_hours = ((now_ms - update_time_ms) / 3600000.0) if update_time_ms > 0 else 0.0
+
+                    should_time_close, time_close_reason = evaluate_time_based_exit(
+                        hold_duration_hours=hold_duration_hours,
+                        roi_percent=roi_percent,
+                        loss_limit_percent=-5.0,
+                        loss_time_limit_hours=2.0,
+                        profit_target_percent=20.0,
+                        profit_time_limit_hours=4.0,
+                    )
+
+                    if amount != 0 and should_time_close:
+                        close_result = await emergency_close_position(
+                            client,
+                            symbol,
+                            "SELL" if amount > 0 else "BUY",
+                            abs(amount),
+                        )
+                        print(
+                            f"[TIME-BASED AUTO CLOSE] {symbol}: {time_close_reason} "
+                            f"status={close_result.get('status')}"
+                        )
+                        await send_error_log(
+                            bot,
+                            TELEGRAM_ADMIN_CHAT_ID,
+                            f"⏱️ TIME-BASED AUTO CLOSE {symbol}\n{time_close_reason}\nStatus: {close_result.get('status')}",
                         )
                         continue
 
@@ -839,17 +951,26 @@ async def main():
     # Startup database & OHLCV scraper
     await _startup_database(_startup_client)
 
+    # Startup web dashboard
+    dashboard_runner = None
+    if DASHBOARD_MODULE_LOADED:
+        try:
+            dashboard_runner = await start_dashboard_server(host="0.0.0.0", port=8000)
+        except Exception as _dash_err:
+            print(f"[DASHBOARD] Gagal start dashboard: {_dash_err}")
+
     try:
         await asyncio.gather(
             dp.start_polling(bot),
             scanner_loop(),
             user_data_stream_loop(),
             profitable_position_monitor_loop(),
-            # OHLCV background scrapers
-            run_short_term_scraper(_startup_client) if DB_MODULES_LOADED else asyncio.sleep(0),
-            run_long_term_scraper(_startup_client)  if DB_MODULES_LOADED else asyncio.sleep(0),
+            # Background scraper (hanya Daily 1d agar database hemat)
+            run_long_term_scraper(_startup_client) if DB_MODULES_LOADED else asyncio.sleep(0),
         )
     finally:
+        if dashboard_runner:
+            await dashboard_runner.cleanup()
         await _startup_client.close_connection()
         if DB_MODULES_LOADED:
             await close_pool()

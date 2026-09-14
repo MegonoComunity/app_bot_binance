@@ -86,7 +86,11 @@ def trade_summary() -> dict:
     daily = [trade for trade in trades if str(trade.get("time", "")).startswith(today)]
     daily_wins = sum(float(trade.get("realized_pnl", 0)) > 0 for trade in daily)
     def net(trade):
-        return float(trade.get("realized_pnl", 0)) - float(trade.get("commission", 0))
+        return (
+            float(trade.get("realized_pnl", 0) or 0)
+            - float(trade.get("commission", 0) or 0)
+            + float(trade.get("funding_fee", 0) or 0)
+        )
 
     return {
         "total": len(trades),
@@ -98,5 +102,6 @@ def trade_summary() -> dict:
         "daily_total": len(daily),
         "daily_wins": daily_wins,
         "daily_losses": len(daily) - daily_wins,
-        "commission": sum(float(trade.get("commission", 0)) for trade in trades),
+        "commission": sum(float(trade.get("commission", 0) or 0) for trade in trades),
+        "funding_fee": sum(float(trade.get("funding_fee", 0) or 0) for trade in trades),
     }

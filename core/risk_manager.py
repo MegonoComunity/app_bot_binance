@@ -62,3 +62,34 @@ def daily_loss_limit_reached(realized_pnl: float, equity: float, limit_percent: 
 
 def total_position_notional(positions: list[dict]) -> float:
     return sum(abs(float(p.get("positionAmt", 0))) * float(p.get("markPrice", 0)) for p in positions)
+
+
+def evaluate_time_based_exit(
+    hold_duration_hours: float,
+    roi_percent: float,
+    loss_limit_percent: float = -5.0,
+    loss_time_limit_hours: float = 2.0,
+    profit_target_percent: float = 20.0,
+    profit_time_limit_hours: float = 4.0,
+) -> tuple[bool, str]:
+    """
+    Evaluasi apakah posisi harus ditutup darurat berdasarkan durasi hold dan ROI:
+    1. Hold > 2 jam DAN ROI <= -5%  --> Tutup darurat (Cut Loss) untuk cegah boncos berkepanjangan.
+    2. Hold > 4 jam DAN ROI >= +20% --> Tutup darurat (Take Profit) untuk mengunci profit sebelum reversal.
+
+    Returns:
+        tuple[bool, str]: (should_close, reason_string)
+    """
+    if hold_duration_hours >= loss_time_limit_hours and roi_percent <= loss_limit_percent:
+        return (
+            True,
+            f"CUT_LOSS_TIME: Hold {hold_duration_hours:.1f}h (>= {loss_time_limit_hours}h) & Loss {roi_percent:.2f}% (<= {loss_limit_percent}%)"
+        )
+
+    if hold_duration_hours >= profit_time_limit_hours and roi_percent >= profit_target_percent:
+        return (
+            True,
+            f"TAKE_PROFIT_TIME: Hold {hold_duration_hours:.1f}h (>= {profit_time_limit_hours}h) & Profit +{roi_percent:.2f}% (>= +{profit_target_percent}%)"
+        )
+
+    return (False, "")

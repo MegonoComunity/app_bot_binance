@@ -146,14 +146,16 @@ async def send_error_log(bot: Bot, chat_id: str, error: str):
 
 async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dict):
     """
-    Mengirim notifikasi ketika Take Profit atau Stop Loss tereksekusi.
+    Mengirim notifikasi ketika Take Profit atau Stop Loss tereksekusi beserta rincian Funding Fee.
     """
     order_type = order_data.get('order_type', '')
     symbol = order_data.get('symbol', '')
     price = order_data.get('price', '')
     quantity = order_data.get('quantity', '')
-    realized_pnl = order_data.get('realized_pnl', '0.0')
+    realized_pnl = float(order_data.get('realized_pnl', 0) or 0)
     commission = float(order_data.get('commission', 0) or 0)
+    funding_fee = float(order_data.get('funding_fee', 0) or 0)
+    net_pnl = float(order_data.get('net_pnl', realized_pnl - commission + funding_fee) or 0)
     mfe = order_data.get('mfe', 'N/A')
     mae = order_data.get('mae', 'N/A')
     duration = order_data.get('duration', 'N/A')
@@ -165,30 +167,36 @@ async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dic
     elif 'STOP' in order_type:
         title = "🔴 **STOP LOSS TERSENTUH!** 🔴"
     else:
-        title = "🔔 **ORDER FILLED** 🔔"
+        title = "🏁 **BOT CLOSED ORDER** 🏁"
 
-    result_icon = "🟢" if float(realized_pnl) > 0 else "🔴"
-    result_text = "PROFIT" if float(realized_pnl) > 0 else "LOSS"
+    result_icon = "🟢" if net_pnl > 0 else "🔴"
+    result_text = "PROFIT" if net_pnl > 0 else "LOSS"
     net_pnl_hari_ini = summary['daily_net_pnl']
     net_pnl_icon = "🟢" if net_pnl_hari_ini > 0 else "🔴"
     win_rate_hari_ini = (summary['daily_wins'] / summary['daily_total'] * 100) if summary['daily_total'] else 0
     waktu_tutup = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+    funding_icon = "🟢" if funding_fee >= 0 else "🔴"
+
     message = f"""
-🏁 **BOT CLOSED ORDER**
+{title}
 ──────────────
 🪙 **Koin:** {symbol}
 🏆 **Hasil Akhir:** {result_icon} **{result_text}**
 ──────────────
-💰 **Realisasi PNL Total:** {float(realized_pnl):+.4f} USDT
-💵 **Harga Keluar Akhir:** {price}
-💸 **Total Biaya Komisi:** {commission:.4f} USDT
-📈 **MFE Teramati:** {mfe} USDT
-📉 **MAE Teramati:** {mae} USDT
+💰 **Gross Realized PNL:** `{realized_pnl:+.4f} USDT`
+💸 **Biaya Komisi Trading:** `-{commission:.4f} USDT`
+🔄 **Funding Fee (Pendanaan):** `{funding_icon} {funding_fee:+.4f} USDT`
+──────────────────────────────
+💵 **NET PNL BERSIH:** `{result_icon} {net_pnl:+.4f} USDT`
+──────────────
+💵 **Harga Keluar Akhir:** `{price}`
+⏱️ **Durasi Posisi:** `{duration}`
+📈 **MFE Teramati:** `{mfe}` | 📉 **MAE:** `{mae}`
 ⏱️ **Waktu Tutup:** {waktu_tutup} WIB
 ──────────────
 📊 **Rekap PNL Hari Ini**
-💰 **Total PNL Bersih:** {net_pnl_icon} {net_pnl_hari_ini:+.4f} USDT
+💰 **Total PNL Bersih:** {net_pnl_icon} `{net_pnl_hari_ini:+.4f} USDT`
 🎯 **Win Rate Hari Ini:** {win_rate_hari_ini:.1f}% ({summary['daily_wins']}W / {summary['daily_losses']}L)
 """
     try:

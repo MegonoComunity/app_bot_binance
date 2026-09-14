@@ -152,6 +152,48 @@ async def get_top_patterns(top_n: int = 10, min_samples: int = 3) -> list[dict]:
         return []
 
 
+async def get_all_patterns(limit: int = 100) -> list[dict]:
+    """Ambil semua pola untuk ditampilkan di dashboard."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT fingerprint, wins, losses, total, win_rate, total_pnl, conditions, last_seen
+                FROM pattern_memory
+                ORDER BY total DESC, win_rate DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+        result = []
+        for r in rows:
+            total = r["total"]
+            wins = r["wins"]
+            losses = r["losses"]
+            win_rate = float(r["win_rate"] or 0)
+            status = "LEARNING"
+            if total >= 3:
+                status = "APPROVED" if win_rate >= 45.0 else "BLACKLISTED"
+            
+            result.append({
+                "fingerprint": r["fingerprint"],
+                "win": wins,
+                "loss": losses,
+                "total": total,
+                "win_rate": win_rate,
+                "total_pnl": round(float(r["total_pnl"] or 0), 4),
+                "avg_pnl": round(float(r["total_pnl"] or 0) / total, 4) if total > 0 else 0.0,
+                "status": status,
+                "last_seen": str(r["last_seen"])[:19] if r["last_seen"] else "",
+            })
+        return result
+    except Exception as exc:
+        logger.error(f"[DB] Gagal ambil all patterns: {exc}")
+        return []
+
+
+
 async def get_pattern_score(fingerprint: str, min_samples: int = 3) -> Optional[float]:
     """
     Ambil win_rate untuk fingerprint tertentu dari DB.

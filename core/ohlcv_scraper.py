@@ -27,14 +27,11 @@ logger = logging.getLogger(__name__)
 # ─── Konfigurasi ─────────────────────────────────────────────────────────────
 
 TOP_N_COINS       = 30      # Jumlah koin teratas yang di-scrape
-CANDLE_LIMIT      = 500     # Candle per symbol per timeframe
+CANDLE_LIMIT      = 100     # Candle per symbol untuk daily (20-100 hari)
 
-# (timeframe_binance, interval_detik_rescrape)
+# Hanya timeframe Daily (1d) agar data database tidak membengkak
 TIMEFRAME_SCHEDULE = [
-    ("5m",  5 * 60),         # Setiap 5 menit
-    ("1h",  5 * 60),         # Setiap 5 menit
     ("1d",  6 * 60 * 60),    # Setiap 6 jam
-    ("1w",  6 * 60 * 60),    # Setiap 6 jam
 ]
 
 DELAY_BETWEEN_SYMBOLS = 0.3   # detik delay antar API call (rate limit safety)

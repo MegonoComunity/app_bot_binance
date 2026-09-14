@@ -27,7 +27,10 @@ async def insert_trade(trade: dict) -> bool:
     try:
         pool = await get_pool()
         pnl = float(trade.get("realized_pnl", 0) or 0)
-        result = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
+        commission = float(trade.get("commission", 0) or 0)
+        funding_fee = float(trade.get("funding_fee", 0) or 0)
+        net_pnl = float(trade.get("net_pnl", pnl - commission + funding_fee) or 0)
+        result = "WIN" if net_pnl > 0 else ("LOSS" if net_pnl < 0 else "BREAKEVEN")
 
         # Parse waktu
         closed_at_raw = trade.get("time") or trade.get("closed_at")
@@ -41,9 +44,9 @@ async def insert_trade(trade: dict) -> bool:
                 """
                 INSERT INTO trade_history
                     (symbol, side, entry_price, exit_price, realized_pnl,
-                     commission, margin_usdt, leverage, mfe, mae,
+                     commission, funding_fee, net_pnl, margin_usdt, leverage, mfe, mae,
                      duration_minutes, order_type, result, closed_at)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
                 ON CONFLICT DO NOTHING
                 """,
                 trade.get("symbol", "UNKNOWN"),
@@ -51,7 +54,9 @@ async def insert_trade(trade: dict) -> bool:
                 float(trade.get("entry_price", 0) or 0) or None,
                 float(trade.get("exit_price", 0) or 0) or None,
                 pnl,
-                float(trade.get("commission", 0) or 0),
+                commission,
+                funding_fee,
+                net_pnl,
                 float(trade.get("margin_usdt", 0) or 0) or None,
                 int(trade.get("leverage", 0) or 0) or None,
                 float(trade.get("mfe", 0) or 0) if trade.get("mfe") is not None else None,
@@ -80,9 +85,10 @@ async def get_trade_summary() -> dict:
                     COUNT(*) AS total,
                     SUM(CASE WHEN result = 'WIN'  THEN 1 ELSE 0 END) AS wins,
                     SUM(CASE WHEN result = 'LOSS' THEN 1 ELSE 0 END) AS losses,
-                    SUM(realized_pnl - commission) AS net_pnl,
+                    SUM(COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0))) AS net_pnl,
                     SUM(commission) AS commission_total,
-                    SUM(CASE WHEN closed_at::date = $1 THEN realized_pnl - commission ELSE 0 END) AS daily_net_pnl,
+                    SUM(COALESCE(funding_fee, 0)) AS funding_fee_total,
+                    SUM(CASE WHEN closed_at::date = $1 THEN COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0)) ELSE 0 END) AS daily_net_pnl,
                     COUNT(CASE WHEN closed_at::date = $1 THEN 1 END) AS daily_total,
                     SUM(CASE WHEN closed_at::date = $1 AND result='WIN' THEN 1 ELSE 0 END) AS daily_wins
                 FROM trade_history
@@ -99,6 +105,7 @@ async def get_trade_summary() -> dict:
             "win_rate":     round(wins / total * 100, 1) if total > 0 else 0.0,
             "net_pnl":      round(float(row["net_pnl"] or 0), 4),
             "commission":   round(float(row["commission_total"] or 0), 4),
+            "funding_fee":  round(float(row["funding_fee_total"] or 0), 4),
             "daily_net_pnl": round(float(row["daily_net_pnl"] or 0), 4),
             "daily_total":  row["daily_total"] or 0,
             "daily_wins":   row["daily_wins"]  or 0,
@@ -107,6 +114,52 @@ async def get_trade_summary() -> dict:
     except Exception as exc:
         logger.error(f"[DB] Gagal ambil trade summary: {exc}")
         return {}
+
+
+async def get_recent_trades(limit: int = 50) -> list[dict]:
+    """Mengambil riwayat trade terakhir untuk dashboard."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, symbol, side, entry_price, exit_price, realized_pnl,
+                       commission, COALESCE(funding_fee, 0) AS funding_fee,
+                       COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0)) AS net_pnl,
+                       margin_usdt, leverage, mfe, mae,
+                       duration_minutes, order_type, result, closed_at
+                FROM trade_history
+                ORDER BY closed_at DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+        return [
+            {
+                "id": r["id"],
+                "symbol": r["symbol"],
+                "side": r["side"],
+                "entry_price": float(r["entry_price"]) if r["entry_price"] else None,
+                "exit_price": float(r["exit_price"]) if r["exit_price"] else None,
+                "realized_pnl": float(r["realized_pnl"]),
+                "commission": float(r["commission"]),
+                "funding_fee": float(r["funding_fee"]),
+                "net_pnl": round(float(r["net_pnl"]), 4),
+                "margin_usdt": float(r["margin_usdt"]) if r["margin_usdt"] else None,
+                "leverage": r["leverage"],
+                "mfe": float(r["mfe"]) if r["mfe"] is not None else None,
+                "mae": float(r["mae"]) if r["mae"] is not None else None,
+                "duration_minutes": float(r["duration_minutes"]) if r["duration_minutes"] is not None else None,
+                "order_type": r["order_type"],
+                "result": r["result"],
+                "closed_at": str(r["closed_at"]),
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        logger.error(f"[DB] Gagal ambil recent trades: {exc}")
+        return []
+
 
 
 async def migrate_from_json(json_path: str = "data/trade_stats.json") -> int:

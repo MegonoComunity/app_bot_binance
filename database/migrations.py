@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS trade_history (
     exit_price       NUMERIC(20, 8),
     realized_pnl     NUMERIC(20, 8),
     commission       NUMERIC(20, 8),
+    funding_fee      NUMERIC(20, 8) DEFAULT 0,
+    net_pnl          NUMERIC(20, 8),
     margin_usdt      NUMERIC(10, 2),
     leverage         INT,
     mfe              NUMERIC(20, 8),
@@ -31,6 +33,8 @@ CREATE TABLE IF NOT EXISTS trade_history (
     result           VARCHAR(10),
     closed_at        TIMESTAMPTZ    NOT NULL DEFAULT NOW()
 );
+ALTER TABLE trade_history ADD COLUMN IF NOT EXISTS funding_fee NUMERIC(20, 8) DEFAULT 0;
+ALTER TABLE trade_history ADD COLUMN IF NOT EXISTS net_pnl NUMERIC(20, 8);
 """
 
 _CREATE_PATTERN_MEMORY = """

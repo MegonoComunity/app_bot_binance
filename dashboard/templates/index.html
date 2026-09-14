@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CryptoBot Analytics | Pro Terminal</title>
+  <!-- Google Fonts: Outfit & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- TradingView Lightweight Charts -->
+  <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+
+  <style>
+    :root {
+      --bg-dark: #090d16;
+      --bg-card: rgba(18, 24, 38, 0.75);
+      --bg-card-hover: rgba(26, 35, 54, 0.85);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --border-glow: rgba(0, 242, 254, 0.2);
+      
+      --accent-cyan: #00f2fe;
+      --accent-blue: #4facfe;
+      --accent-emerald: #00e676;
+      --accent-rose: #ff3366;
+      --accent-amber: #ffb300;
+      
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', sans-serif;
+    }
+
+    h1, h2, h3, h4, .font-heading {
+      font-family: 'Outfit', sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 10% 15%, rgba(0, 242, 254, 0.05) 0%, transparent 40%),
+        radial-gradient(circle at 90% 85%, rgba(79, 172, 254, 0.05) 0%, transparent 40%);
+      color: var(--text-main);
+      min-height: 100vh;
+      padding-bottom: 40px;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--bg-dark);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1e293b;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #334155;
+    }
+
+    /* Top Navbar */
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 32px;
+      background: rgba(11, 15, 25, 0.8);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-color);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #000;
+      box-shadow: 0 0 20px rgba(0, 242, 254, 0.4);
+    }
+    .brand-name {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      background: linear-gradient(90deg, #fff, #94a3b8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .nav-status {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    .badge-live {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      background: rgba(0, 230, 118, 0.1);
+      border: 1px solid rgba(0, 230, 118, 0.3);
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--accent-emerald);
+    }
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--accent-emerald);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--accent-emerald);
+      animation: pulse 1.8s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.9); opacity: 0.7; }
+      50% { transform: scale(1.3); opacity: 1; }
+      100% { transform: scale(0.9); opacity: 0.7; }
+    }
+
+    .btn-refresh {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+    .btn-refresh:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--accent-cyan);
+    }
+
+    /* Container */
+    .container {
+      max-width: 1400px;
+      margin: 24px auto;
+      padding: 0 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Metrics Grid */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+    .metric-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .metric-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255, 255, 255, 0.15);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+    }
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .metric-card:hover::before {
+      opacity: 1;
+    }
+    .metric-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .metric-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .metric-value {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      font-family: 'Outfit', sans-serif;
+    }
+    .metric-sub {
+      margin-top: 6px;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+    .val-positive { color: var(--accent-emerald); }
+    .val-negative { color: var(--accent-rose); }
+    .val-neutral { color: var(--accent-cyan); }
+
+    /* Main Chart Section */
+    .chart-section {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+    }
+    .chart-header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .chart-title-area {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .symbol-select {
+      background: #161f30;
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      outline: none;
+      cursor: pointer;
+    }
+    .symbol-select:focus {
+      border-color: var(--accent-cyan);
+    }
+    .tf-tabs {
+      display: flex;
+      background: #111827;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 4px;
+      gap: 4px;
+    }
+    .tf-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tf-btn.active {
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+      color: #000;
+      box-shadow: 0 0 10px rgba(0, 242, 254, 0.3);
+    }
+    #tv-chart-container {
+      width: 100%;
+      height: 480px;
+      position: relative;
+    }
+
+    /* Tabs Layout */
+    .tab-section {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+    }
+    .nav-tabs {
+      display: flex;
+      gap: 12px;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 14px;
+      margin-bottom: 20px;
+    }
+    .nav-tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s;
+    }
+    .nav-tab-btn:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .nav-tab-btn.active {
+      color: var(--accent-cyan);
+      background: rgba(0, 242, 254, 0.1);
+      border: 1px solid rgba(0, 242, 254, 0.2);
+    }
+
+    /* Tables */
+    .table-responsive {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.875rem;
+    }
+    th {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-muted);
+      font-weight: 600;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border-color);
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.5px;
+    }
+    td {
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--text-main);
+    }
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+    .badge-approved {
+      background: rgba(0, 230, 118, 0.12);
+      color: var(--accent-emerald);
+      border: 1px solid rgba(0, 230, 118, 0.3);
+    }
+    .badge-blacklisted {
+      background: rgba(255, 51, 102, 0.12);
+      color: var(--accent-rose);
+      border: 1px solid rgba(255, 51, 102, 0.3);
+    }
+    .badge-learning {
+      background: rgba(255, 179, 0, 0.12);
+      color: var(--accent-amber);
+      border: 1px solid rgba(255, 179, 0, 0.3);
+    }
+    .badge-long {
+      background: rgba(0, 230, 118, 0.15);
+      color: var(--accent-emerald);
+    }
+    .badge-short {
+      background: rgba(255, 51, 102, 0.15);
+      color: var(--accent-rose);
+    }
+
+    .fingerprint-text {
+      font-family: monospace;
+      font-size: 0.8rem;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 4px 8px;
+      border-radius: 4px;
+      color: #93c5fd;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .progress-bar-container {
+      width: 100px;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navbar -->
+  <header class="navbar">
+    <div class="brand">
+      <div class="brand-logo">
+        <i data-lucide="trending-up" style="width: 20px; height: 20px;"></i>
+      </div>
+      <div>
+        <div class="brand-name">CryptoBot Pro Analytics</div>
+        <div style="font-size: 0.75rem; color: var(--text-dim);">Pattern Memory & 20-Day OHLCV Engine</div>
+      </div>
+    </div>
+
+    <div class="nav-status">
+      <div class="badge-live">
+        <div class="pulse-dot"></div>
+        <span id="bot-status-text">BOT ACTIVE (24/7)</span>
+      </div>
+      <button class="btn-refresh" onclick="refreshAllData()">
+        <i data-lucide="refresh-cw" style="width: 15px; height: 15px;"></i>
+        Refresh
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="container">
+
+    <!-- Top Metrics Grid -->
+    <section class="metrics-grid">
+      <!-- Total Realized Net PnL -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span>Net Realized PnL</span>
+          <div class="metric-icon" style="color: var(--accent-cyan);">
+            <i data-lucide="dollar-sign" style="width: 18px;"></i>
+          </div>
+        </div>
+        <div class="metric-value" id="val-net-pnl">$0.00</div>
+        <div class="metric-sub" id="sub-pnl">Total Profit / Loss Bersih</div>
+      </div>
+
+      <!-- Win Rate % -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span>Win Rate Akurasi</span>
+          <div class="metric-icon" style="color: var(--accent-emerald);">
+            <i data-lucide="target" style="width: 18px;"></i>
+          </div>
+        </div>
+        <div class="metric-value" id="val-win-rate">0.0%</div>
+        <div class="metric-sub" id="sub-win-rate">0 Menang / 0 Kalah</div>
+      </div>
+
+      <!-- Total Trades & AI Sinyal -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span>Total Eksekusi & Sinyal</span>
+          <div class="metric-icon" style="color: var(--accent-amber);">
+            <i data-lucide="activity" style="width: 18px;"></i>
+          </div>
+        </div>
+        <div class="metric-value" id="val-total-trades">0</div>
+        <div class="metric-sub" id="sub-virtual-trades">+0 Virtual TP Signals</div>
+      </div>
+
+      <!-- Active Position & Risk -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span>Posisi Terbuka Aktif</span>
+          <div class="metric-icon" style="color: var(--accent-blue);">
+            <i data-lucide="layers" style="width: 18px;"></i>
+          </div>
+        </div>
+        <div class="metric-value" id="val-active-positions">0</div>
+        <div class="metric-sub" id="sub-active-positions">Risk: Auto-Close 2h(-5%) / 4h(+20%)</div>
+      </div>
+    </section>
+
+    <!-- Candlestick Chart Area (TradingView Lightweight Charts) -->
+    <section class="chart-section">
+      <div class="chart-header">
+        <div class="chart-title-area">
+          <select id="select-symbol" class="symbol-select" onchange="loadCandles()">
+            <option value="BTCUSDT">BTCUSDT</option>
+            <option value="ETHUSDT">ETHUSDT</option>
+            <option value="SOLUSDT">SOLUSDT</option>
+          </select>
+          <div style="font-size: 0.85rem; color: var(--text-dim);">
+            📊 Data 20 Hari OHLCV Tersimpan di PostgreSQL
+          </div>
+        </div>
+
+        <div class="tf-tabs">
+          <button class="tf-btn" data-tf="5m" onclick="changeTimeframe('5m')">5m</button>
+          <button class="tf-btn" data-tf="1h" onclick="changeTimeframe('1h')">1h</button>
+          <button class="tf-btn active" data-tf="1d" onclick="changeTimeframe('1d')">1D (20D)</button>
+          <button class="tf-btn" data-tf="1w" onclick="changeTimeframe('1w')">1W</button>
+        </div>
+      </div>
+
+      <!-- Chart Container -->
+      <div id="tv-chart-container"></div>
+    </section>
+
+    <!-- Navigation Tabs Section: Patterns, Trades, Active Positions -->
+    <section class="tab-section">
+      <div class="nav-tabs">
+        <button class="nav-tab-btn active" onclick="switchTab('patterns-tab', this)">
+          <i data-lucide="brain" style="width: 16px;"></i>
+          AI Pattern Intelligence
+        </button>
+        <button class="nav-tab-btn" onclick="switchTab('trades-tab', this)">
+          <i data-lucide="history" style="width: 16px;"></i>
+          Riwayat Transaksi Real
+        </button>
+        <button class="nav-tab-btn" onclick="switchTab('virtual-tab', this)">
+          <i data-lucide="sparkles" style="width: 16px;"></i>
+          Virtual Paper Sinyal
+        </button>
+      </div>
+
+      <!-- Tab 1: Pattern Intelligence -->
+      <div id="patterns-tab" class="tab-content">
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Pola Sidik Jari (Fingerprint)</th>
+                <th>Status AI</th>
+                <th>Win / Loss</th>
+                <th>Win Rate</th>
+                <th>Total PnL</th>
+                <th>Terakhir Dilihat</th>
+              </tr>
+            </thead>
+            <tbody id="pattern-table-body">
+              <tr><td colspan="6" style="text-align: center; color: var(--text-dim);">Memuat data pola...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tab 2: Real Trades History -->
+      <div id="trades-tab" class="tab-content" style="display: none;">
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Waktu</th>
+                <th>Koin</th>
+                <th>Posisi</th>
+                <th>Entry / Exit</th>
+                <th>Gross PnL</th>
+                <th>Komisi</th>
+                <th>Funding Fee</th>
+                <th>Net PnL</th>
+                <th>Durasi</th>
+                <th>Hasil</th>
+              </tr>
+            </thead>
+            <tbody id="trades-table-body">
+              <tr><td colspan="10" style="text-align: center; color: var(--text-dim);">Memuat riwayat transaksi...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tab 3: Virtual Signals -->
+      <div id="virtual-tab" class="tab-content" style="display: none;">
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Waktu</th>
+                <th>Koin</th>
+                <th>Posisi</th>
+                <th>Harga Entry</th>
+                <th>Target TP</th>
+                <th>Alasan Setup Indikator</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="virtual-table-body">
+              <tr><td colspan="7" style="text-align: center; color: var(--text-dim);">Memuat virtual sinyal...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <script>
+    // Inisialisasi Icon Lucide
+    lucide.createIcons();
+
+    let currentTf = '1d';
+    let chart, candleSeries, volumeSeries;
+
+    // Inisialisasi TradingView Lightweight Chart
+    function initChart() {
+      const container = document.getElementById('tv-chart-container');
+      container.innerHTML = '';
+
+      chart = LightweightCharts.createChart(container, {
+        width: container.clientWidth,
+        height: 480,
+        layout: {
+          background: { color: 'transparent' },
+          textColor: '#94a3b8',
+        },
+        grid: {
+          vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
+          horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
+        },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        rightPriceScale: {
+          borderColor: 'rgba(255, 255, 255, 0.08)',
+        },
+        timeScale: {
+          borderColor: 'rgba(255, 255, 255, 0.08)',
+          timeVisible: true,
+          secondsVisible: false,
+        },
+      });
+
+      candleSeries = chart.addCandlestickSeries({
+        upColor: '#00e676',
+        downColor: '#ff3366',
+        borderVisible: false,
+        wickUpColor: '#00e676',
+        wickDownColor: '#ff3366',
+      });
+
+      volumeSeries = chart.addHistogramSeries({
+        color: '#26a69a',
+        priceFormat: { type: 'volume' },
+        priceScaleId: '',
+        scaleMargins: { top: 0.8, bottom: 0 },
+      });
+
+      window.addEventListener('resize', () => {
+        chart.applyOptions({ width: container.clientWidth });
+      });
+    }
+
+    // Ambil daftar koin dari backend
+    async function loadSymbols() {
+      try {
+        const res = await fetch('/api/symbols?tf=' + currentTf);
+        const data = await res.json();
+        const select = document.getElementById('select-symbol');
+        select.innerHTML = '';
+        data.symbols.forEach(sym => {
+          const opt = document.createElement('option');
+          opt.value = sym;
+          opt.textContent = sym;
+          select.appendChild(opt);
+        });
+        if (data.symbols.length > 0) {
+          loadCandles();
+        }
+      } catch (e) {
+        console.error('Error load symbols:', e);
+      }
+    }
+
+    // Ambil data Candlestick OHLCV 20 hari
+    async function loadCandles() {
+      const symbol = document.getElementById('select-symbol').value;
+      if (!symbol) return;
+
+      try {
+        const res = await fetch(`/api/candles/${symbol}?tf=${currentTf}&limit=500`);
+        const data = await res.json();
+        
+        if (data.candles && data.candles.length > 0) {
+          candleSeries.setData(data.candles);
+          const volData = data.candles.map(c => ({
+            time: c.time,
+            value: c.volume,
+            color: c.close >= c.open ? 'rgba(0, 230, 118, 0.3)' : 'rgba(255, 51, 102, 0.3)',
+          }));
+          volumeSeries.setData(volData);
+          chart.timeScale().fitContent();
+        }
+      } catch (e) {
+        console.error('Error load candles:', e);
+      }
+    }
+
+    function changeTimeframe(tf) {
+      currentTf = tf;
+      document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+      document.querySelector(`.tf-btn[data-tf="${tf}"]`).classList.add('active');
+      loadCandles();
+    }
+
+    // Fetch Overview Metrics
+    async function loadOverview() {
+      try {
+        const res = await fetch('/api/overview');
+        const data = await res.json();
+        const s = data.trade_summary;
+
+        // PnL
+        const netPnl = s.net_pnl || 0;
+        const pnlEl = document.getElementById('val-net-pnl');
+        pnlEl.textContent = (netPnl >= 0 ? '+$' : '-$') + Math.abs(netPnl).toFixed(2);
+        pnlEl.className = 'metric-value ' + (netPnl >= 0 ? 'val-positive' : 'val-negative');
+
+        // Win Rate
+        const wrEl = document.getElementById('val-win-rate');
+        wrEl.textContent = (s.win_rate || 0).toFixed(1) + '%';
+        document.getElementById('sub-win-rate').textContent = `${s.wins || 0} Menang / ${s.losses || 0} Kalah`;
+
+        // Total Trades
+        document.getElementById('val-total-trades').textContent = s.total || 0;
+        document.getElementById('sub-virtual-trades').textContent = `+${data.virtual_signals_count || 0} Virtual Sinyal Sukses`;
+
+        // Active positions
+        document.getElementById('val-active-positions').textContent = data.active_positions.length;
+      } catch (e) {
+        console.error('Error load overview:', e);
+      }
+    }
+
+    // Fetch Patterns
+    async function loadPatterns() {
+      try {
+        const res = await fetch('/api/patterns');
+        const data = await res.json();
+        const tbody = document.getElementById('pattern-table-body');
+        tbody.innerHTML = '';
+
+        if (!data.patterns || data.patterns.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-dim);">Belum ada pola tersimpan.</td></tr>';
+          return;
+        }
+
+        data.patterns.forEach(p => {
+          let badgeClass = 'badge-learning';
+          let statusText = 'LEARNING';
+          if (p.status === 'APPROVED') {
+            badgeClass = 'badge-approved';
+            statusText = 'APPROVED';
+          } else if (p.status === 'BLACKLISTED') {
+            badgeClass = 'badge-blacklisted';
+            statusText = 'BLACKLISTED';
+          }
+
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td><span class="fingerprint-text">${p.fingerprint}</span></td>
+            <td><span class="badge ${badgeClass}">${statusText}</span></td>
+            <td>${p.win}W / ${p.loss}L (${p.total}x)</td>
+            <td>
+              <strong>${p.win_rate.toFixed(1)}%</strong>
+              <div class="progress-bar-container">
+                <div class="progress-bar-fill" style="width: ${p.win_rate}%; background: ${p.win_rate >= 50 ? 'var(--accent-emerald)' : 'var(--accent-rose)'};"></div>
+              </div>
+            </td>
+            <td class="${p.total_pnl >= 0 ? 'val-positive' : 'val-negative'}">
+              ${p.total_pnl >= 0 ? '+' : ''}${p.total_pnl.toFixed(2)} USDT
+            </td>
+            <td style="color: var(--text-dim); font-size: 0.8rem;">${p.last_seen || '-'}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (e) {
+        console.error('Error load patterns:', e);
+      }
+    }
+
+    // Fetch Trades
+    async function loadTrades() {
+      try {
+        const res = await fetch('/api/trades');
+        const data = await res.json();
+
+        // Real trades
+        const tbodyReal = document.getElementById('trades-table-body');
+        tbodyReal.innerHTML = '';
+        if (!data.real_trades || data.real_trades.length === 0) {
+          tbodyReal.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-dim);">Belum ada data transaksi real.</td></tr>';
+        } else {
+          data.real_trades.forEach(t => {
+            const tr = document.createElement('tr');
+            const netVal = t.net_pnl !== undefined ? t.net_pnl : (t.realized_pnl - t.commission);
+            const isWin = netVal > 0;
+            const ffVal = t.funding_fee || 0;
+            tr.innerHTML = `
+              <td style="color: var(--text-dim); font-size: 0.8rem;">${t.closed_at}</td>
+              <td><strong>${t.symbol}</strong></td>
+              <td><span class="badge ${t.side === 'LONG' ? 'badge-long' : 'badge-short'}">${t.side}</span></td>
+              <td style="font-size: 0.8rem;">${t.entry_price ? t.entry_price.toFixed(4) : '-'} → ${t.exit_price ? t.exit_price.toFixed(4) : '-'}</td>
+              <td>${t.realized_pnl >= 0 ? '+' : ''}${t.realized_pnl.toFixed(2)}</td>
+              <td style="color: var(--text-dim); font-size: 0.8rem;">-${t.commission.toFixed(4)}</td>
+              <td class="${ffVal >= 0 ? 'val-positive' : 'val-negative'}" style="font-size: 0.8rem;">
+                ${ffVal >= 0 ? '+' : ''}${ffVal.toFixed(4)}
+              </td>
+              <td class="${isWin ? 'val-positive' : 'val-negative'}">
+                <strong>${netVal >= 0 ? '+' : ''}${netVal.toFixed(2)} USDT</strong>
+              </td>
+              <td>${t.duration_minutes ? t.duration_minutes.toFixed(1) + ' min' : '-'}</td>
+              <td><span class="badge ${isWin ? 'badge-approved' : 'badge-blacklisted'}">${t.result}</span></td>
+            `;
+            tbodyReal.appendChild(tr);
+          });
+        }
+
+        // Virtual trades
+        const tbodyVirt = document.getElementById('virtual-table-body');
+        tbodyVirt.innerHTML = '';
+        if (!data.virtual_trades || data.virtual_trades.length === 0) {
+          tbodyVirt.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-dim);">Belum ada virtual trade.</td></tr>';
+        } else {
+          data.virtual_trades.forEach(v => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td style="color: var(--text-dim); font-size: 0.8rem;">${v.Time || '-'}</td>
+              <td><strong>${v.Symbol || '-'}</strong></td>
+              <td><span class="badge ${v.Tipe === 'LONG' ? 'badge-long' : 'badge-short'}">${v.Tipe || '-'}</span></td>
+              <td>${v['Entry Price'] || '-'}</td>
+              <td>${v['TP Price'] || '-'}</td>
+              <td style="color: #93c5fd; font-size: 0.8rem;">${v.Alasan || '-'}</td>
+              <td><span class="badge badge-approved">TARGET HIT</span></td>
+            `;
+            tbodyVirt.appendChild(tr);
+          });
+        }
+      } catch (e) {
+        console.error('Error load trades:', e);
+      }
+    }
+
+    function switchTab(tabId, btn) {
+      document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+      document.querySelectorAll('.nav-tab-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(tabId).style.display = 'block';
+      btn.classList.add('active');
+    }
+
+    function refreshAllData() {
+      loadOverview();
+      loadPatterns();
+      loadTrades();
+      loadCandles();
+    }
+
+    // Initial Startup
+    document.addEventListener('DOMContentLoaded', () => {
+      initChart();
+      loadSymbols();
+      loadOverview();
+      loadPatterns();
+      loadTrades();
+
+      // Auto refresh setiap 15 detik
+      setInterval(refreshAllData, 15000);
+    });
+  </script>
+</body>
+</html>
