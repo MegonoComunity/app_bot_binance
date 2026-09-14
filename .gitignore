@@ -16,6 +16,12 @@ data/
 .idea/
 .DS_Store
 
+# Database dumps / Backups
+*.sql
+*.sql.gz
+*.zip
+database/*.sql
+
 # Virtual Environment
 venv/
 
