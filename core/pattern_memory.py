@@ -249,3 +249,39 @@ def is_pattern_blacklisted(conditions: dict) -> bool:
         if wr < MIN_WIN_RATE_TO_USE:
             return True
     return False
+
+
+def get_pattern_stats_for_entry(entry_id: str) -> dict:
+    """
+    Ambil statistik evaluasi AI Memory untuk entry_id tertentu.
+    Mengembalikan dictionary berisi fingerprint, win_rate, total_trades, wins, dan losses.
+    """
+    data = _load()
+    fp = "N/A"
+    for entry in data.get("entries", []):
+        if entry.get("id") == entry_id:
+            fp = entry.get("fingerprint", "N/A")
+            break
+
+    if fp == "N/A" or fp not in data.get("patterns", {}):
+        return {
+            "fingerprint": fp if fp != "N/A" else "Kombinasi Standar",
+            "win_rate": 0.0,
+            "total_trades": 0,
+            "wins": 0,
+            "losses": 0,
+        }
+
+    pat = data["patterns"][fp]
+    total = pat.get("total", 0)
+    wins = pat.get("win", 0)
+    losses = pat.get("loss", 0)
+    wr = round((wins / total * 100), 1) if total > 0 else 0.0
+    return {
+        "fingerprint": fp,
+        "win_rate": wr,
+        "total_trades": total,
+        "wins": wins,
+        "losses": losses,
+    }
+

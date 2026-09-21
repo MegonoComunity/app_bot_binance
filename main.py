@@ -45,6 +45,7 @@ from core.pattern_memory import (
     record_result as record_pattern_result,
     score_entry as score_pattern_entry,
     is_pattern_blacklisted as is_pattern_memory_blacklisted,
+    get_pattern_stats_for_entry,
 )
 from indicators.smart_buy import find_frequent_open_close_level, is_near_frequent_level
 from indicators.dormant_breakout import calculate_dormant_breakout_score
@@ -728,6 +729,27 @@ async def user_data_stream_loop():
 
                             net_pnl = realized_pnl - commission + funding_fee
 
+                            # Rekam hasil ke Pattern Memory dan ambil statistik polanya
+                            pattern_entry_id = meta.get("pattern_entry_id")
+                            ai_stats = {}
+                            if pattern_entry_id:
+                                record_pattern_result(pattern_entry_id, net_pnl > 0, net_pnl)
+                                ai_stats = get_pattern_stats_for_entry(pattern_entry_id)
+
+                            alasan = bot_state.get("active_trade_reasons", {}).get(symbol)
+                            if alasan:
+                                record_trade_result(alasan, net_pnl > 0)
+                                del bot_state["active_trade_reasons"][symbol]
+
+                            margin_val = float(meta.get("margin_usdt", 0) or 0)
+                            mfe_val = float(meta.get("mfe", 0) or 0)
+                            mae_val = float(meta.get("mae", 0) or 0)
+                            mfe_pct = (mfe_val / margin_val * 100) if margin_val > 0 else 0.0
+                            mae_pct = (abs(mae_val) / margin_val * 100) if margin_val > 0 else 0.0
+
+                            mfe_str = f"+{mfe_pct:.2f}%" if margin_val > 0 else f"{mfe_val:+.4f}"
+                            mae_str = f"-{mae_pct:.2f}%" if margin_val > 0 else f"{mae_val:+.4f}"
+
                             order_data = {
                                 "symbol": symbol,
                                 "order_type": order_type,
@@ -737,9 +759,13 @@ async def user_data_stream_loop():
                                 "commission": commission,
                                 "funding_fee": funding_fee,
                                 "net_pnl": net_pnl,
-                                "mfe": f"{float(meta.get('mfe', 0)):+.4f}",
-                                "mae": f"{float(meta.get('mae', 0)):+.4f}",
+                                "mfe": mfe_str,
+                                "mae": mae_str,
                                 "duration": f"{duration_minutes:.1f} menit" if duration_minutes is not None else "N/A",
+                                "duration_minutes": duration_minutes,
+                                "fingerprint": ai_stats.get("fingerprint", meta.get("alasan", "Kombinasi Standar")),
+                                "win_rate": ai_stats.get("win_rate", 0.0),
+                                "total_trades": ai_stats.get("total_trades", 0),
                             }
                             record_closed_trade({
                                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -759,15 +785,6 @@ async def user_data_stream_loop():
                                 "order_type": order_type,
                             })
                             await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
-
-                            alasan = bot_state.get("active_trade_reasons", {}).get(symbol)
-                            if alasan:
-                                record_trade_result(alasan, net_pnl > 0)
-                                del bot_state["active_trade_reasons"][symbol]
-
-                            pattern_entry_id = meta.get("pattern_entry_id")
-                            if pattern_entry_id:
-                                record_pattern_result(pattern_entry_id, net_pnl > 0, net_pnl)
 
                             import csv
                             waktu_sekarang = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

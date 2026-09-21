@@ -146,61 +146,59 @@ async def send_error_log(bot: Bot, chat_id: str, error: str):
 
 async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dict):
     """
-    Mengirim notifikasi ketika Take Profit atau Stop Loss tereksekusi beserta rincian Funding Fee.
+    Mengirim notifikasi ketika Take Profit, Stop Loss, atau Market Close tereksekusi.
+    Format mencakup Koin, Hasil Akhir, Net PnL, Harga Keluar, Durasi, MFE/MAE, Evaluasi AI Memory, dan Rekap PNL.
     """
     order_type = order_data.get('order_type', '')
     symbol = order_data.get('symbol', '')
     price = order_data.get('price', '')
-    quantity = order_data.get('quantity', '')
     realized_pnl = float(order_data.get('realized_pnl', 0) or 0)
     commission = float(order_data.get('commission', 0) or 0)
     funding_fee = float(order_data.get('funding_fee', 0) or 0)
     net_pnl = float(order_data.get('net_pnl', realized_pnl - commission + funding_fee) or 0)
-    mfe = order_data.get('mfe', 'N/A')
-    mae = order_data.get('mae', 'N/A')
+
+    mfe = order_data.get('mfe', '+0.00%')
+    mae = order_data.get('mae', '-0.00%')
     duration = order_data.get('duration', 'N/A')
+
+    fingerprint = order_data.get('fingerprint', 'Kombinasi Standar')
+    win_rate = float(order_data.get('win_rate', 0.0) or 0.0)
+    total_trades = int(order_data.get('total_trades', 0) or 0)
+
     summary = trade_summary()
 
-    # Tentukan Icon dan Title berdasarkan tipe order
     if 'TAKE_PROFIT' in order_type:
-        title = "🟢 **TAKE PROFIT TERSENTUH!** 🟢"
+        header_title = "🏁 **BOT CLOSED ORDER (TAKE PROFIT)** 🏁"
     elif 'STOP' in order_type:
-        title = "🔴 **STOP LOSS TERSENTUH!** 🔴"
+        header_title = "🏁 **BOT CLOSED ORDER (STOP LOSS)** 🏁"
     else:
-        title = "🏁 **BOT CLOSED ORDER** 🏁"
+        header_title = "🏁 **BOT CLOSED ORDER** 🏁"
 
     result_icon = "🟢" if net_pnl > 0 else "🔴"
     result_text = "PROFIT" if net_pnl > 0 else "LOSS"
     net_pnl_hari_ini = summary['daily_net_pnl']
-    net_pnl_icon = "🟢" if net_pnl_hari_ini > 0 else "🔴"
+    net_pnl_icon = "🟢" if net_pnl_hari_ini >= 0 else "🔴"
     win_rate_hari_ini = (summary['daily_wins'] / summary['daily_total'] * 100) if summary['daily_total'] else 0
-    waktu_tutup = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    funding_icon = "🟢" if funding_fee >= 0 else "🔴"
-
-    message = f"""
-{title}
-──────────────
-🪙 **Koin:** {symbol}
-🏆 **Hasil Akhir:** {result_icon} **{result_text}**
-──────────────
-💰 **Gross Realized PNL:** `{realized_pnl:+.4f} USDT`
-💸 **Biaya Komisi Trading:** `-{commission:.4f} USDT`
-🔄 **Funding Fee (Pendanaan):** `{funding_icon} {funding_fee:+.4f} USDT`
-──────────────────────────────
-💵 **NET PNL BERSIH:** `{result_icon} {net_pnl:+.4f} USDT`
-──────────────
-💵 **Harga Keluar Akhir:** `{price}`
-⏱️ **Durasi Posisi:** `{duration}`
-📈 **MFE Teramati:** `{mfe}` | 📉 **MAE:** `{mae}`
-⏱️ **Waktu Tutup:** {waktu_tutup} WIB
-──────────────
-📊 **Rekap PNL Hari Ini**
-💰 **Total PNL Bersih:** {net_pnl_icon} `{net_pnl_hari_ini:+.4f} USDT`
-🎯 **Win Rate Hari Ini:** {win_rate_hari_ini:.1f}% ({summary['daily_wins']}W / {summary['daily_losses']}L)
-"""
+    message = (
+        f"{header_title}\n"
+        f"──────────────\n"
+        f"🪙 **Koin:** `{symbol}`\n"
+        f"🏆 **Hasil Akhir:** {result_icon} **{result_text}**\n"
+        f"──────────────\n"
+        f"💰 **Net PnL Bersih:** `{result_icon} {net_pnl:+.4f} USDT`\n"
+        f"💵 **Harga Keluar:** `{price}`\n"
+        f"⏱️ **Durasi Posisi:** `{duration}`\n"
+        f"📈 **MFE (Max Profit Teramati):** `{mfe}` | 📉 **MAE (Max Drawdown Teramati):** `{mae}`\n"
+        f"🧠 **Evaluasi AI Memory:** Pola `'{fingerprint}'` -> Win Rate: **{win_rate:.1f}%** (Total: {total_trades}x)\n"
+        f"──────────────\n"
+        f"📊 **Rekap PNL Hari Ini**\n"
+        f"💰 **Total PNL Bersih:** {net_pnl_icon} `{net_pnl_hari_ini:+.4f} USDT`\n"
+        f"🎯 **Win Rate Hari Ini:** {win_rate_hari_ini:.1f}% ({summary['daily_wins']}W / {summary['daily_losses']}L)\n"
+    )
     try:
         await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
     except Exception as e:
         log_error("TELEGRAM_NOTIFY_TPSL", f"Gagal kirim notif TP/SL ke {chat_id}: {e}")
         print(f"Failed to send TP/SL notification: {e}")
+
