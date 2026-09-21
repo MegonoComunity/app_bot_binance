@@ -252,7 +252,7 @@ async def scanner_loop():
                                 
                                 record_trade_result(v_trade['alasan'], is_profit=True)
                                 
-                                # Simpan ke CSV
+                                # Simpan ke CSV (SUCCESS)
                                 with open("virtual_success_log.csv", "a", newline="") as f:
                                     writer = csv.writer(f)
                                     writer.writerow([v_trade['time'], symbol, v_trade['tipe'], v_trade['entry_price'], v_trade['tp_price'], v_trade['alasan'], "SUCCESS"])
@@ -264,6 +264,12 @@ async def scanner_loop():
                                 await bot.send_message(TELEGRAM_ERROR_CHAT_ID, msg)
                                 
                                 record_trade_result(v_trade['alasan'], is_profit=False)
+                                
+                                # Simpan ke CSV (FAILED)
+                                with open("virtual_success_log.csv", "a", newline="") as f:
+                                    writer = csv.writer(f)
+                                    writer.writerow([v_trade['time'], symbol, v_trade['tipe'], v_trade['entry_price'], v_trade['sl_price'], v_trade['alasan'], "FAILED"])
+                                    
                                 del virtual_trades[symbol]
                         # -------------------------------------------------
                         
@@ -555,7 +561,7 @@ async def scanner_loop():
                                     callback_rate=bot_config.ts_callback_rate
                                 )
 
-                                if protection_result.get("status") != "success":
+                                if protection_result.get("status") not in ("success", "existing"):
                                     bot_state["is_running"] = False
                                     bot_state["state"] = "KILL_SWITCH"
                                     close_side = "SELL" if trade_type == "LONG" else "BUY"
