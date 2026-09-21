@@ -104,4 +104,12 @@ def trade_summary() -> dict:
         "daily_losses": len(daily) - daily_wins,
         "commission": sum(float(trade.get("commission", 0) or 0) for trade in trades),
         "funding_fee": sum(float(trade.get("funding_fee", 0) or 0) for trade in trades),
-    }
+    }
+
+
+def reset_trade_stats() -> dict:
+    """Reset / bersihkan rekap trade stats sesi agar bisa menganalisis dari 0."""
+    os.makedirs(os.path.dirname(STATS_FILE), exist_ok=True)
+    with open(STATS_FILE, "w", encoding="utf-8") as file:
+        json.dump({"trades": []}, file, indent=2)
+    return trade_summary()

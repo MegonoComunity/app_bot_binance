@@ -149,22 +149,92 @@ def is_bull_trap(open_p, high_p, low_p, close_p):
 
 def detect_candlestick_patterns(df: pd.DataFrame) -> dict:
     """
-    Mendeteksi keberadaan pola Bullish (LONG) atau Bull Trap (CLOSE_LONG).
-    Sesuai instruksi: hanya gunakan untuk sinyal long/buy serta trap bull.
+    Mendeteksi keberadaan pola Candlestick Reversal Tier-A (LONG / SHORT) dan Trap.
     """
-    if len(df) < 3:
-        return {"pattern": None, "type": None, "detected": False}
+    if df.empty or len(df) < 5:
+        return {"pattern": None, "type": None, "detected": False, "volume_ratio": 1.0}
         
     last_row = df.iloc[-1]
+    prev_row = df.iloc[-2]
+    prev2_row = df.iloc[-3]
     
-    # === POLA BULLISH (LONG) ===
-    # 3-5 candle kecil tanpa ada besar, diikuti candle hijau (LONG)
-    if check_small_bodies_followed_by_green(df):
-        return {"pattern": "3-5 Small Bodies Followed by Green", "type": "LONG", "detected": True}
-        
-    # === TRAP BULL (CLOSE LONG) ===
-    # Deteksi candle besar tiba-tiba yang merupakan trap bull
+    # Hitung Volume Surge Ratio (dibandingkan MA20 volume)
+    vol_ma20 = df['volume'].tail(20).mean() if len(df) >= 20 else df['volume'].mean()
+    vol_ratio = float(last_row['volume'] / vol_ma20) if vol_ma20 > 0 else 1.0
+
+    # 1. Bull Trap Check (Close Long / Avoid Entry)
     if is_bull_trap(last_row['open'], last_row['high'], last_row['low'], last_row['close']):
-        return {"pattern": "Bull Trap", "type": "CLOSE_LONG", "detected": True}
-        
-    return {"pattern": None, "type": None, "detected": False}
+        return {
+            "pattern": "Bull Trap",
+            "type": "CLOSE_LONG",
+            "detected": True,
+            "volume_ratio": vol_ratio,
+        }
+
+    # 2. Bullish Hammer Check
+    if check_hammer(last_row['open'], last_row['high'], last_row['low'], last_row['close']):
+        return {
+            "pattern": "Bullish Hammer",
+            "type": "LONG",
+            "detected": True,
+            "volume_ratio": vol_ratio,
+        }
+
+    # 3. Morning Star Check (3 Candles)
+    if check_morning_star(
+        prev2_row['open'], prev2_row['close'],
+        prev_row['open'], prev_row['close'],
+        last_row['open'], last_row['close'],
+        prev_row['high'], prev_row['low']
+    ):
+        return {
+            "pattern": "Morning Star",
+            "type": "LONG",
+            "detected": True,
+            "volume_ratio": vol_ratio,
+        }
+
+    # 4. Bullish Engulfing Check
+    if check_bullish_engulfing(prev_row['open'], prev_row['close'], last_row['open'], last_row['close']):
+        return {
+            "pattern": "Bullish Engulfing",
+            "type": "LONG",
+            "detected": True,
+            "volume_ratio": vol_ratio,
+        }
+
+    # 5. 3-5 Small Bodies Followed by Green Check
+    if check_small_bodies_followed_by_green(df):
+        return {
+            "pattern": "3-5 Small Bodies Followed by Green",
+            "type": "LONG",
+            "detected": True,
+            "volume_ratio": vol_ratio,
+        }
+
+    # 6. Bearish Reversal Patterns (untuk SHORT / Close Long)
+    # Shooting Star (Upper shadow panjang, body kecil di bawah)
+    range_last = last_row['high'] - last_row['low']
+    if range_last > 0:
+        body_last = abs(last_row['close'] - last_row['open'])
+        upper_shadow = last_row['high'] - max(last_row['open'], last_row['close'])
+        lower_shadow = min(last_row['open'], last_row['close']) - last_row['low']
+        if body_last <= 0.3 * range_last and upper_shadow >= 0.6 * range_last and lower_shadow <= 0.1 * range_last:
+            return {
+                "pattern": "Shooting Star",
+                "type": "SHORT",
+                "detected": True,
+                "volume_ratio": vol_ratio,
+            }
+
+    # Bearish Engulfing
+    if prev_row['close'] > prev_row['open'] and last_row['close'] < last_row['open']:
+        if last_row['open'] > prev_row['close'] and last_row['close'] < prev_row['open']:
+            return {
+                "pattern": "Bearish Engulfing",
+                "type": "SHORT",
+                "detected": True,
+                "volume_ratio": vol_ratio,
+            }
+
+    return {"pattern": None, "type": None, "detected": False, "volume_ratio": vol_ratio}

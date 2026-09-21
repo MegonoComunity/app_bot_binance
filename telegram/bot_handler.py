@@ -20,7 +20,7 @@ from config.settings import (
 from core.order_manager import close_profitable_position
 from core.market_analysis import analyze_daily_market
 from core.risk_manager import calculate_account_pnl_percent, calculate_position_pnl_percent
-from core.trade_stats import trade_summary
+from core.trade_stats import trade_summary, reset_trade_stats
 
 # Initialize bot and dispatcher
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -55,7 +55,7 @@ class DatasetForm(StatesGroup):
     waiting_for_image = State()
     waiting_for_label = State()
 
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, FSInputFile
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, FSInputFile, BotCommand
 import os
 
 # Global state for bot
@@ -65,12 +65,36 @@ bot_state = {
     "websocket_connected": False,
 }
 
+async def setup_bot_commands(bot_instance: Bot) -> None:
+    """Reset dan daftarkan perintah resmi bot ke Telegram."""
+    commands = [
+        BotCommand(command="start", description="Buka Menu Utama & Keyboard"),
+        BotCommand(command="status", description="Cek Saldo & Posisi Terbuka"),
+        BotCommand(command="pengaturan", description="Menu Pengaturan Lengkap"),
+        BotCommand(command="reset_demo", description="Reset Modal ($100) & Statistik"),
+        BotCommand(command="hitung_margin", description="Kalkulator Margin Aman"),
+        BotCommand(command="set_modal", description="Atur Nominal Modal Simulasi"),
+        BotCommand(command="set_margin", description="Atur Mode Margin (auto/nominal)"),
+        BotCommand(command="set_risk", description="Atur Risk Per Trade (% Saldo)"),
+        BotCommand(command="set_leverage", description="Ubah Leverage"),
+        BotCommand(command="set_tp", description="Target Take Profit (%)"),
+        BotCommand(command="set_sl", description="Target Stop Loss (%)"),
+        BotCommand(command="close_all", description="Tutup Semua Posisi Terbuka"),
+        BotCommand(command="pause", description="Jeda Scanning"),
+        BotCommand(command="resume", description="Lanjutkan Scanning"),
+    ]
+    try:
+        await bot_instance.delete_my_commands()
+        await bot_instance.set_my_commands(commands)
+    except Exception as exc:
+        print(f"[TELEGRAM] Gagal update commands: {exc}")
+
 def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📊 Status Bot"), KeyboardButton(text="⚙️ Pengaturan")],
+        [KeyboardButton(text="🧮 Hitung Margin"), KeyboardButton(text="🔄 Reset Demo")],
         [KeyboardButton(text="📈 Histori TP"), KeyboardButton(text="📉 Histori SL")],
-        [KeyboardButton(text="🔎 Analisa Koin"), KeyboardButton(text="🔻 Close SHORT")],
-        [KeyboardButton(text="🔢 Scan Modus"), KeyboardButton(text="⛔ Close ALL")],
+        [KeyboardButton(text="🔎 Analisa Koin"), KeyboardButton(text="⛔ Close ALL")],
         [KeyboardButton(text="⏯️ Pause / Resume"), KeyboardButton(text="📸 Upload Dataset")],
         [KeyboardButton(text="📞 Bantuan")],
     ]
@@ -502,6 +526,109 @@ async def set_max_positions_handler(message: types.Message, command: CommandObje
     else:
         await message.answer(f"ℹ️ Maksimal posisi saat ini: {bot_config.max_open_positions} (Gunakan /set_max_positions <angka> untuk mengubah)")
 
+@dp.message(Command("set_margin"))
+async def set_margin_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip().lower()
+    if not arg:
+        mode_desc = "DYNAMIC (Computed Auto)" if bot_config.margin_mode == "DYNAMIC" else f"FIXED ({bot_config.margin_usdt:.2f} USDT)"
+        await message.answer(
+            f"ℹ️ **Pengaturan Margin Saat Ini:** `{mode_desc}`\n"
+            f"• Risk Per Trade: `{bot_config.risk_per_trade_percent}%` dari saldo\n"
+            f"• Max Alokasi per Posisi: `{bot_config.max_position_equity_ratio * 100:.0f}%` dari saldo\n\n"
+            "**Cara Mengubah:**\n"
+            "• `/set_margin auto` (Mengaktifkan Dynamic Computed Sizing)\n"
+            "• `/set_margin 10` (Mengatur Fixed Margin 10 USDT)\n"
+            "• `/set_risk 1.5` (Mengatur risiko per trade 1.5% modal)\n"
+            "• `/hitung_margin` (Lihat tabel simulasi margin paling aman)",
+            parse_mode="Markdown",
+        )
+        return
+
+    if arg in ["auto", "dynamic", "otomatis"]:
+        bot_config.update_margin_mode("DYNAMIC")
+        await message.answer("✅ **Margin Mode diubah ke DYNAMIC (Computed Sizing)**!\nMargin akan dihitung otomatis proporsional terhadap saldo & jarak Stop Loss.", parse_mode="Markdown")
+    else:
+        try:
+            val = float(arg)
+            if val <= 0:
+                await message.answer("❌ Margin harus lebih besar dari 0.")
+                return
+            bot_config.update_margin_mode("FIXED")
+            bot_config.update_margin(val)
+            await message.answer(f"✅ **Margin Mode diubah ke FIXED ({val:.2f} USDT)**!", parse_mode="Markdown")
+        except ValueError:
+            await message.answer("❌ Format salah. Gunakan `/set_margin auto` atau `/set_margin 10`", parse_mode="Markdown")
+
+@dp.message(Command("set_risk"))
+async def set_risk_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg:
+        await message.answer(f"ℹ️ Risk per trade saat ini: `{bot_config.risk_per_trade_percent}%`\nGunakan `/set_risk <angka>` (Contoh: `/set_risk 1.5`)", parse_mode="Markdown")
+        return
+    try:
+        val = float(arg)
+        bot_config.update_risk_per_trade(val)
+        await message.answer(f"✅ Risk per trade berhasil diubah menjadi `{val:.2f}%` dari total modal.", parse_mode="Markdown")
+    except ValueError as err:
+        await message.answer(f"❌ {err}")
+
+@dp.message(Command("set_margin_mode"))
+async def set_margin_mode_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip().upper()
+    if arg not in ["DYNAMIC", "FIXED"]:
+        await message.answer("Format: `/set_margin_mode DYNAMIC` atau `/set_margin_mode FIXED`", parse_mode="Markdown")
+        return
+    try:
+        bot_config.update_margin_mode(arg)
+        await message.answer(f"✅ Margin Mode berhasil diubah ke `{arg}`.", parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Gagal update: {e}")
+
+@dp.message(Command("hitung_margin"))
+@dp.message(Command("kalkulasi_margin"))
+async def hitung_margin_handler(message: types.Message, command: CommandObject):
+    client = bot_state.get("client")
+    current_balance = 50.0
+    if client:
+        try:
+            acc = await client.futures_account()
+            current_balance = float(acc.get("totalMarginBalance", 50.0))
+        except Exception:
+            pass
+
+    arg = (command.args or "").strip()
+    if arg:
+        try:
+            current_balance = float(arg)
+        except ValueError:
+            pass
+
+    risk_pct = bot_config.risk_per_trade_percent
+    risk_amount = current_balance * (risk_pct / 100.0)
+    lev = bot_config.leverage
+    max_margin_cap = current_balance * bot_config.max_position_equity_ratio
+
+    safe_margin_sl2 = min((risk_amount / 0.02) / lev, max_margin_cap)
+    safe_margin_sl3 = min((risk_amount / 0.03) / lev, max_margin_cap)
+
+    text = (
+        f"🧮 **KALKULASI MARGIN PALING AMAN**\n\n"
+        f"💰 **Saldo Akun**: `{current_balance:.2f} USDT`\n"
+        f"🛡️ **Risk Budget ({risk_pct}%)**: `{risk_amount:.2f} USDT` (Maks rugi jika SL)\n"
+        f"⚡ **Leverage Bot**: `{lev}x`\n"
+        f"🔒 **Batas Maks Margin/Posisi (20%)**: `{max_margin_cap:.2f} USDT`\n"
+        f"──────────────\n"
+        f"📊 **Rekomendasi Margin Open Paling Aman:**\n"
+        f"• Jarak SL 2.0% : **`{max(1.0, safe_margin_sl2):.2f} USDT`**\n"
+        f"• Jarak SL 3.0% : **`{max(1.0, safe_margin_sl3):.2f} USDT`**\n\n"
+        f"💡 **Panduan Ukuran Modal Kecil:**\n"
+        f"1. Modal $10 - $30 : Margin $1.00 - $2.00 USDT (Lev 5x-10x)\n"
+        f"2. Modal $50 - $100: Margin $2.50 - $6.50 USDT (Lev 10x-15x)\n"
+        f"3. Modal > $200     : Margin $10.00 - $20.00 USDT (Risk 1.5%)\n\n"
+        f"Ketik `/set_margin auto` untuk mengaktifkan kalkulasi dinamis otomatis."
+    )
+    await message.answer(text, parse_mode="Markdown")
+
 @dp.message(Command("set_ts_use"))
 async def set_ts_use_handler(message: types.Message, command: CommandObject):
     if command.args:
@@ -542,41 +669,171 @@ async def set_ts_callback_handler(message: types.Message, command: CommandObject
     else:
         await message.answer(f"ℹ️ TS Callback saat ini: {bot_config.ts_callback_rate}% (Gunakan /set_ts_callback <angka> untuk mengubah)")
 
+@dp.message(Command("set_modal"))
+async def set_modal_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip().lower()
+    if not arg:
+        current_modal_desc = f"{bot_config.simulated_modal:.2f} USDT (Simulasi Custom)" if bot_config.simulated_modal else "AUTO (Saldo Real Exchange)"
+        await message.answer(
+            f"ℹ️ **Pengaturan Modal Sizing Saat Ini:** `{current_modal_desc}`\n\n"
+            "**Cara Penggunaan:**\n"
+            "• `/set_modal 50` (Simulasi sizing dengan modal $50 USDT)\n"
+            "• `/set_modal 100` (Simulasi sizing dengan modal $100 USDT)\n"
+            "• `/set_modal auto` (Kembali menggunakan saldo asli Exchange/Testnet)\n"
+            "• `/reset_modal` (Reset modal simulasi ke default $100)",
+            parse_mode="Markdown",
+        )
+        return
+
+    if arg in ["auto", "real", "reset"]:
+        bot_config.update_simulated_modal(None)
+        await message.answer("✅ **Modal Sizing diubah ke AUTO** (Menggunakan saldo riil akun Binance).", parse_mode="Markdown")
+    else:
+        try:
+            val = float(arg)
+            if val <= 0:
+                await message.answer("❌ Modal harus lebih besar dari 0.")
+                return
+            bot_config.update_simulated_modal(val)
+            await message.answer(
+                f"✅ **Modal Sizing diset ke `{val:.2f} USDT`**!\n"
+                f"Bot akan menghitung margin dan risiko trading seolah-olah saldo Anda adalah `{val:.2f} USDT`.",
+                parse_mode="Markdown",
+            )
+        except ValueError:
+            await message.answer("❌ Format salah. Contoh: `/set_modal 100` atau `/set_modal auto`", parse_mode="Markdown")
+
+@dp.message(Command("reset_modal"))
+async def reset_modal_handler(message: types.Message):
+    bot_config.reset_simulated_modal(100.0)
+    await message.answer("🔄 **Modal Simulasi berhasil di-reset ke `100.00 USDT`**!\nKalkulasi sizing sekarang berbasis modal $100.", parse_mode="Markdown")
+
+@dp.message(Command("reset_stats"))
+@dp.message(Command("reset_demo"))
+@dp.message(F.text == "🔄 Reset Demo")
+async def reset_stats_handler(message: types.Message):
+    bot_config.reset_simulated_modal(100.0)
+    bot_config.update_margin_mode("DYNAMIC")
+    bot_config.update_leverage(10)
+    bot_config.update_risk_per_trade(1.0)
+    bot_config.update_max_position_equity_ratio(0.15)
+    bot_config.update_tp(30.0)
+    bot_config.update_sl(25.0)
+    reset_trade_stats()
+    
+    await message.answer(
+        "🔄 **RESET TOTAL PENGUJIAN DEMO BERHASIL!** 🔄\n\n"
+        "Seluruh parameter dan rekap performa telah dikembalikan ke **Preset Uji Coba Paling Aman**:\n"
+        "• 💰 Modal Simulasi : `100.00 USDT`\n"
+        "• 💵 Margin Sizing  : `DYNAMIC (Auto Safe Computed)`\n"
+        "• 🛡️ Risk / Trade   : `1.0%` ($1.00 per SL hit)\n"
+        "• 🔒 Max Margin/Pos : `15%` ($15.00 max)\n"
+        "• ⚡ Leverage       : `10x` (Jarak SL lega 2.5%)\n"
+        "• 🎯 Take Profit    : `30.0%` ROI\n"
+        "• 🛑 Stop Loss      : `25.0%` ROI\n"
+        "• 📊 Rekap Win Rate : `0W / 0L (Reset ke 0)`\n\n"
+        "Bot siap melakukan scanning dan pengujian ulang dari awal dengan teknik optimal! 🚀",
+        parse_mode="Markdown",
+    )
+
+@dp.message(Command("set_max_ratio"))
+async def set_max_ratio_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg:
+        await message.answer(
+            f"ℹ️ Max Alokasi per Posisi saat ini: `{bot_config.max_position_equity_ratio * 100:.0f}%` dari total modal.\n"
+            "Gunakan `/set_max_ratio <persen>` (Contoh: `/set_max_ratio 15` untuk 15% modal)",
+            parse_mode="Markdown",
+        )
+        return
+    try:
+        val = float(arg)
+        if val > 1.0:
+            val = val / 100.0
+        bot_config.update_max_position_equity_ratio(val)
+        await message.answer(f"✅ Max Alokasi per Posisi berhasil diubah ke `{val * 100:.1f}%` dari total modal.", parse_mode="Markdown")
+    except ValueError as err:
+        await message.answer(f"❌ {err}")
+
+@dp.message(Command("set_rsi_oversold"))
+async def set_rsi_oversold_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg:
+        await message.answer(f"ℹ️ RSI Oversold saat ini: `{bot_config.rsi_oversold}`\nGunakan `/set_rsi_oversold 30`", parse_mode="Markdown")
+        return
+    try:
+        val = float(arg)
+        bot_config.update_rsi_oversold(val)
+        await message.answer(f"✅ RSI Oversold diubah ke `{val}`", parse_mode="Markdown")
+    except ValueError as err:
+        await message.answer(f"❌ {err}")
+
+@dp.message(Command("set_rsi_overbought"))
+async def set_rsi_overbought_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg:
+        await message.answer(f"ℹ️ RSI Overbought saat ini: `{bot_config.rsi_overbought}`\nGunakan `/set_rsi_overbought 70`", parse_mode="Markdown")
+        return
+    try:
+        val = float(arg)
+        bot_config.update_rsi_overbought(val)
+        await message.answer(f"✅ RSI Overbought diubah ke `{val}`", parse_mode="Markdown")
+    except ValueError as err:
+        await message.answer(f"❌ {err}")
+
 @dp.message(F.text == "📊 Status Bot")
 async def btn_status_handler(message: types.Message):
     await status_handler(message)
 
+@dp.message(F.text == "🧮 Hitung Margin")
+async def btn_hitung_margin_handler(message: types.Message):
+    await hitung_margin_handler(message, CommandObject(prefix="/", command="hitung_margin", args=""))
+
 @dp.message(F.text == "⚙️ Pengaturan")
 async def btn_pengaturan_handler(message: types.Message):
     ts_status = "ON" if bot_config.use_trailing_stop else "OFF"
+    margin_desc = "DYNAMIC (Auto Computed)" if bot_config.margin_mode == "DYNAMIC" else f"FIXED ({bot_config.margin_usdt:.2f} USDT)"
+    modal_desc = f"{bot_config.simulated_modal:.2f} USDT (Custom Demo)" if bot_config.simulated_modal else "AUTO (Saldo Real Exchange)"
+    
     text = (
-        "⚙️ **PENGATURAN SAAT INI** ⚙️\n\n"
-        f"🎯 Take Profit : {bot_config.tp_percent}%\n"
-        f"🛑 Stop Loss   : {bot_config.sl_percent}%\n"
-        f"⚡ Leverage    : {bot_config.leverage}x\n"
-        f"📊 Max Posisi  : {bot_config.max_open_positions}\n"
-        f"🧭 Scanner Mode: {bot_config.scanner_mode}\n"
-        f"📅 Analisis Daily: {bot_config.analysis_lookback_days} candle\n"
-        f"📉 RSI: {bot_config.rsi_length} / {bot_config.rsi_oversold:g} / {bot_config.rsi_overbought:g}\n"
-        f"──────────────\n"
-        f"🚀 **Trailing Stop**: {ts_status}\n"
-        f"📈 TS Activation : {bot_config.ts_activation_percent}%\n"
-        f"📉 TS Callback   : {bot_config.ts_callback_rate}%\n\n"
-        f"⏱️ Auto-close profit: {AUTO_CLOSE_PROFIT_HOURS_ENV:g} jam\n"
-        f"🔄 Cek posisi tiap: {POSITION_MONITOR_INTERVAL_ENV} detik\n\n"
-        "Gunakan perintah berikut untuk mengubah:\n"
-        "`/set_tp <angka>`\n"
-        "`/set_sl <angka>`\n"
-        "`/set_rsi <length> <oversold> <overbought>`\n"
-        "`/set_scanner_mode <per_coin|batch>`\n"
-        "`/set_analysis_days <minimal 20>`\n"
-        "`/set_leverage <angka>`\n"
-        "`/set_max_positions <angka>`\n"
-        "`/set_ts_use <True/False>`\n"
-        "`/set_ts_activation <angka>`\n"
-        "`/set_ts_callback <angka>`"
+        "⚙️ **PENGATURAN BOT LENGKAP** ⚙️\n\n"
+        "💰 **1. MODAL & MARGIN SIZING**\n"
+        f"• Basis Modal : `{modal_desc}`\n"
+        f"• Mode Margin : `{margin_desc}`\n"
+        f"• Risk / Trade: `{bot_config.risk_per_trade_percent}%` dari saldo\n"
+        f"• Max Alokasi : `{bot_config.max_position_equity_ratio * 100:.0f}%` saldo / posisi\n\n"
+        "🛡️ **2. TARGET & PROTEKSI (TP / SL / TS)**\n"
+        f"• Take Profit : `{bot_config.tp_percent}%` ROI\n"
+        f"• Stop Loss   : `{bot_config.sl_percent}%` ROI\n"
+        f"• Trailing Stop : `{ts_status}` (Act: `{bot_config.ts_activation_percent}%`, Call: `{bot_config.ts_callback_rate}%`)\n\n"
+        "⚡ **3. EKSEKUSI & SCANNER**\n"
+        f"• Leverage    : `{bot_config.leverage}x`\n"
+        f"• Max Posisi  : `{bot_config.max_open_positions} koin bersamaan`\n"
+        f"• RSI Filter  : `{bot_config.rsi_length}` (Oversold: `{bot_config.rsi_oversold:g}` / Overbought: `{bot_config.rsi_overbought:g}`)\n"
+        f"• Scanner Mode: `{bot_config.scanner_mode}`\n"
+        "──────────────\n"
+        "📝 **DAFTAR PERINTAH PENGATURAN:**\n"
+        "💵 **Modal & Sizing:**\n"
+        "• `/set_modal 100` (Atur modal uji coba $100)\n"
+        "• `/set_modal auto` (Gunakan saldo real)\n"
+        "• `/reset_modal` (Reset modal uji ke $100)\n"
+        "• `/reset_stats` (Reset rekap winrate/histori)\n"
+        "• `/set_margin auto` atau `/set_margin 25`\n"
+        "• `/set_risk 1.0` (Risk per trade 1% saldo)\n"
+        "• `/set_max_ratio 15` (Max 15% saldo per posisi)\n"
+        "• `/hitung_margin` (Kalkulator margin aman)\n\n"
+        "🎯 **Target & Proteksi:**\n"
+        "• `/set_tp 30` (Take profit 30%)\n"
+        "• `/set_sl 25` (Stop loss 25%)\n"
+        "• `/set_ts_use True` / `/set_ts_use False`\n"
+        "• `/set_ts_activation 15.0`\n"
+        "• `/set_ts_callback 1.0`\n\n"
+        "⚡ **Eksekusi & Filter:**\n"
+        "• `/set_leverage 10` (Ubah leverage)\n"
+        "• `/set_max_positions 3` (Max 3 posisi)\n"
+        "• `/set_rsi_oversold 30` | `/set_rsi_overbought 70`"
     )
-    await message.answer(text)
+    await message.answer(text, parse_mode="Markdown")
 
 @dp.message(Command("pause"))
 @dp.message(Command("stop"))

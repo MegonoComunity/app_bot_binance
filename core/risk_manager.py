@@ -92,4 +92,102 @@ def evaluate_time_based_exit(
             f"TAKE_PROFIT_TIME: Hold {hold_duration_hours:.1f}h (>= {profit_time_limit_hours}h) & Profit +{roi_percent:.2f}% (>= +{profit_target_percent}%)"
         )
 
-    return (False, "")
+    return (False, "")
+
+
+def calculate_volatility_adjusted_leverage(
+    atr_value: float,
+    current_price: float,
+    base_leverage: int = 20,
+) -> int:
+    """
+    Menyesuaikan leverage secara dinamis berdasarkan volatilitas ATR (% dari harga).
+    Koin ber-volatilitas tinggi diberikan leverage lebih rendah untuk menghindari likuidasi instan.
+    """
+    if current_price <= 0 or atr_value <= 0:
+        return min(base_leverage, 10)
+
+    atr_percent = (atr_value / current_price) * 100.0
+
+    if atr_percent >= 4.0:
+        # Volatilitas ekstrem (Meme coin / Flash dump)
+        return min(base_leverage, 3)
+    elif atr_percent >= 2.5:
+        # Volatilitas tinggi
+        return min(base_leverage, 5)
+    elif atr_percent >= 1.5:
+        # Volatilitas menengah
+        return min(base_leverage, 10)
+    else:
+        # Volatilitas stabil / rendah (BTC, ETH, Top caps)
+        return min(base_leverage, 20)
+
+
+def calculate_computed_position_size(
+    equity: float,
+    current_price: float,
+    stop_price: float,
+    leverage: int,
+    risk_percent: float = 1.5,
+    min_margin: float = 1.0,
+    max_position_equity_ratio: float = 0.20,
+) -> dict:
+    """
+    Sistem Computed Nilai (Dynamic Compounding Sizing):
+    Menghitung ukuran margin dan kuantitas order yang aman dan optimal untuk modal kecil.
+    - Menjamin risiko rugi saat Stop Loss terkena tidak melebihi `risk_percent` dari equity.
+    - Membatasi margin per posisi maksimal `max_position_equity_ratio` dari equity agar akun tidak overleveraged.
+    """
+    if equity <= 0 or current_price <= 0 or leverage <= 0 or risk_percent <= 0:
+        return {
+            "margin_usdt": 0.0,
+            "quantity": 0.0,
+            "risk_amount": 0.0,
+            "is_valid": False,
+            "reason": "Parameter input tidak valid",
+        }
+
+    stop_distance = abs(current_price - stop_price)
+    if stop_distance <= 0:
+        stop_distance = current_price * 0.015  # Fallback 1.5% distance
+
+    # 1. Hitung toleransi risiko (Risk Budget)
+    risk_amount = equity * (risk_percent / 100.0)
+
+    # 2. Hitung jumlah coin (quantity) dan nominal notional
+    quantity = risk_amount / stop_distance
+    notional_value = quantity * current_price
+    required_margin = notional_value / leverage
+
+    # 3. Batasi alokasi margin maksimal (misal max 20% dari total equity per trade)
+    max_allowed_margin = equity * max_position_equity_ratio
+    final_margin = min(required_margin, max_allowed_margin)
+
+    # Jika margin di-cap oleh max_allowed_margin, sesuaikan ulang quantity
+    if final_margin < required_margin:
+        quantity = (final_margin * leverage) / current_price
+
+    # 4. Validasi batas minimal margin (Binance min notional biasanya $5, margin min $1)
+    if final_margin < min_margin:
+        # Jika modal sangat kecil, gunakan alokasi proporsional minimal yang aman jika equity memadai
+        if equity >= min_margin * 2:
+            final_margin = min_margin
+            quantity = (final_margin * leverage) / current_price
+        else:
+            return {
+                "margin_usdt": round(final_margin, 2),
+                "quantity": quantity,
+                "risk_amount": round(risk_amount, 2),
+                "is_valid": False,
+                "reason": f"Margin yang dihitung ({final_margin:.2f} USDT) di bawah batas minimal ({min_margin} USDT)",
+            }
+
+    return {
+        "margin_usdt": round(final_margin, 2),
+        "quantity": quantity,
+        "notional_usdt": round(final_margin * leverage, 2),
+        "risk_amount": round(risk_amount, 2),
+        "risk_percent": risk_percent,
+        "is_valid": True,
+        "reason": "OK",
+    }

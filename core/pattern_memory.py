@@ -45,7 +45,7 @@ def _save(data: dict) -> None:
 def _fingerprint(conditions: dict) -> str:
     """
     Buat 'sidik jari' dari kondisi indikator saat entry.
-    Format: 'HTF:UPTREND|BB:LOWER|RSI:OVERSOLD|PAT:HAMMER|BRK:YES'
+    Format: 'SIDE:LONG|HTF:UPTREND|BB:LOWER|RSI:OVERSOLD|PAT:HAMMER|BRK:NO|SQ40|VOL:SURGE'
     """
     htf   = conditions.get("htf_trend", "?")
     bb    = conditions.get("bb_zone", "?")          # LOWER / UPPER / MID
@@ -54,7 +54,9 @@ def _fingerprint(conditions: dict) -> str:
     brk   = "YES" if conditions.get("is_breakout") else "NO"
     side  = conditions.get("side", "?")
     squeeze = f"SQ{int(conditions.get('squeeze_score', 0) // 20) * 20}"  # Bucketed 0,20,40,60,80,100
-    return f"SIDE:{side}|HTF:{htf}|BB:{bb}|RSI:{rsi}|PAT:{pat}|BRK:{brk}|{squeeze}"
+    vol_ratio = float(conditions.get("volume_ratio", 1.0))
+    vol_tag = "VOL:SURGE" if vol_ratio >= 2.0 else ("VOL:HIGH" if vol_ratio >= 1.5 else "VOL:NORM")
+    return f"SIDE:{side}|HTF:{htf}|BB:{bb}|RSI:{rsi}|PAT:{pat}|BRK:{brk}|{squeeze}|{vol_tag}"
 
 
 # ─── Public API ──────────────────────────────────────────────────────────────
@@ -65,6 +67,8 @@ def record_entry(
     entry_price: float,
     conditions: dict,
     alasan: str,
+    margin_usdt: float = 0.0,
+    leverage: int = 0,
 ) -> str:
     """
     Simpan snapshot kondisi indikator saat entry.
@@ -78,6 +82,8 @@ def record_entry(
         "symbol": symbol,
         "side": side,
         "entry_price": entry_price,
+        "margin_usdt": margin_usdt,
+        "leverage": leverage,
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "fingerprint": fp,
         "alasan": alasan,

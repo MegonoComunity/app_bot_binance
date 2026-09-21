@@ -35,24 +35,14 @@ async def main():
     zip_file = f"database/backup_db_crypto_learn_{timestamp}.zip"
 
     print(f"[1/3] Mendump database '{DB_NAME}' ke {sql_file}...")
-    env = os.environ.copy()
-    env["PGPASSWORD"] = DB_PASSWORD
+    pg_dump = r"C:\laragon\bin\postgresql\pgsql-11\bin\pg_dump.exe"
+    if not os.path.exists(pg_dump):
+        pg_dump = "pg_dump"
 
-    cmd = [
-        "pg_dump",
-        "-h", DB_HOST,
-        "-p", str(DB_PORT),
-        "-U", DB_USER,
-        "-d", DB_NAME,
-        "--clean",
-        "--if-exists",
-        "--inserts",
-        "-f", sql_file
-    ]
-
-    res = subprocess.run(cmd, env=env, capture_output=True, text=True)
-    if res.returncode != 0:
-        print(f"[ERROR] pg_dump gagal: {res.stderr}")
+    cmd = f'set PGPASSWORD={DB_PASSWORD}&& "{pg_dump}" -h {DB_HOST} -p {DB_PORT} -U {DB_USER} -d {DB_NAME} --clean --if-exists --inserts -f "{sql_file}"'
+    ret = os.system(cmd)
+    if ret != 0 or not os.path.exists(sql_file):
+        print(f"[ERROR] pg_dump gagal dengan return code {ret}")
         return
 
     sql_size_mb = os.path.getsize(sql_file) / (1024 * 1024)
@@ -76,7 +66,7 @@ async def main():
             f"⏱️ Waktu: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} WIB`\n"
             f"📊 Ukuran SQL: `{sql_size_mb:.2f} MB` → ZIP: `{zip_size_mb:.2f} MB`\n"
             f"──────────────\n"
-            f"💡 **Cara Restore di Komputer Rumah:**\n"
+            f"💡 **Cara Restore di Komputer Lain:**\n"
             f"1. Ekstrak file zip ini\n"
             f"2. Jalankan: `psql -U postgres -d {DB_NAME} -f <nama_file.sql>`"
         )
@@ -91,7 +81,6 @@ async def main():
         print(f"[ERROR] Gagal mengirim file ke Telegram: {exc}")
     finally:
         await bot.session.close()
-        # Bersihkan file lokal setelah dikirim
         if os.path.exists(sql_file):
             os.remove(sql_file)
         if os.path.exists(zip_file):

@@ -52,12 +52,15 @@ MIN_ORDER_BOOK_DEPTH_USDT_ENV = float(os.getenv("MIN_ORDER_BOOK_DEPTH_USDT", "50
 MAX_FUNDING_RATE_PERCENT_ENV = float(os.getenv("MAX_FUNDING_RATE_PERCENT", "0.05"))
 ATR_MULTIPLIER_SL_ENV = float(os.getenv("ATR_MULTIPLIER_SL", "1.5"))
 LIMIT_ORDER_TIMEOUT_SECONDS_ENV = int(os.getenv("LIMIT_ORDER_TIMEOUT_SECONDS", "30"))
+MARGIN_MODE_ENV = os.getenv("MARGIN_MODE", "DYNAMIC").upper()
+MAX_POSITION_EQUITY_RATIO_ENV = float(os.getenv("MAX_POSITION_EQUITY_RATIO", "0.20"))
 
 # Fitur Baru: Trailing Stop & MTFA
 USE_TRAILING_STOP = os.getenv("USE_TRAILING_STOP", "True").lower() == "true"
 TS_ACTIVATION_PERCENT_ENV = float(os.getenv("TS_ACTIVATION_PERCENT", "15.0"))
 TS_CALLBACK_RATE_ENV = float(os.getenv("TS_CALLBACK_RATE", "1.0"))
 HTF_TIMEFRAME = os.getenv("HTF_TIMEFRAME", "1h")
+SIMULATED_MODAL_ENV = float(os.getenv("SIMULATED_MODAL", "0.0"))
 
 if not BINANCE_API_KEY or not BINANCE_API_SECRET:
     raise ValueError("Missing Binance API keys in .env")
@@ -83,11 +86,15 @@ class BotSettings:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
+            cls._instance.simulated_modal = SIMULATED_MODAL_ENV if SIMULATED_MODAL_ENV > 0 else None
             cls._instance.tp_percent = TP_PERCENT_ENV
             cls._instance.sl_percent = SL_PERCENT_ENV
             cls._instance.leverage = LEVERAGE_ENV
             cls._instance.max_open_positions = MAX_OPEN_POSITIONS_ENV
             cls._instance.risk_per_trade_percent = RISK_PER_TRADE_PERCENT_ENV
+            cls._instance.margin_mode = MARGIN_MODE_ENV if MARGIN_MODE_ENV in {"DYNAMIC", "FIXED"} else "DYNAMIC"
+            cls._instance.margin_usdt = MARGIN_USDT
+            cls._instance.max_position_equity_ratio = MAX_POSITION_EQUITY_RATIO_ENV
             cls._instance.rsi_length = RSI_LENGTH_ENV
             cls._instance.rsi_oversold = RSI_OVERSOLD_ENV
             cls._instance.rsi_overbought = RSI_OVERBOUGHT_ENV
@@ -125,9 +132,30 @@ class BotSettings:
         self.max_open_positions = val
         self._update_env("MAX_OPEN_POSITIONS", str(val))
 
+    def update_margin_mode(self, mode: str):
+        mode = mode.upper()
+        if mode not in {"DYNAMIC", "FIXED"}:
+            raise ValueError("Mode margin harus DYNAMIC atau FIXED")
+        self.margin_mode = mode
+        self._update_env("MARGIN_MODE", mode)
+
+    def update_margin(self, val: float):
+        if val <= 0:
+            raise ValueError("Margin harus lebih besar dari 0")
+        self.margin_usdt = val
+        self._update_env("MARGIN_USDT", str(val))
+
     def update_risk_per_trade(self, val: float):
+        if val <= 0 or val > 10:
+            raise ValueError("Risk per trade harus antara 0.1% sampai 10.0%")
         self.risk_per_trade_percent = val
         self._update_env("RISK_PER_TRADE_PERCENT", str(val))
+
+    def update_max_position_equity_ratio(self, val: float):
+        if val <= 0 or val > 1.0:
+            raise ValueError("Max position equity ratio harus antara 0.05 sampai 1.0 (5% - 100%)")
+        self.max_position_equity_ratio = val
+        self._update_env("MAX_POSITION_EQUITY_RATIO", str(val))
 
     def update_rsi(self, length: int, oversold: float, overbought: float):
         if length < 2 or not 0 < oversold < overbought < 100:
@@ -164,6 +192,28 @@ class BotSettings:
         self.ts_callback_rate = val
         self._update_env("TS_CALLBACK_RATE", str(val))
         
+    def update_simulated_modal(self, val: float | None):
+        if val is not None and val <= 0:
+            raise ValueError("Modal simulasi harus lebih besar dari 0")
+        self.simulated_modal = val
+        self._update_env("SIMULATED_MODAL", str(val if val is not None else 0.0))
+
+    def reset_simulated_modal(self, val: float = 100.0):
+        self.simulated_modal = val
+        self._update_env("SIMULATED_MODAL", str(val))
+
+    def update_rsi_oversold(self, val: float):
+        if not (0 < val < self.rsi_overbought):
+            raise ValueError(f"RSI Oversold harus antara 0 dan {self.rsi_overbought}")
+        self.rsi_oversold = val
+        self._update_env("RSI_OVERSOLD", str(val))
+
+    def update_rsi_overbought(self, val: float):
+        if not (self.rsi_oversold < val < 100):
+            raise ValueError(f"RSI Overbought harus antara {self.rsi_oversold} dan 100")
+        self.rsi_overbought = val
+        self._update_env("RSI_OVERBOUGHT", str(val))
+
     def _update_env(self, key: str, value: str):
         try:
             import dotenv

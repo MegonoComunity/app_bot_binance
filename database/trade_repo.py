@@ -66,7 +66,36 @@ async def insert_trade(trade: dict) -> bool:
                 result,
                 closed_at,
             )
-        logger.debug(f"[DB] Trade {trade.get('symbol')} ({result}) disimpan ke trade_history")
+            
+            # Simpan juga ke tabel terpisah untuk analisa sesi baru
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO trade_analysis_session
+                        (session_id, symbol, side, entry_price, exit_price, realized_pnl,
+                         net_pnl, margin_usdt, leverage, mfe, mae, duration_minutes,
+                         order_type, result, closed_at)
+                    VALUES ('SESSION_2_SAFE_COMPUTED', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    """,
+                    trade.get("symbol", "UNKNOWN"),
+                    trade.get("side", "LONG"),
+                    float(trade.get("entry_price", 0) or 0) or None,
+                    float(trade.get("exit_price", 0) or 0) or None,
+                    pnl,
+                    net_pnl,
+                    float(trade.get("margin_usdt", 0) or 0) or None,
+                    int(trade.get("leverage", 0) or 0) or None,
+                    float(trade.get("mfe", 0) or 0) if trade.get("mfe") is not None else None,
+                    float(trade.get("mae", 0) or 0) if trade.get("mae") is not None else None,
+                    float(trade.get("duration_minutes", 0) or 0) if trade.get("duration_minutes") is not None else None,
+                    trade.get("order_type", "MARKET"),
+                    result,
+                    closed_at,
+                )
+            except Exception as e_session:
+                logger.debug(f"[DB] Insert trade_analysis_session skipped: {e_session}")
+
+        logger.debug(f"[DB] Trade {trade.get('symbol')} ({result}) disimpan ke trade_history & trade_analysis_session")
         return True
     except Exception as exc:
         logger.error(f"[DB] Gagal insert trade: {exc}")
