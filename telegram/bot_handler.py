@@ -79,6 +79,7 @@ async def setup_bot_commands(bot_instance: Bot) -> None:
         BotCommand(command="set_leverage", description="Ubah Leverage"),
         BotCommand(command="set_tp", description="Target Take Profit (%)"),
         BotCommand(command="set_sl", description="Target Stop Loss (%)"),
+        BotCommand(command="backup_db", description="Backup Database ke Telegram"),
         BotCommand(command="close_all", description="Tutup Semua Posisi Terbuka"),
         BotCommand(command="pause", description="Jeda Scanning"),
         BotCommand(command="resume", description="Lanjutkan Scanning"),
@@ -780,6 +781,19 @@ async def set_rsi_overbought_handler(message: types.Message, command: CommandObj
         await message.answer(f"✅ RSI Overbought diubah ke `{val}`", parse_mode="Markdown")
     except ValueError as err:
         await message.answer(f"❌ {err}")
+
+@dp.message(Command("backup_db"))
+async def backup_db_handler(message: types.Message):
+    wait_msg = await message.answer("🔄 Sedang membuat dump database & mengompres ke ZIP...")
+    try:
+        from database.send_backup_to_telegram import execute_database_backup
+        success = await execute_database_backup(bot=bot, chat_id=str(message.chat.id))
+        if success:
+            await wait_msg.delete()
+        else:
+            await wait_msg.edit_text("❌ Gagal membuat backup database. Cek log server.")
+    except Exception as e:
+        await wait_msg.edit_text(f"❌ Error saat backup: {e}")
 
 @dp.message(F.text == "📊 Status Bot")
 async def btn_status_handler(message: types.Message):

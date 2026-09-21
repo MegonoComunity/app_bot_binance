@@ -24,10 +24,15 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 DB_NAME = os.getenv("DB_NAME", "db_crypto_learn")
 
 
-async def main():
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_ADMIN_CHAT_ID:
-        print("[ERROR] TELEGRAM_BOT_TOKEN atau TELEGRAM_ADMIN_CHAT_ID belum diatur di .env")
-        return
+async def execute_database_backup(bot: Bot | None = None, chat_id: str | None = None) -> bool:
+    """
+    Eksekusi dump database, kompres ZIP, dan kirim ke Telegram.
+    Dapat dipanggil langsung oleh scheduler atau command Telegram.
+    """
+    target_chat_id = chat_id or TELEGRAM_ADMIN_CHAT_ID
+    if not TELEGRAM_BOT_TOKEN or not target_chat_id:
+        print("[ERROR] TELEGRAM_BOT_TOKEN atau target chat_id belum diatur di .env")
+        return False
 
     timestamp = datetime.now().strftime("%Y_%m_%d_%H%M%S")
     os.makedirs("database", exist_ok=True)
@@ -43,7 +48,7 @@ async def main():
     ret = os.system(cmd)
     if ret != 0 or not os.path.exists(sql_file):
         print(f"[ERROR] pg_dump gagal dengan return code {ret}")
-        return
+        return False
 
     sql_size_mb = os.path.getsize(sql_file) / (1024 * 1024)
     print(f"[OK] Dump selesai ({sql_size_mb:.2f} MB).")
@@ -55,36 +60,72 @@ async def main():
     zip_size_mb = os.path.getsize(zip_file) / (1024 * 1024)
     print(f"[OK] Kompresi ZIP selesai ({zip_size_mb:.2f} MB).")
 
-    print(f"[3/3] Mengirim file backup ke Telegram (Chat ID: {TELEGRAM_ADMIN_CHAT_ID})...")
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    print(f"[3/3] Mengirim file backup ke Telegram (Chat ID: {target_chat_id})...")
+    local_bot = bot is None
+    active_bot = bot or Bot(token=TELEGRAM_BOT_TOKEN)
     try:
         doc = FSInputFile(zip_file)
         caption = (
-            f"📦 **DATABASE BACKUP — CRYPTO BOT**\n"
+            f"📦 **DATABASE AUTO-BACKUP (03:00 WIB) — CRYPTO BOT**\n"
             f"──────────────\n"
             f"🗄️ Database: `{DB_NAME}`\n"
             f"⏱️ Waktu: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} WIB`\n"
             f"📊 Ukuran SQL: `{sql_size_mb:.2f} MB` → ZIP: `{zip_size_mb:.2f} MB`\n"
             f"──────────────\n"
-            f"💡 **Cara Restore di Komputer Lain:**\n"
-            f"1. Ekstrak file zip ini\n"
-            f"2. Jalankan: `psql -U postgres -d {DB_NAME} -f <nama_file.sql>`"
+            f"💡 **Tabel Termasuk:**\n"
+            f"• `trade_history` (Riwayat transaksi lengkap)\n"
+            f"• `pattern_memory` (AI Sidik jari & win rate pola)\n"
+            f"• `pattern_entries` (Detail parameter entry)\n"
+            f"• `trade_analysis_session` (Tabel analisa sesi baru)\n"
+            f"• `ohlcv_candles` (Data candle harian)\n\n"
+            f"✅ *Backup harian otomatis terkirim.*"
         )
-        await bot.send_document(
-            chat_id=TELEGRAM_ADMIN_CHAT_ID,
+        await active_bot.send_document(
+            chat_id=target_chat_id,
             document=doc,
             caption=caption,
             parse_mode="Markdown"
         )
         print("[SUCCESS] File backup database telah terkirim ke Telegram.")
+        return True
     except Exception as exc:
         print(f"[ERROR] Gagal mengirim file ke Telegram: {exc}")
+        return False
     finally:
-        await bot.session.close()
+        if local_bot:
+            await active_bot.session.close()
         if os.path.exists(sql_file):
             os.remove(sql_file)
         if os.path.exists(zip_file):
             os.remove(zip_file)
+
+
+async def daily_backup_scheduler_loop(bot: Bot) -> None:
+    """
+    Loop otomatis yang berjalan di background dan mengirimkan backup database
+    setiap hari tepat pada jam 03:00 WIB / server time.
+    """
+    last_backup_date = None
+    print("[SCHEDULER] ⏰ Jadwal Auto-Backup Database setiap jam 03:00 WIB aktif.")
+    while True:
+        try:
+            now = datetime.now()
+            today_str = now.strftime("%Y-%m-%d")
+            # Cek jika jam 03:00 s/d 03:05 dan belum dibackup hari ini
+            if now.hour == 3 and now.minute == 0 and last_backup_date != today_str:
+                print(f"[SCHEDULER] ⏰ Memulai Auto-Backup Database harian ({today_str} 03:00)...")
+                success = await execute_database_backup(bot=bot)
+                if success:
+                    last_backup_date = today_str
+                    print(f"[SCHEDULER] ✅ Auto-Backup harian {today_str} selesai & terkirim.")
+            await asyncio.sleep(30)
+        except Exception as e:
+            print(f"[SCHEDULER] Error in daily_backup_scheduler_loop: {e}")
+            await asyncio.sleep(60)
+
+
+async def main():
+    await execute_database_backup()
 
 
 if __name__ == "__main__":

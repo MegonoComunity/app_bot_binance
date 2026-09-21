@@ -1020,11 +1020,13 @@ async def main():
         print(f"[TELEGRAM] Gagal setup commands: {_tg_err}")
 
     try:
+        from database.send_backup_to_telegram import daily_backup_scheduler_loop
         await asyncio.gather(
             dp.start_polling(bot),
             scanner_loop(),
             user_data_stream_loop(),
             profitable_position_monitor_loop(),
+            daily_backup_scheduler_loop(bot),
             # Background scraper (hanya Daily 1d agar database hemat)
             run_long_term_scraper(_startup_client) if DB_MODULES_LOADED else asyncio.sleep(0),
         )
