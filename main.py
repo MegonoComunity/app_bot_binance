@@ -2,6 +2,7 @@ import asyncio
 import time
 import os
 import csv
+from collections import defaultdict
 from datetime import datetime
 from binance import AsyncClient
 import pandas as pd
@@ -641,9 +642,19 @@ async def scanner_loop():
                     await asyncio.sleep(API_REQUEST_DELAY)
                                     
             except Exception as loop_error:
+                err_str = str(loop_error)
                 error_msg = f"Error in scanner loop: {str(loop_error)}"
                 print(error_msg)
-                await send_error_log(bot, TELEGRAM_ADMIN_CHAT_ID, error_msg)
+                if "-1003" in err_str or "429" in err_str or "too many requests" in err_str.lower() or "banned" in err_str.lower():
+                    print("[RATE LIMIT PROTECTION] Scanner mendeteksi IP Ban / Rate Limit (-1003). Cooldown 5 menit...")
+                    await send_error_log(
+                        bot,
+                        TELEGRAM_ADMIN_CHAT_ID,
+                        "⚠️ **BINANCE RATE LIMIT (-1003)**: Terdeteksi batas request. Scanner otomatis jeda 5 menit untuk mendinginkan koneksi.",
+                    )
+                    await asyncio.sleep(300)
+                else:
+                    await send_error_log(bot, TELEGRAM_ADMIN_CHAT_ID, error_msg)
                 
             # Jeda sebelum scan ulang
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
@@ -819,6 +830,15 @@ async def profitable_position_monitor_loop():
                 now_ms = int(time.time() * 1000)
                 max_age_ms = int(AUTO_CLOSE_PROFIT_HOURS_ENV * 60 * 60 * 1000)
 
+                # Ambil semua open orders sekaligus dalam 1 request (Hemat 90% bobot API)
+                orders_by_symbol = defaultdict(list)
+                try:
+                    all_open_orders = await client.futures_get_open_orders()
+                    for o in all_open_orders:
+                        orders_by_symbol[o.get("symbol")].append(o)
+                except Exception as e_ord:
+                    print(f"[POSITION MONITOR] Gagal batch fetch open orders: {e_ord}")
+
                 for position in account_info.get("positions", []):
                     amount = float(position.get("positionAmt", 0))
                     profit = float(position.get("unrealizedProfit", 0))
@@ -888,7 +908,7 @@ async def profitable_position_monitor_loop():
                         suppressed_symbols = bot_state.setdefault("protection_recovery_suppressed", set())
                         if symbol in suppressed_symbols:
                             continue
-                        open_orders = await client.futures_get_open_orders(symbol=symbol)
+                        open_orders = orders_by_symbol.get(symbol, [])
                         has_tp = any(
                             order.get("type") in {"TAKE_PROFIT", "TAKE_PROFIT_MARKET", "TRAILING_STOP_MARKET"}
                             for order in open_orders
@@ -954,12 +974,22 @@ async def profitable_position_monitor_loop():
                         f"dan umur {age_ms / 3600000:.2f} jam. Status: {status}",
                     )
             except Exception as monitor_error:
+                err_str = str(monitor_error)
                 print(f"[POSITION MONITOR] {monitor_error}")
-                await send_error_log(
-                    bot,
-                    TELEGRAM_ADMIN_CHAT_ID,
-                    f"Position monitor error: {monitor_error}",
-                )
+                if "-1003" in err_str or "429" in err_str or "too many requests" in err_str.lower() or "banned" in err_str.lower():
+                    print("[RATE LIMIT PROTECTION] Monitor mendeteksi IP Ban / Rate Limit (-1003). Cooldown 5 menit...")
+                    await send_error_log(
+                        bot,
+                        TELEGRAM_ADMIN_CHAT_ID,
+                        "⚠️ **BINANCE RATE LIMIT (-1003)**: Batas request tercapai. Position monitor otomatis jeda 5 menit untuk mendinginkan IP.",
+                    )
+                    await asyncio.sleep(300)
+                else:
+                    await send_error_log(
+                        bot,
+                        TELEGRAM_ADMIN_CHAT_ID,
+                        f"Position monitor error: {monitor_error}",
+                    )
 
             await asyncio.sleep(POSITION_MONITOR_INTERVAL_ENV)
     finally:
