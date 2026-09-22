@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CryptoBot Analytics | Pro Terminal & AI Brain</title>
+  <title>CryptoBot Analytics | Multi-Exchange Pro Terminal</title>
   <!-- Google Fonts: Outfit & Inter -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -25,9 +25,10 @@
       --accent-blue: #4facfe;
       --accent-emerald: #00e676;
       --accent-rose: #ff3366;
-      --accent-amber: #ffb300;
+      --accent-amber: #f3ba2f;
       --accent-purple: #9d4edd;
       
+      --theme-active: var(--accent-cyan);
       --text-main: #f8fafc;
       --text-muted: #94a3b8;
       --text-dim: #64748b;
@@ -55,7 +56,6 @@
       padding-bottom: 50px;
     }
 
-    /* Scrollbar */
     ::-webkit-scrollbar {
       width: 6px;
       height: 6px;
@@ -165,10 +165,102 @@
     .container {
       max-width: 1440px;
       margin: 0 auto;
-      padding: 24px 24px 0 24px;
+      padding: 20px 24px 0 24px;
       display: flex;
       flex-direction: column;
-      gap: 24px;
+      gap: 20px;
+    }
+
+    /* Exchange Switcher Bar */
+    .exchange-switcher-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      background: rgba(13, 19, 33, 0.85);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 10px 16px;
+      backdrop-filter: blur(12px);
+    }
+    .tabs-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .tab-pill {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 7px 16px;
+      border-radius: 30px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.25s ease;
+    }
+    .tab-pill:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .tab-pill.active {
+      color: #fff;
+      border-color: var(--theme-active);
+      box-shadow: 0 0 16px rgba(0, 242, 254, 0.2);
+    }
+    .tab-pill.active.pill-binance {
+      border-color: var(--accent-amber);
+      background: rgba(243, 186, 47, 0.15);
+      color: #ffde59;
+      box-shadow: 0 0 16px rgba(243, 186, 47, 0.25);
+    }
+    .tab-pill.active.pill-bitunix-sim {
+      border-color: var(--accent-cyan);
+      background: rgba(0, 242, 254, 0.15);
+      color: #7df9ff;
+      box-shadow: 0 0 16px rgba(0, 242, 254, 0.25);
+    }
+    .tab-pill.active.pill-bitunix-real {
+      border-color: var(--accent-emerald);
+      background: rgba(0, 230, 118, 0.15);
+      color: #69f0ae;
+      box-shadow: 0 0 16px rgba(0, 230, 118, 0.25);
+    }
+    .tab-pill.active.pill-all {
+      border-color: var(--accent-blue);
+      background: rgba(79, 172, 254, 0.15);
+      color: #bae6fd;
+    }
+
+    .tab-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+    .dot-all { background: #60a5fa; }
+    .dot-binance { background: #f3ba2f; }
+    .dot-bitunix-sim { background: #00f2fe; }
+    .dot-bitunix-real { background: #00e676; }
+
+    .engine-status-tag {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .engine-highlight {
+      font-weight: 700;
+      color: var(--accent-cyan);
+      background: rgba(0, 242, 254, 0.1);
+      padding: 3px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(0, 242, 254, 0.2);
     }
 
     /* Metrics Grid */
@@ -177,7 +269,6 @@
       grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
       gap: 16px;
     }
-
     .metric-card {
       background: var(--bg-card);
       border: 1px solid var(--border-color);
@@ -185,16 +276,16 @@
       padding: 18px 20px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
+      transition: all 0.25s ease;
       position: relative;
       overflow: hidden;
-      transition: transform 0.2s ease, border-color 0.2s ease;
       backdrop-filter: blur(12px);
     }
     .metric-card:hover {
-      transform: translateY(-2px);
-      border-color: rgba(255, 255, 255, 0.16);
       background: var(--bg-card-hover);
+      transform: translateY(-2px);
+      border-color: var(--border-glow);
     }
     .metric-card::before {
       content: '';
@@ -205,13 +296,12 @@
       height: 2px;
       background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
     }
-
     .metric-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
       color: var(--text-muted);
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.5px;
@@ -242,6 +332,104 @@
     .val-positive { color: var(--accent-emerald) !important; }
     .val-negative { color: var(--accent-rose) !important; }
     .val-neutral  { color: var(--text-main) !important; }
+
+    /* AI Market Intelligence & Advisory Card */
+    .market-intel-card {
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(10, 15, 26, 0.85) 100%);
+      border: 1px solid rgba(0, 242, 254, 0.25);
+      border-radius: 16px;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(16px);
+    }
+    .market-intel-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue), var(--accent-purple));
+    }
+    .intel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .intel-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .intel-badges {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .intel-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+    .intel-box {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .intel-box-title {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .intel-box-val {
+      font-size: 1.15rem;
+      font-weight: 700;
+      font-family: 'Outfit', sans-serif;
+      color: var(--text-main);
+    }
+    .intel-box-sub {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    .intel-advice-box {
+      background: rgba(0, 242, 254, 0.05);
+      border: 1px solid rgba(0, 242, 254, 0.2);
+      border-radius: 10px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .intel-advice-icon {
+      color: var(--accent-cyan);
+      margin-top: 2px;
+      flex-shrink: 0;
+    }
+    .intel-advice-text {
+      font-size: 0.88rem;
+      line-height: 1.5;
+      color: #e2e8f0;
+    }
+    .intel-advice-text strong {
+      color: var(--accent-cyan);
+    }
 
     /* Active Positions Section */
     .active-positions-section {
@@ -364,6 +552,24 @@
       overflow: hidden;
     }
 
+    /* PnL Growth Curve Section */
+    .pnl-chart-section {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      backdrop-filter: blur(14px);
+    }
+    #pnl-curve-container {
+      width: 100%;
+      height: 220px;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
     /* Tab Section */
     .tab-section {
       background: var(--bg-card);
@@ -451,6 +657,11 @@
     .badge-long { background: rgba(0, 230, 118, 0.15); color: var(--accent-emerald); border: 1px solid rgba(0, 230, 118, 0.4); }
     .badge-short { background: rgba(255, 51, 102, 0.15); color: var(--accent-rose); border: 1px solid rgba(255, 51, 102, 0.4); }
 
+    /* Exchange specific badges */
+    .badge-ex-binance { background: rgba(243, 186, 47, 0.15); color: #f3ba2f; border: 1px solid rgba(243, 186, 47, 0.4); }
+    .badge-ex-bitunix-sim { background: rgba(0, 242, 254, 0.15); color: #00f2fe; border: 1px solid rgba(0, 242, 254, 0.4); }
+    .badge-ex-bitunix-real { background: rgba(0, 230, 118, 0.15); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.4); }
+
     .progress-bar-container {
       width: 100px;
       height: 6px;
@@ -484,7 +695,7 @@
       </div>
       <div>
         <div class="brand-name">CRYPTO-BOT AI ANALYTICS</div>
-        <div style="font-size: 0.75rem; color: var(--text-dim);">Deep Learning & Algorithmic Futures Engine</div>
+        <div style="font-size: 0.75rem; color: var(--text-dim);">Multi-Exchange Algorithmic Futures Engine</div>
       </div>
     </div>
 
@@ -502,6 +713,82 @@
 
   <!-- Main Container -->
   <main class="container">
+
+    <!-- Multi-Exchange Filter Bar -->
+    <div class="exchange-switcher-bar">
+      <div class="tabs-group">
+        <span style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); margin-right: 4px;">
+          <i data-lucide="filter" style="width: 14px; vertical-align: middle;"></i> FILTER PLATFORM:
+        </span>
+        <button class="tab-pill pill-all active" id="btn-tab-ALL" onclick="setExchangeFilter('ALL')">
+          <span class="tab-dot dot-all"></span> Semua Data
+        </button>
+        <button class="tab-pill pill-binance" id="btn-tab-BINANCE" onclick="setExchangeFilter('BINANCE')">
+          <span class="tab-dot dot-binance"></span> 🟡 Binance Demo
+        </button>
+        <button class="tab-pill pill-bitunix-sim" id="btn-tab-BITUNIX_SIM" onclick="setExchangeFilter('BITUNIX_SIM')">
+          <span class="tab-dot dot-bitunix-sim"></span> 🔵 Bitunix Simulation
+        </button>
+        <button class="tab-pill pill-bitunix-real" id="btn-tab-BITUNIX_REAL" onclick="setExchangeFilter('BITUNIX_REAL')">
+          <span class="tab-dot dot-bitunix-real"></span> 🟢 Bitunix Real
+        </button>
+      </div>
+      <div class="engine-status-tag">
+        Active Engine: <span class="engine-highlight" id="active-engine-text">BITUNIX</span>
+      </div>
+    </div>
+
+    <!-- AI Market Intelligence & Advisory Card -->
+    <section class="market-intel-card" id="market-intel-section">
+      <div class="intel-header">
+        <div class="intel-title">
+          <i data-lucide="sparkles" style="color: var(--accent-cyan); width: 22px;"></i>
+          <span>AI MARKET INTELLIGENCE & SCANNER RADAR</span>
+        </div>
+        <div class="intel-badges">
+          <span class="badge badge-approved" id="intel-regime-badge">BULLISH EXPANSION</span>
+          <span class="badge" style="background: rgba(243, 186, 47, 0.15); color: #f3ba2f; border: 1px solid rgba(243, 186, 47, 0.3);" id="intel-risk-badge">RISK: MODERATE</span>
+        </div>
+      </div>
+
+      <div class="intel-grid">
+        <!-- 1. BTC Anchor Status -->
+        <div class="intel-box">
+          <span class="intel-box-title">Induk Market (BTC/USDT)</span>
+          <div class="intel-box-val" id="intel-btc-price">$86,377.90</div>
+          <div class="intel-box-sub" id="intel-btc-sub">1H: <strong style="color: var(--accent-emerald);">UPTREND</strong> | RSI 1H: 65.0</div>
+        </div>
+
+        <!-- 2. Market Breadth / Heatmap -->
+        <div class="intel-box">
+          <span class="intel-box-title">Altcoins Scanner Breadth</span>
+          <div class="intel-box-val" id="intel-trend-breadth">71.2% Uptrend</div>
+          <div class="intel-box-sub" id="intel-breadth-sub">57 Naik / 21 Turun / 2 Sideways</div>
+        </div>
+
+        <!-- 3. Bollinger Band Position -->
+        <div class="intel-box">
+          <span class="intel-box-title">Bollinger Bands Exposure</span>
+          <div class="intel-box-val" id="intel-bb-exposure" style="color: var(--accent-amber);">77.5% Upper Band</div>
+          <div class="intel-box-sub" id="intel-bb-sub">62 di Plafon Atas (Pucuk) / 18 di Lower</div>
+        </div>
+
+        <!-- 4. Reversal Patterns Count -->
+        <div class="intel-box">
+          <span class="intel-box-title">Pola Candle & Sinyal Terdeteksi</span>
+          <div class="intel-box-val" id="intel-patterns-count">32 Pola Terdeteksi</div>
+          <div class="intel-box-sub" id="intel-patterns-sub">4 Oversold | 34 Overbought</div>
+        </div>
+      </div>
+
+      <!-- AI Actionable Advice Box -->
+      <div class="intel-advice-box">
+        <i data-lucide="bot" class="intel-advice-icon" style="width: 22px; height: 22px;"></i>
+        <div class="intel-advice-text" id="intel-advice-text">
+          <strong>Saran & Rekomendasi Eksekusi AI:</strong> Mayoritas altcoin (77%) menempel di Upper Bollinger Band dengan RSI > 65. Bot saat ini bersiaga menunggu konfirmasi koreksi/pullback ke Support & Lower BB agar tidak terkena Bull Trap di pucuk.
+        </div>
+      </div>
+    </section>
 
     <!-- Top 6 Hero Metrics Grid -->
     <section class="metrics-grid">
@@ -541,7 +828,7 @@
         <div class="metric-sub" id="sub-daily-wr">0 Menang / 0 Kalah</div>
       </div>
 
-      <!-- 4. Profit Factor (Daily & All-Time) -->
+      <!-- 4. Profit Factor -->
       <div class="metric-card">
         <div class="metric-header">
           <span>Profit Factor</span>
@@ -565,17 +852,29 @@
         <div class="metric-sub" id="sub-alltime-pnl">Total All-Time WR: 0.0%</div>
       </div>
 
-      <!-- 6. Active Positions Count & Virtual Stats -->
+      <!-- 6. Active Positions Count & Simulated Modal -->
       <div class="metric-card">
         <div class="metric-header">
-          <span>Posisi Aktif & Virtual</span>
+          <span>Posisi Aktif & Saldo Simulasi</span>
           <div class="metric-icon" style="color: var(--accent-cyan);">
-            <i data-lucide="layers" style="width: 18px;"></i>
+            <i data-lucide="wallet" style="width: 18px;"></i>
           </div>
         </div>
-        <div class="metric-value" id="val-active-positions">0 / 3</div>
-        <div class="metric-sub" id="sub-virtual-trades">+0 Virtual Paper Signals</div>
+        <div class="metric-value" id="val-active-positions">0 / 4</div>
+        <div class="metric-sub" id="sub-virtual-trades">Saldo Simulasi: $100.00 USDT</div>
       </div>
+    </section>
+
+    <!-- Cumulative PnL Growth Curve Section -->
+    <section class="pnl-chart-section">
+      <div class="section-title">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <i data-lucide="trending-up" style="color: var(--accent-emerald); width: 20px;"></i>
+          <span>Kurva Pertumbuhan Kumulatif PnL (Equity Curve)</span>
+        </div>
+        <span class="badge badge-approved" id="pnl-curve-filter-badge">ALL EXCHANGES</span>
+      </div>
+      <div id="pnl-curve-container"></div>
     </section>
 
     <!-- Real-time Active Open Positions Section -->
@@ -599,102 +898,61 @@
     <section class="chart-section">
       <div class="chart-header">
         <div class="chart-title-area">
-          <select id="select-symbol" class="symbol-select" onchange="loadCandles()">
+          <i data-lucide="activity" style="color: var(--accent-cyan); width: 22px;"></i>
+          <span class="font-heading" style="font-size: 1.15rem; font-weight: 700;">Candlestick OHLCV Live</span>
+          <select id="select-symbol" class="symbol-select" onchange="onSymbolChange(this.value)">
             <option value="BTCUSDT">BTCUSDT</option>
-            <option value="ETHUSDT">ETHUSDT</option>
-            <option value="SOLUSDT">SOLUSDT</option>
           </select>
-          <div style="font-size: 0.85rem; color: var(--text-dim);">
-            📊 Data OHLCV Tersinkronisasi PostgreSQL & Binance
-          </div>
         </div>
 
         <div class="tf-tabs">
-          <button class="tf-btn" data-tf="5m" onclick="changeTimeframe('5m')">5m</button>
-          <button class="tf-btn" data-tf="15m" onclick="changeTimeframe('15m')">15m</button>
-          <button class="tf-btn" data-tf="1h" onclick="changeTimeframe('1h')">1h</button>
-          <button class="tf-btn active" data-tf="1d" onclick="changeTimeframe('1d')">1D (20D)</button>
+          <button class="tf-btn active" data-tf="1d" onclick="setChartTf('1d', this)">1D</button>
+          <button class="tf-btn" data-tf="1h" onclick="setChartTf('1h', this)">1H</button>
+          <button class="tf-btn" data-tf="5m" onclick="setChartTf('5m', this)">5M</button>
         </div>
       </div>
 
-      <!-- Chart Container -->
       <div id="tv-chart-container"></div>
     </section>
 
-    <!-- Navigation Tabs Section: Strategies, Pattern Intelligence, Trades, Virtual Signals -->
+    <!-- Multi-Tab Section: History, AI Brain Patterns & Strategies -->
     <section class="tab-section">
       <div class="nav-tabs">
-        <button class="nav-tab-btn active" onclick="switchTab('strategies-tab', this)">
-          <i data-lucide="layers" style="width: 16px;"></i>
-          Active Strategi & Performa NET
+        <button class="nav-tab-btn active" onclick="switchTab('tab-trades', this)">
+          <i data-lucide="history" style="width: 18px;"></i>
+          Riwayat Trade Real
         </button>
-        <button class="nav-tab-btn" onclick="switchTab('patterns-tab', this)">
-          <i data-lucide="brain" style="width: 16px;"></i>
-          AI Pattern Fingerprint Intelligence
+        <button class="nav-tab-btn" onclick="switchTab('tab-strategies', this)">
+          <i data-lucide="zap" style="width: 18px;"></i>
+          Performa Strategi AI
         </button>
-        <button class="nav-tab-btn" onclick="switchTab('trades-tab', this)">
-          <i data-lucide="history" style="width: 16px;"></i>
-          Riwayat Transaksi Real (Closed Trades)
+        <button class="nav-tab-btn" onclick="switchTab('tab-patterns', this)">
+          <i data-lucide="brain" style="width: 18px;"></i>
+          Memory Pola Candle (Brain)
         </button>
-        <button class="nav-tab-btn" onclick="switchTab('virtual-tab', this)">
-          <i data-lucide="sparkles" style="width: 16px;"></i>
-          Virtual Paper Sinyal
+        <button class="nav-tab-btn" onclick="switchTab('tab-virtual', this)">
+          <i data-lucide="eye" style="width: 18px;"></i>
+          Virtual Paper Signals
+        </button>
+        <button class="nav-tab-btn" onclick="switchTab('tab-performance', this)">
+          <i data-lucide="calendar" style="width: 18px;"></i>
+          Analisa Winrate Daily & Monthly
         </button>
       </div>
 
-      <!-- Tab 1: Active Strategies & AI Breakdown -->
-      <div id="strategies-tab" class="tab-content">
+      <!-- Tab 1: Trade History Table -->
+      <div id="tab-trades" class="tab-content" style="display: block;">
         <div class="table-responsive">
           <table>
             <thead>
               <tr>
-                <th>Nama Strategi / Setup Pola</th>
-                <th>Status AI Learner</th>
-                <th>Win / Loss</th>
-                <th>Win Rate (%)</th>
-                <th>Akurasi Evaluasi</th>
-              </tr>
-            </thead>
-            <tbody id="strategies-table-body">
-              <tr><td colspan="5" style="text-align: center; color: var(--text-dim);">Memuat data strategi...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Tab 2: Pattern Fingerprint Intelligence -->
-      <div id="patterns-tab" class="tab-content" style="display: none;">
-        <div class="table-responsive">
-          <table>
-            <thead>
-              <tr>
-                <th>Pola Sidik Jari (Fingerprint)</th>
-                <th>Status AI</th>
-                <th>Win / Loss</th>
-                <th>Win Rate</th>
-                <th>Total PnL</th>
-                <th>Terakhir Dilihat</th>
-              </tr>
-            </thead>
-            <tbody id="pattern-table-body">
-              <tr><td colspan="6" style="text-align: center; color: var(--text-dim);">Memuat data pola...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Tab 3: Real Trades History -->
-      <div id="trades-tab" class="tab-content" style="display: none;">
-        <div class="table-responsive">
-          <table>
-            <thead>
-              <tr>
-                <th>Waktu</th>
-                <th>Koin</th>
-                <th>Posisi</th>
-                <th>Entry / Exit</th>
-                <th>Gross PnL</th>
-                <th>Komisi & Funding</th>
+                <th>Waktu Selesai</th>
+                <th>Exchange</th>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th>Entry → Exit</th>
+                <th>Realized PnL</th>
+                <th>Fee & Comm</th>
                 <th>Net PnL</th>
                 <th>MFE / MAE</th>
                 <th>Durasi</th>
@@ -702,55 +960,155 @@
               </tr>
             </thead>
             <tbody id="trades-table-body">
-              <tr><td colspan="10" style="text-align: center; color: var(--text-dim);">Memuat riwayat transaksi...</td></tr>
+              <tr><td colspan="11" style="text-align: center; color: var(--text-dim);">Memuat data transaksi...</td></tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      <!-- Tab 4: Virtual Signals -->
-      <div id="virtual-tab" class="tab-content" style="display: none;">
+      <!-- Tab 2: Strategies Performance Table -->
+      <div id="tab-strategies" class="tab-content" style="display: none;">
         <div class="table-responsive">
           <table>
             <thead>
               <tr>
-                <th>Waktu</th>
-                <th>Koin</th>
-                <th>Posisi</th>
-                <th>Harga Entry</th>
-                <th>Target TP/SL</th>
-                <th>Alasan Setup Indikator</th>
-                <th>Status</th>
+                <th>Nama Strategi / Pola Sinyal</th>
+                <th>Status Pembelajaran</th>
+                <th>Eksekusi (Win / Loss)</th>
+                <th>Win Rate</th>
+                <th>Visual Metrik</th>
               </tr>
             </thead>
-            <tbody id="virtual-table-body">
-              <tr><td colspan="7" style="text-align: center; color: var(--text-dim);">Memuat virtual sinyal...</td></tr>
+            <tbody id="strategies-table-body">
+              <tr><td colspan="5" style="text-align: center; color: var(--text-dim);">Memuat performa strategi...</td></tr>
             </tbody>
           </table>
         </div>
       </div>
 
+      <!-- Tab 3: Pattern Memory Table -->
+      <div id="tab-patterns" class="tab-content" style="display: none;">
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Fingerprint Pola Candle</th>
+                <th>Status Validasi</th>
+                <th>Sampel (Win / Loss)</th>
+                <th>Win Rate</th>
+                <th>Total PnL Terkumpul</th>
+                <th>Terakhir Dilihat</th>
+              </tr>
+            </thead>
+            <tbody id="pattern-table-body">
+              <tr><td colspan="6" style="text-align: center; color: var(--text-dim);">Memuat memory pola AI...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tab 4: Virtual Paper Signals Table -->
+      <div id="tab-virtual" class="tab-content" style="display: none;">
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Waktu Sinyal</th>
+                <th>Symbol</th>
+                <th>Tipe</th>
+                <th>Harga Entry</th>
+                <th>Target TP</th>
+                <th>Alasan Sinyal Valid</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="virtual-table-body">
+              <tr><td colspan="7" style="text-align: center; color: var(--text-dim);">Memuat log sinyal virtual...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tab 5: Daily & Monthly Performance Table -->
+      <div id="tab-performance" class="tab-content" style="display: none;">
+        <div style="display: flex; flex-direction: column; gap: 28px;">
+          
+          <!-- Monthly Breakdown Section -->
+          <div>
+            <h4 style="margin-bottom: 14px; font-size: 1.05rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 8px;">
+              <i data-lucide="calendar-range" style="width: 20px;"></i> Rekap Performa Bulanan (Monthly Win Rate & PnL)
+            </h4>
+            <div class="table-responsive">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Bulan</th>
+                    <th>Total Trade</th>
+                    <th>Win Rate (%)</th>
+                    <th>Menang (W)</th>
+                    <th>Kalah (L)</th>
+                    <th>Net Realized PnL</th>
+                    <th>Visual Bar</th>
+                  </tr>
+                </thead>
+                <tbody id="monthly-table-body">
+                  <tr><td colspan="7" style="text-align: center; color: var(--text-dim);">Memuat data bulanan...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Daily Breakdown Section -->
+          <div>
+            <h4 style="margin-bottom: 14px; font-size: 1.05rem; color: var(--accent-blue); display: flex; align-items: center; gap: 8px;">
+              <i data-lucide="calendar-days" style="width: 20px;"></i> Rekap Performa Harian (Daily Win Rate & PnL - 14 Hari Terakhir)
+            </h4>
+            <div class="table-responsive">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tanggal</th>
+                    <th>Total Trade</th>
+                    <th>Win Rate (%)</th>
+                    <th>Menang (W)</th>
+                    <th>Kalah (L)</th>
+                    <th>Net Realized PnL</th>
+                    <th>Visual Bar</th>
+                  </tr>
+                </thead>
+                <tbody id="daily-table-body">
+                  <tr><td colspan="7" style="text-align: center; color: var(--text-dim);">Memuat data harian...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </div>
     </section>
 
   </main>
 
   <script>
-    // Inisialisasi Icon Lucide
     lucide.createIcons();
 
+    let chart = null;
+    let candleSeries = null;
+    let volumeSeries = null;
+    let currentSymbol = 'BTCUSDT';
     let currentTf = '1d';
-    let chart, candleSeries, volumeSeries;
+    let currentExchangeFilter = 'ALL';
 
-    // Inisialisasi TradingView Lightweight Chart
+    // PnL Equity Curve Chart
+    let pnlChart = null;
+    let pnlAreaSeries = null;
+
+    // Initialize Candlestick Chart
     function initChart() {
       const container = document.getElementById('tv-chart-container');
-      container.innerHTML = '';
-
       chart = LightweightCharts.createChart(container, {
-        width: container.clientWidth,
-        height: 480,
         layout: {
-          background: { color: 'transparent' },
+          background: { color: '#090d16' },
           textColor: '#94a3b8',
         },
         grid: {
@@ -782,45 +1140,102 @@
         color: '#26a69a',
         priceFormat: { type: 'volume' },
         priceScaleId: '',
+      });
+      volumeSeries.priceScale().applyOptions({
         scaleMargins: { top: 0.8, bottom: 0 },
       });
 
       window.addEventListener('resize', () => {
-        chart.applyOptions({ width: container.clientWidth });
+        if (chart && container) {
+          chart.applyOptions({ width: container.clientWidth });
+        }
+        if (pnlChart && document.getElementById('pnl-curve-container')) {
+          pnlChart.applyOptions({ width: document.getElementById('pnl-curve-container').clientWidth });
+        }
       });
     }
 
-    // Ambil daftar koin dari backend
+    // Initialize PnL Curve Chart
+    function initPnlChart() {
+      const container = document.getElementById('pnl-curve-container');
+      if (!container) return;
+      pnlChart = LightweightCharts.createChart(container, {
+        layout: {
+          background: { color: '#090d16' },
+          textColor: '#94a3b8',
+        },
+        grid: {
+          vertLines: { color: 'rgba(255, 255, 255, 0.03)' },
+          horzLines: { color: 'rgba(255, 255, 255, 0.03)' },
+        },
+        rightPriceScale: {
+          borderColor: 'rgba(255, 255, 255, 0.08)',
+        },
+        timeScale: {
+          borderColor: 'rgba(255, 255, 255, 0.08)',
+          timeVisible: true,
+        },
+      });
+
+      pnlAreaSeries = pnlChart.addAreaSeries({
+        topColor: 'rgba(0, 242, 254, 0.4)',
+        bottomColor: 'rgba(0, 242, 254, 0.0)',
+        lineColor: '#00f2fe',
+        lineWidth: 2,
+      });
+    }
+
+    // Exchange Filter Switcher
+    function setExchangeFilter(ex) {
+      currentExchangeFilter = ex;
+      document.querySelectorAll('.tab-pill').forEach(btn => btn.classList.remove('active'));
+      const activeBtn = document.getElementById('btn-tab-' + ex);
+      if (activeBtn) activeBtn.classList.add('active');
+
+      const badge = document.getElementById('pnl-curve-filter-badge');
+      if (badge) badge.innerText = ex === 'ALL' ? 'ALL EXCHANGES' : ex;
+
+      loadOverview();
+      loadTrades();
+    }
+
+    // Fetch Symbols
     async function loadSymbols() {
       try {
         const res = await fetch('/api/symbols?tf=' + currentTf);
         const data = await res.json();
         const select = document.getElementById('select-symbol');
         select.innerHTML = '';
-        data.symbols.forEach(sym => {
+        (data.symbols || ['BTCUSDT']).forEach(s => {
           const opt = document.createElement('option');
-          opt.value = sym;
-          opt.textContent = sym;
+          opt.value = s;
+          opt.innerText = s;
+          if (s === currentSymbol) opt.selected = true;
           select.appendChild(opt);
         });
-        if (data.symbols.length > 0) {
-          loadCandles();
-        }
       } catch (e) {
         console.error('Error load symbols:', e);
       }
     }
 
-    // Ambil data Candlestick OHLCV
-    async function loadCandles() {
-      const symbol = document.getElementById('select-symbol').value;
-      if (!symbol) return;
+    function onSymbolChange(val) {
+      currentSymbol = val;
+      loadCandles();
+    }
 
+    function setChartTf(tf, btn) {
+      currentTf = tf;
+      document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      loadCandles();
+    }
+
+    // Fetch Candlestick Data
+    async function loadCandles() {
       try {
-        const res = await fetch(`/api/candles/${symbol}?tf=${currentTf}&limit=500`);
+        const res = await fetch(`/api/candles/${currentSymbol}?tf=${currentTf}&limit=300`);
         const data = await res.json();
-        
-        if (data.candles && data.candles.length > 0) {
+        if (data.candles && candleSeries && volumeSeries) {
           candleSeries.setData(data.candles);
           const volData = data.candles.map(c => ({
             time: c.time,
@@ -835,118 +1250,238 @@
       }
     }
 
-    function changeTimeframe(tf) {
-      currentTf = tf;
-      document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-      document.querySelector(`.tf-btn[data-tf="${tf}"]`).classList.add('active');
-      loadCandles();
-    }
-
-    // Format currency helper
-    function fmtCurrency(val) {
-      const num = Number(val) || 0;
-      return (num >= 0 ? '+$' : '-$') + Math.abs(num).toFixed(2);
-    }
-
-    // Fetch Overview Metrics & Live Positions
+    // Fetch Overview Metrics & Active Positions
     async function loadOverview() {
       try {
-        const res = await fetch('/api/overview');
+        const res = await fetch('/api/overview?exchange=' + currentExchangeFilter);
         const data = await res.json();
-        const s = data.trade_summary;
 
-        // 1. PnL Harian (Realized)
+        // Update active engine badge
+        const engineBadge = document.getElementById('active-engine-text');
+        if (engineBadge) engineBadge.innerText = data.active_exchange || 'BINANCE';
+
+        const s = data.trade_summary || {};
+
+        // 1. Daily Realized PnL
         const dailyPnl = s.daily_net_pnl || 0;
-        const dailyPnlEl = document.getElementById('val-daily-pnl');
-        dailyPnlEl.textContent = fmtCurrency(dailyPnl);
-        dailyPnlEl.className = 'metric-value ' + (dailyPnl >= 0 ? 'val-positive' : 'val-negative');
-        document.getElementById('sub-daily-pnl').textContent = `Gross: +$${(s.daily_gross_profit || 0).toFixed(2)} | -$${(s.daily_gross_loss || 0).toFixed(2)}`;
+        const elDailyPnl = document.getElementById('val-daily-pnl');
+        elDailyPnl.innerText = `${dailyPnl >= 0 ? '+$' : '-$'}${Math.abs(dailyPnl).toFixed(2)}`;
+        elDailyPnl.className = `metric-value ${dailyPnl >= 0 ? 'val-positive' : 'val-negative'}`;
+        document.getElementById('sub-daily-pnl').innerText = `Gross: +$${(s.daily_gross_profit || 0).toFixed(2)} | -$${(s.daily_gross_loss || 0).toFixed(2)}`;
 
-        // 2. Floating Live Unrealized PnL
+        // 2. Floating Live PnL
         const floatPnl = data.floating_pnl || 0;
-        const floatPnlEl = document.getElementById('val-floating-pnl');
-        floatPnlEl.textContent = fmtCurrency(floatPnl);
-        floatPnlEl.className = 'metric-value ' + (floatPnl >= 0 ? 'val-positive' : 'val-negative');
-        document.getElementById('sub-floating-pnl').textContent = `${data.active_positions.length} Posisi Berjalan`;
+        const elFloat = document.getElementById('val-floating-pnl');
+        elFloat.innerText = `${floatPnl >= 0 ? '+$' : '-$'}${Math.abs(floatPnl).toFixed(2)}`;
+        elFloat.className = `metric-value ${floatPnl >= 0 ? 'val-positive' : 'val-negative'}`;
 
-        // 3. Winrate Harian
-        const dailyWr = s.daily_win_rate || (s.daily_total ? (s.daily_wins / s.daily_total * 100) : 0);
-        document.getElementById('val-daily-wr').textContent = dailyWr.toFixed(1) + '%';
-        document.getElementById('sub-daily-wr').textContent = `${s.daily_wins || 0}W / ${s.daily_losses || 0}L (${s.daily_total || 0} Total)`;
+        // 3. Daily Win Rate
+        const dailyWr = s.daily_win_rate || 0;
+        document.getElementById('val-daily-wr').innerText = `${dailyWr.toFixed(1)}%`;
+        document.getElementById('sub-daily-wr').innerText = `${s.daily_wins || 0} Menang / ${s.daily_losses || 0} Kalah (${s.daily_total || 0} Trade)`;
 
         // 4. Profit Factor
-        const dailyPf = s.daily_profit_factor || 0;
-        const alltimePf = s.profit_factor || 0;
-        document.getElementById('val-profit-factor').textContent = (dailyPf > 0 ? dailyPf.toFixed(2) : (alltimePf > 0 ? alltimePf.toFixed(2) : '1.00'));
-        document.getElementById('sub-profit-factor').textContent = `All-Time PF: ${alltimePf.toFixed(2)}`;
+        document.getElementById('val-profit-factor').innerText = `${s.daily_profit_factor || 0.0}`;
+        document.getElementById('sub-profit-factor').innerText = `All-Time PF: ${s.profit_factor || 0.0}`;
 
         // 5. All-Time Net PnL
         const netPnl = s.net_pnl || 0;
-        const pnlEl = document.getElementById('val-net-pnl');
-        pnlEl.textContent = fmtCurrency(netPnl);
-        pnlEl.className = 'metric-value ' + (netPnl >= 0 ? 'val-positive' : 'val-negative');
-        document.getElementById('sub-alltime-pnl').textContent = `All-Time WR: ${(s.win_rate || 0).toFixed(1)}% (${s.total || 0} Trades)`;
+        const elNet = document.getElementById('val-net-pnl');
+        elNet.innerText = `${netPnl >= 0 ? '+$' : '-$'}${Math.abs(netPnl).toFixed(2)}`;
+        elNet.className = `metric-value ${netPnl >= 0 ? 'val-positive' : 'val-negative'}`;
+        document.getElementById('sub-alltime-pnl').innerText = `All-Time WR: ${(s.win_rate || 0).toFixed(1)}% (${s.wins || 0}W / ${s.losses || 0}L)`;
 
-        // 6. Active Positions Count
-        document.getElementById('val-active-positions').textContent = `${data.active_positions.length} / 3`;
-        document.getElementById('sub-virtual-trades').textContent = `+${data.virtual_signals_count || 0} Virtual Sinyal`;
+        // 6. Active Positions Count & Simulated Modal
+        const activeCount = (data.active_positions || []).length;
+        const simModal = data.simulated_modal !== undefined ? data.simulated_modal : 100.0;
+        document.getElementById('val-active-positions').innerText = `${activeCount} Posisi Aktif`;
+        document.getElementById('sub-virtual-trades').innerHTML = `Saldo Simulasi: <strong style="color: var(--accent-emerald);">$${simModal.toFixed(2)} USDT</strong> (+${data.virtual_signals_count || 0} Sinyal Latihan)`;
+        document.getElementById('active-pos-count-badge').innerText = `${activeCount} POSISI TERBUKA`;
 
         // Render Active Positions Cards
-        renderActivePositions(data.active_positions);
+        renderActivePositions(data.active_positions || []);
 
-        // Render Active Strategies
-        renderStrategies(data.strategies);
+        // Render Strategies
+        renderStrategies(data.strategies || []);
 
+        // Render Market Intelligence & Advice Banner
+        renderMarketIntel(data.market_intel);
+
+        // Render Daily & Monthly Performance Tables
+        renderPerformanceTables(data.monthly_stats || [], data.daily_stats || []);
+
+        // Render PnL Curve
+        if (data.pnl_curve && pnlAreaSeries) {
+          const formattedCurve = [];
+          let curTime = Math.floor(Date.now() / 1000) - (data.pnl_curve.length * 3600);
+          data.pnl_curve.forEach((pt, idx) => {
+            formattedCurve.push({
+              time: curTime + (idx * 3600),
+              value: pt.cumulative_pnl,
+            });
+          });
+          if (formattedCurve.length > 0) {
+            pnlAreaSeries.setData(formattedCurve);
+            pnlChart.timeScale().fitContent();
+          }
+        }
       } catch (e) {
         console.error('Error load overview:', e);
       }
     }
 
-    // Render Active Live Positions
+    // Render Market Intel Card
+    function renderMarketIntel(intel) {
+      if (!intel) return;
+      
+      const btcPrice = intel.btc_price || 0;
+      const elBtc = document.getElementById('intel-btc-price');
+      if (elBtc) elBtc.innerText = `$${btcPrice.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+      
+      const trend1h = intel.btc_trend_1h || 'UPTREND';
+      const trendColor = trend1h === 'UPTREND' ? 'var(--accent-emerald)' : (trend1h === 'DOWNTREND' ? 'var(--accent-rose)' : 'var(--accent-amber)');
+      const elBtcSub = document.getElementById('intel-btc-sub');
+      if (elBtcSub) {
+        elBtcSub.innerHTML = `1H: <strong style="color: ${trendColor};">${trend1h}</strong> | RSI 1H: ${(intel.btc_rsi_1h || 0).toFixed(1)} | 5M: ${(intel.btc_rsi_5m || 0).toFixed(1)}`;
+      }
+      
+      const stats = intel.scanned_stats || {};
+      const uptrendPct = stats.total_analyzed ? ((stats.uptrend_count / stats.total_analyzed) * 100).toFixed(1) : '71.2';
+      const elBreadth = document.getElementById('intel-trend-breadth');
+      if (elBreadth) elBreadth.innerText = `${uptrendPct}% Uptrend`;
+      
+      const elBreadthSub = document.getElementById('intel-breadth-sub');
+      if (elBreadthSub) elBreadthSub.innerText = `${stats.uptrend_count || 57} Naik / ${stats.downtrend_count || 21} Turun / ${stats.sideways_count || 2} Sideways`;
+      
+      const upperPct = stats.upper_bb_pct || 77.5;
+      const elBb = document.getElementById('intel-bb-exposure');
+      if (elBb) elBb.innerText = `${upperPct}% Upper Band`;
+      
+      const elBbSub = document.getElementById('intel-bb-sub');
+      if (elBbSub) elBbSub.innerText = `${stats.upper_bb_count || 62} di Plafon Atas (Pucuk) / ${stats.lower_bb_count || 18} di Lower`;
+      
+      const elPatt = document.getElementById('intel-patterns-count');
+      if (elPatt) elPatt.innerText = `${stats.patterns_detected || 32} Pola Terdeteksi`;
+      
+      const elPattSub = document.getElementById('intel-patterns-sub');
+      if (elPattSub) elPattSub.innerText = `${stats.oversold_count || 4} Oversold | ${stats.overbought_count || 34} Overbought`;
+      
+      if (intel.regime_title) {
+        const elRegime = document.getElementById('intel-regime-badge');
+        if (elRegime) elRegime.innerText = intel.regime_title;
+      }
+      if (intel.risk_level) {
+        const elRisk = document.getElementById('intel-risk-badge');
+        if (elRisk) elRisk.innerText = `RISK: ${intel.risk_level}`;
+      }
+      if (intel.recommendation) {
+        const elAdv = document.getElementById('intel-advice-text');
+        if (elAdv) elAdv.innerHTML = `<strong>Saran & Rekomendasi Eksekusi AI:</strong> ${intel.recommendation}`;
+      }
+    }
+
+    // Render Daily & Monthly Performance Tables
+    function renderPerformanceTables(monthly, daily) {
+      // Monthly Table
+      const mBody = document.getElementById('monthly-table-body');
+      if (mBody) {
+        mBody.innerHTML = '';
+        if (!monthly || monthly.length === 0) {
+          mBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-dim);">Belum ada data bulanan.</td></tr>';
+        } else {
+          monthly.forEach(m => {
+            const tr = document.createElement('tr');
+            const wr = m.win_rate || 0;
+            const pnl = m.net_pnl || 0;
+            tr.innerHTML = `
+              <td><strong>${m.month}</strong></td>
+              <td>${m.total_trades} Trade</td>
+              <td><strong style="color: ${wr >= 50 ? 'var(--accent-emerald)' : 'var(--accent-rose)'};">${wr.toFixed(1)}%</strong></td>
+              <td class="val-positive">${m.wins} W</td>
+              <td class="val-negative">${m.losses} L</td>
+              <td class="${pnl >= 0 ? 'val-positive' : 'val-negative'}"><strong>${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USDT</strong></td>
+              <td>
+                <div class="progress-bar-container" style="width: 120px;">
+                  <div class="progress-bar-fill" style="width: ${Math.min(wr, 100)}%; background: ${wr >= 50 ? 'var(--accent-emerald)' : 'var(--accent-rose)'};"></div>
+                </div>
+              </td>
+            `;
+            mBody.appendChild(tr);
+          });
+        }
+      }
+
+      // Daily Table
+      const dBody = document.getElementById('daily-table-body');
+      if (dBody) {
+        dBody.innerHTML = '';
+        if (!daily || daily.length === 0) {
+          dBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-dim);">Belum ada data harian.</td></tr>';
+        } else {
+          [...daily].reverse().forEach(d => {
+            const tr = document.createElement('tr');
+            const wr = d.win_rate || 0;
+            const pnl = d.net_pnl || 0;
+            tr.innerHTML = `
+              <td><strong>${d.day}</strong></td>
+              <td>${d.total_trades} Trade</td>
+              <td><strong style="color: ${wr >= 50 ? 'var(--accent-emerald)' : 'var(--accent-rose)'};">${wr.toFixed(1)}%</strong></td>
+              <td class="val-positive">${d.wins} W</td>
+              <td class="val-negative">${d.losses} L</td>
+              <td class="${pnl >= 0 ? 'val-positive' : 'val-negative'}"><strong>${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USDT</strong></td>
+              <td>
+                <div class="progress-bar-container" style="width: 120px;">
+                  <div class="progress-bar-fill" style="width: ${Math.min(wr, 100)}%; background: ${wr >= 50 ? 'var(--accent-emerald)' : 'var(--accent-rose)'};"></div>
+                </div>
+              </td>
+            `;
+            dBody.appendChild(tr);
+          });
+        }
+      }
+    }
+
+    // Render Active Positions Cards
     function renderActivePositions(positions) {
       const container = document.getElementById('active-positions-container');
-      const badge = document.getElementById('active-pos-count-badge');
-      
+      container.innerHTML = '';
+
       if (!positions || positions.length === 0) {
-        badge.textContent = '0 POSISI TERBUKA';
-        badge.className = 'badge badge-learning';
         container.innerHTML = `
           <div style="grid-column: 1 / -1; text-align: center; color: var(--text-dim); padding: 24px; background: rgba(0,0,0,0.2); border-radius: 10px;">
-            🛡️ Tidak ada posisi terbuka saat ini. Scanner bot aktif memantau market untuk setup probabilitas tinggi.
+            Tidak ada posisi aktif saat ini. Bot sedang memindai peluang teknikal...
           </div>
         `;
         return;
       }
 
-      badge.textContent = `${positions.length} POSISI TERBUKA`;
-      badge.className = 'badge badge-approved';
-      container.innerHTML = '';
-
       positions.forEach(pos => {
+        const card = document.createElement('div');
+        card.className = 'position-card';
         const isLong = pos.side === 'LONG';
         const pnl = pos.unrealized_pnl || 0;
         const pnlPct = pos.unrealized_pnl_pct || 0;
-        const isProfit = pnl >= 0;
 
-        const card = document.createElement('div');
-        card.className = 'position-card';
+        let exBadge = '<span class="badge badge-ex-binance">BINANCE</span>';
+        if (pos.exchange && pos.exchange.includes('BITUNIX')) {
+          exBadge = '<span class="badge badge-ex-bitunix-sim">BITUNIX</span>';
+        }
+
         card.innerHTML = `
           <div class="pos-header">
             <div style="display: flex; align-items: center; gap: 8px;">
               <span class="pos-symbol">${pos.symbol}</span>
               <span class="badge ${isLong ? 'badge-long' : 'badge-short'}">${pos.side} ${pos.leverage}x</span>
+              ${exBadge}
             </div>
-            <div class="${isProfit ? 'val-positive' : 'val-negative'}" style="font-size: 1.05rem; font-weight: 800;">
+            <div style="font-weight: 700; font-size: 0.95rem;" class="${pnl >= 0 ? 'val-positive' : 'val-negative'}">
               ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USDT (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)
             </div>
           </div>
 
           <div class="pos-details-grid">
-            <div><span class="pos-label">Harga Entry:</span></div>
-            <div class="pos-val">${pos.entry_price ? pos.entry_price.toFixed(4) : '-'}</div>
-
-            <div><span class="pos-label">Harga Sekarang:</span></div>
-            <div class="pos-val" style="color: var(--accent-cyan);">${pos.mark_price ? pos.mark_price.toFixed(4) : '-'}</div>
+            <div><span class="pos-label">Entry / Mark:</span></div>
+            <div class="pos-val">${pos.entry_price.toFixed(4)} → ${pos.mark_price.toFixed(4)}</div>
 
             <div><span class="pos-label">Margin Alokasi:</span></div>
             <div class="pos-val">${pos.margin_usdt ? pos.margin_usdt.toFixed(2) : '0.00'} USDT</div>
@@ -1051,14 +1586,14 @@
     // Fetch Trades
     async function loadTrades() {
       try {
-        const res = await fetch('/api/trades');
+        const res = await fetch('/api/trades?exchange=' + currentExchangeFilter);
         const data = await res.json();
 
         // Real trades
         const tbodyReal = document.getElementById('trades-table-body');
         tbodyReal.innerHTML = '';
         if (!data.real_trades || data.real_trades.length === 0) {
-          tbodyReal.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-dim);">Belum ada data transaksi real.</td></tr>';
+          tbodyReal.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--text-dim);">Belum ada data transaksi untuk filter ini.</td></tr>';
         } else {
           data.real_trades.forEach(t => {
             const tr = document.createElement('tr');
@@ -1068,8 +1603,17 @@
             const mfeStr = t.mfe !== null && t.mfe !== undefined ? `+${Number(t.mfe).toFixed(2)}` : '-';
             const maeStr = t.mae !== null && t.mae !== undefined ? `${Number(t.mae).toFixed(2)}` : '-';
 
+            const ex = (t.exchange || 'BINANCE').toUpperCase();
+            let exBadge = '<span class="badge badge-ex-binance">BINANCE</span>';
+            if (ex.includes('BITUNIX_SIM')) {
+              exBadge = '<span class="badge badge-ex-bitunix-sim">BITUNIX SIM</span>';
+            } else if (ex.includes('BITUNIX')) {
+              exBadge = '<span class="badge badge-ex-bitunix-real">BITUNIX REAL</span>';
+            }
+
             tr.innerHTML = `
               <td style="color: var(--text-dim); font-size: 0.8rem;">${t.closed_at}</td>
+              <td>${exBadge}</td>
               <td><strong>${t.symbol}</strong></td>
               <td><span class="badge ${t.side === 'LONG' ? 'badge-long' : 'badge-short'}">${t.side}</span></td>
               <td style="font-size: 0.8rem;">${t.entry_price ? t.entry_price.toFixed(4) : '-'} → ${t.exit_price ? t.exit_price.toFixed(4) : '-'}</td>
@@ -1096,7 +1640,8 @@
         } else {
           data.virtual_trades.forEach(v => {
             const tr = document.createElement('tr');
-            const isSuccess = (v.Status || '').toUpperCase() === 'SUCCESS';
+            const statusUpper = (v.Status || '').toUpperCase();
+            const isSuccess = statusUpper.includes('SUCCESS') || statusUpper.includes('SESUAI TARGET') || statusUpper.includes('TP');
             tr.innerHTML = `
               <td style="color: var(--text-dim); font-size: 0.8rem;">${v.Time || '-'}</td>
               <td><strong>${v.Symbol || '-'}</strong></td>
@@ -1131,6 +1676,7 @@
     // Initial Startup
     document.addEventListener('DOMContentLoaded', () => {
       initChart();
+      initPnlChart();
       loadSymbols();
       loadOverview();
       loadPatterns();

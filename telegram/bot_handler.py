@@ -58,6 +58,9 @@ class DatasetForm(StatesGroup):
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, FSInputFile, BotCommand
 import os
 
+from core.exchanges.base import BaseExchange
+from core.exchanges.factory import get_exchange_adapter
+
 # Global state for bot
 bot_state = {
     "is_running": False,
@@ -69,7 +72,10 @@ async def setup_bot_commands(bot_instance: Bot) -> None:
     """Reset dan daftarkan perintah resmi bot ke Telegram."""
     commands = [
         BotCommand(command="start", description="Buka Menu Utama & Keyboard"),
+        BotCommand(command="scan_order_paper", description="🔵 Mulai Scan & Simulasi Paper Trade"),
+        BotCommand(command="scan_order_real", description="🟢 Mulai Scan & Order REAL Account"),
         BotCommand(command="status", description="Cek Saldo & Posisi Terbuka"),
+        BotCommand(command="set_exchange", description="Pilih Exchange (binance/bitunix)"),
         BotCommand(command="pengaturan", description="Menu Pengaturan Lengkap"),
         BotCommand(command="reset_demo", description="Reset Modal ($100) & Statistik"),
         BotCommand(command="hitung_margin", description="Kalkulator Margin Aman"),
@@ -92,6 +98,7 @@ async def setup_bot_commands(bot_instance: Bot) -> None:
 
 def get_main_keyboard():
     kb = [
+        [KeyboardButton(text="🔵 Scan Order Paper"), KeyboardButton(text="🟢 Scan Order Real")],
         [KeyboardButton(text="📊 Status Bot"), KeyboardButton(text="⚙️ Pengaturan")],
         [KeyboardButton(text="🧮 Hitung Margin"), KeyboardButton(text="🔄 Reset Demo")],
         [KeyboardButton(text="📈 Histori TP"), KeyboardButton(text="📉 Histori SL")],
@@ -103,13 +110,99 @@ def get_main_keyboard():
 
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
+    active_ex = getattr(bot_config, "active_exchange", "BINANCE")
+    curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
     await message.answer(
-        "🚀 Trading Bot is Online!\nSilakan pilih menu di bawah ini:",
-        reply_markup=get_main_keyboard()
+        f"🚀 **Trading Bot is Online!**\n"
+        f"🏛️ **Exchange:** `{active_ex}` | 🎯 **Mode:** `{curr_mode}`\n\n"
+        f"• Gunakan tombol **🔵 Scan Order Paper** untuk simulasi tanpa resiko.\n"
+        f"• Gunakan tombol **🟢 Scan Order Real** untuk eksekusi order dengan akun nyata.\n"
+        f"Silakan pilih menu di bawah ini:",
+        reply_markup=get_main_keyboard(),
+        parse_mode="Markdown",
     )
 
 import time
 from datetime import datetime
+
+@dp.message(Command("scan_order_real"))
+@dp.message(F.text == "🟢 Scan Order Real")
+async def scan_order_real_handler(message: types.Message):
+    """
+    Mengaktifkan mode REAL Trading: bot akan men-scan market dan mengeksekusi order nyata di exchange.
+    """
+    try:
+        bot_config.update_trading_mode("REAL")
+        bot_config.simulated_modal = None
+        bot_config._update_env("SIMULATED_MODAL", "0.0")
+        active_ex = getattr(bot_config, "active_exchange", "BINANCE")
+        
+        bot_state["is_running"] = True
+        bot_state["state"] = "RUNNING"
+        
+        text = (
+            f"🚀 **MODE ORDER REAL DIAKTIFKAN!** 🟢\n"
+            f"────────────────────────\n"
+            f"🏛️ **Exchange Aktif:** `{active_ex}`\n"
+            f"⚡ **Status Scanning:** `AKTIF (Running)`\n"
+            f"🎯 **Mode Eksekusi:** `REAL ACCOUNT ORDERS`\n"
+            f"⚠️ **Perhatian:** Sinyal valid akan langsung dieksekusi sebagai real order di akun **{active_ex}** Anda.\n"
+            f"🔧 **Setup:** Leverage `{bot_config.leverage}x` | TP `{bot_config.tp_percent}%` | SL `{bot_config.sl_percent}%`\n\n"
+            f"Gunakan `/scan_order_paper` kapan saja untuk kembali ke mode simulasi aman."
+        )
+        await message.answer(text, parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Gagal mengaktifkan mode Real: {e}")
+
+
+@dp.message(Command("scan_order_paper"))
+@dp.message(Command("simulasi"))
+@dp.message(F.text == "🔵 Scan Order Paper")
+async def scan_order_paper_handler(message: types.Message):
+    """
+    Mengaktifkan mode Paper Trading / Simulasi: bot men-scan market live dan mengeksekusi order virtual.
+    """
+    try:
+        bot_config.update_trading_mode("PAPER_TRADING")
+        active_ex = getattr(bot_config, "active_exchange", "BINANCE")
+        
+        bot_state["is_running"] = True
+        bot_state["state"] = "RUNNING"
+        
+        text = (
+            f"🧪 **MODE PAPER TRADING DIAKTIFKAN!** 🔵\n"
+            f"────────────────────────\n"
+            f"🏛️ **Exchange Data:** `{active_ex}` (Live Market)\n"
+            f"⚡ **Status Scanning:** `AKTIF (Running)`\n"
+            f"🎯 **Mode Eksekusi:** `VIRTUAL SIMULATION` (Tanpa Resiko Modal)\n"
+            f"📊 **Catatan:** Sinyal market real {active_ex} akan disimulasikan dan dipantau 24/7 hingga TP/SL tercapai. Data tercatat di Dashboard tab `{active_ex} Simulation`.\n\n"
+            f"Gunakan `/scan_order_real` untuk mulai order dengan modal real."
+        )
+        await message.answer(text, parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Gagal mengaktifkan mode Paper Trading: {e}")
+
+@dp.message(Command("set_exchange"))
+async def set_exchange_handler(message: types.Message, command: CommandObject):
+    target = (command.args or "").strip().upper()
+    if target not in {"BINANCE", "BITUNIX"}:
+        current = getattr(bot_config, "active_exchange", "BINANCE")
+        await message.answer(
+            f"🏛️ **Exchange Saat Ini:** `{current}`\n\n"
+            "Format ganti exchange:\n"
+            "• `/set_exchange binance`\n"
+            "• `/set_exchange bitunix`",
+            parse_mode="Markdown"
+        )
+        return
+    try:
+        bot_config.update_active_exchange(target)
+        new_adapter = get_exchange_adapter(target)
+        await new_adapter.init()
+        bot_state["client"] = new_adapter
+        await message.answer(f"✅ Exchange berhasil diubah ke **{target}**!\nBot sekarang menggunakan platform {target}.", parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Gagal mengubah exchange ke {target}: {e}")
 
 @dp.message(Command("status"))
 async def status_handler(message: types.Message):
@@ -119,39 +212,43 @@ async def status_handler(message: types.Message):
         bot_state["state"] = state
     status_emoji = "🟢 RUNNING" if state == "RUNNING" else f"🔴 {state}"
     client = bot_state.get("client")
+    active_ex = getattr(client, "exchange_name", getattr(bot_config, "active_exchange", "EXCHANGE"))
     
     if not client:
-        await message.answer(f"Status Bot: {status_emoji}\n⚠️ Koneksi ke Binance belum siap. Coba lagi dalam beberapa detik.")
+        await message.answer(f"Status Bot: {status_emoji}\n⚠️ Koneksi ke {active_ex} belum siap. Coba lagi dalam beberapa detik.")
         return
         
-    wait_msg = await message.answer("🔄 Mengambil data dari Binance...")
+    wait_msg = await message.answer(f"🔄 Mengambil data dari {active_ex}...")
     
     try:
-        account_info = await client.futures_account()
-        total_margin = float(account_info['totalMarginBalance'])
-        unrealized_pnl = float(account_info['totalUnrealizedProfit'])
-        
-        positions = account_info.get('positions', [])
-        active_positions = [p for p in positions if float(p['positionAmt']) != 0]
+        if isinstance(client, BaseExchange):
+            balance_info = await client.get_account_balance()
+            total_margin = balance_info.get('total_wallet_balance', 0.0)
+            unrealized_pnl = balance_info.get('unrealized_pnl', 0.0)
+            active_positions = await client.get_open_positions()
+        else:
+            account_info = await client.futures_account()
+            total_margin = float(account_info['totalMarginBalance'])
+            unrealized_pnl = float(account_info['totalUnrealizedProfit'])
+            positions = account_info.get('positions', [])
+            active_positions = [p for p in positions if float(p.get('positionAmt', 0)) != 0]
         
         longs = []
         shorts = []
         
         for p in active_positions:
             symbol = p['symbol']
-            amt = float(p['positionAmt'])
-            pnl = float(p['unrealizedProfit'])
-            pnl_percent = calculate_position_pnl_percent(p)
-            entry = float(p['entryPrice'])
+            amt = float(p.get('position_amt', p.get('positionAmt', 0)))
+            pnl = float(p.get('unrealized_pnl', p.get('unrealizedProfit', 0)))
+            entry = float(p.get('entry_price', p.get('entryPrice', 0)))
+            pnl_percent = (pnl / (entry * abs(amt)) * 100) if (entry * abs(amt)) > 0 else 0.0
             
-            # Hitung harga mark saat ini secara akurat (markPrice tidak dikembalikan oleh endpoint futures_account)
-            mark = float(p.get('markPrice', 0) or 0)
+            mark = float(p.get('mark_price', p.get('markPrice', 0)) or 0)
             if mark <= 0 and amt != 0 and entry > 0:
                 mark = entry + (pnl / amt)
             elif mark <= 0:
                 mark = entry
                 
-            # Update MFE (Max Profit Teramati) dan MAE (Max Drawdown) secara real-time
             meta = bot_state.setdefault("active_trade_meta", {}).get(symbol)
             if meta is not None:
                 meta["mfe"] = max(float(meta.get("mfe", 0.0)), pnl)
@@ -171,7 +268,6 @@ async def status_handler(message: types.Message):
                 tp_price = entry * (1 - price_tp_move)
                 sl_price = entry * (1 + price_sl_move)
             
-            # Gunakan updateTime sebagai acuan (waktu transaksi terakhir di posisi ini)
             update_time_ms = int(p.get('updateTime', 0))
             if update_time_ms > 0:
                 open_time = datetime.fromtimestamp(update_time_ms / 1000)
@@ -182,7 +278,6 @@ async def status_handler(message: types.Message):
             else:
                 hold_time = "N/A"
                 
-            # Format harga agar presisi koin micin tidak terpotong (dinamis 4-8 desimal)
             entry_str = f"{entry:.8f}".rstrip('0').rstrip('.')
             mark_str = f"{mark:.8f}".rstrip('0').rstrip('.')
             tp_str = f"{tp_price:.8f}".rstrip('0').rstrip('.')
@@ -205,13 +300,63 @@ async def status_handler(message: types.Message):
             else:
                 shorts.append(p_info)
                 
-        websocket_status = "connected" if bot_state.get("websocket_connected") else "disconnected"
-        account_pnl_percent = calculate_account_pnl_percent(unrealized_pnl, total_margin)
+        curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING").upper()
+        is_paper = curr_mode in ("PAPER_TRADING", "SIMULATION", "VIRTUAL")
+
+        # Masukkan posisi virtual / paper trading yang sedang aktif
+        active_meta = bot_state.get("active_trade_meta", {})
+        for sym_meta, meta in active_meta.items():
+            if meta.get("is_paper"):
+                side = meta.get("side", "LONG").upper()
+                entry = float(meta.get("entry_price", 0.0))
+                mfe_val = float(meta.get("mfe", 0.0) or 0.0)
+                mae_val = float(meta.get("mae", 0.0) or 0.0)
+                lev = int(meta.get("leverage", 10))
+                m_usdt = float(meta.get("margin_usdt", 0.0))
+                tp_val = float(meta.get("tp_price", 0.0))
+                sl_val = float(meta.get("sl_price", 0.0))
+                entry_time = meta.get("entry_time")
+                duration_min = round((datetime.now() - entry_time).total_seconds() / 60, 1) if entry_time else 0
+                hold_time = f"{duration_min:.0f}m"
+                
+                pnl = mfe_val if mfe_val != 0 else mae_val
+                pnl_percent = (pnl / m_usdt * 100) if m_usdt > 0 else 0.0
+                unrealized_pnl += pnl
+
+                mfe_str = f"+{mfe_val:.2f} USDT" if mfe_val > 0 else "0.00 USDT"
+                p_info = (
+                    f"🔸 **[SIMULASI] {sym_meta}**\n"
+                    f"   Margin: `{m_usdt:.2f} USDT` | Lev: `{lev}x`\n"
+                    f"   Floating PNL: `{pnl:+.2f} USDT ({pnl_percent:+.2f}%)` | MFE: `{mfe_str}`\n"
+                    f"   Entry: `{entry:.6f}`\n"
+                    f"   Target TP: `{tp_val:.6f}` | SL: `{sl_val:.6f}`\n"
+                    f"   Hold: `{hold_time}`\n"
+                )
+                if side in ("LONG", "BUY"):
+                    longs.append(p_info)
+                else:
+                    shorts.append(p_info)
+
+        if active_ex == "BITUNIX" or is_paper:
+            websocket_status = "REST Engine 🟢 (Live Monitor)"
+        else:
+            websocket_status = "Connected 🟢" if bot_state.get("websocket_connected") else "Disconnected ⚪"
+
+        display_modal_val = total_margin
+        modal_label = "Saldo Total"
+        if is_paper and total_margin <= 0:
+            display_modal_val = bot_config.simulated_modal or 100.0
+            modal_label = "Modal Simulasi"
+
+        account_pnl_percent = calculate_account_pnl_percent(unrealized_pnl, display_modal_val) if display_modal_val > 0 else 0.0
+        mode_badge = f"🧪 `{curr_mode}`" if is_paper else f"🟢 `{curr_mode}`"
         text = (
             f"🤖 **STATUS BOT TRADING**\n"
+            f"🏛️ Exchange : `{active_ex}`\n"
+            f"🎯 Mode     : {mode_badge}\n"
             f"Status: {status_emoji}\n"
             f"WebSocket: `{websocket_status}`\n"
-            f"💰 Saldo Total: `{total_margin:.2f} USDT`\n"
+            f"💰 {modal_label}: `{display_modal_val:.2f} USDT`\n"
             f"📈 Unr. PNL  : `{unrealized_pnl:+.2f} USDT ({account_pnl_percent:+.2f}%)`\n"
             f"──────────────\n"
             f"**🟢 POSISI LONG ({len(longs)}/{bot_config.max_open_positions})**\n"
@@ -350,18 +495,35 @@ async def scan_modus_handler(message: types.Message, command: CommandObject):
 async def close_position_from_telegram(symbol: str, close_all: bool = False) -> list[str]:
     client = bot_state.get("client")
     if not client:
-        raise RuntimeError("Koneksi Binance belum siap")
+        raise RuntimeError("Koneksi Exchange belum siap")
 
-    account_info = await client.futures_account()
     results = []
-    for position in account_info.get("positions", []):
-        position_symbol = position.get("symbol")
-        amount = float(position.get("positionAmt", 0))
-        if amount == 0 or (not close_all and position_symbol != symbol):
-            continue
+    if hasattr(client, "get_open_positions"):
+        open_positions = await client.get_open_positions()
+        for pos in open_positions:
+            position_symbol = pos.get("symbol")
+            amount = float(pos.get("position_amt", 0))
+            if amount == 0 or (not close_all and position_symbol != symbol):
+                continue
+            result = await close_profitable_position(client, position_symbol, amount)
+            results.append(f"{position_symbol}: {result.get('status')}")
+    elif hasattr(client, "futures_account"):
+        account_info = await client.futures_account()
+        for position in account_info.get("positions", []):
+            position_symbol = position.get("symbol")
+            amount = float(position.get("positionAmt", 0))
+            if amount == 0 or (not close_all and position_symbol != symbol):
+                continue
+            result = await close_profitable_position(client, position_symbol, amount)
+            results.append(f"{position_symbol}: {result.get('status')}")
 
-        result = await close_profitable_position(client, position_symbol, amount)
-        results.append(f"{position_symbol}: {result.get('status')}")
+    # Bersihkan juga dari antrean paper trading jika ada
+    active_meta = bot_state.get("active_trade_meta", {})
+    for sym_meta in list(active_meta.keys()):
+        if close_all or sym_meta == symbol:
+            active_meta.pop(sym_meta, None)
+            bot_state.get("active_trade_reasons", {}).pop(sym_meta, None)
+            results.append(f"{sym_meta} (Paper Trade): CLOSED")
 
     if not results and not close_all:
         results.append(f"{symbol}: posisi tidak ditemukan")
@@ -378,23 +540,10 @@ async def close_short_handler(message: types.Message, command: CommandObject):
         return
 
     try:
-        client = bot_state.get("client")
-        account_info = await client.futures_account() if client else None
-        short_position = next(
-            (
-                position for position in (account_info or {}).get("positions", [])
-                if position.get("symbol") == symbol and float(position.get("positionAmt", 0)) < 0
-            ),
-            None,
-        )
-        if not short_position:
-            await message.answer(f"ℹ️ Tidak ada posisi SHORT pada {symbol}.")
-            return
-
         result = await close_position_from_telegram(symbol)
-        await message.answer(f"🔻 Close paksa SHORT {symbol}: {result[0]}")
+        await message.answer(f"🔻 Close posisi {symbol}: {', '.join(result)}")
     except Exception as error:
-        await message.answer(f"❌ Gagal close SHORT {symbol}: {error}")
+        await message.answer(f"❌ Gagal close {symbol}: {error}")
 
 
 @dp.message(Command("close"))
@@ -529,20 +678,37 @@ async def set_leverage_handler(message: types.Message, command: CommandObject):
     else:
         await message.answer(f"ℹ️ Leverage saat ini: {bot_config.leverage}x (Gunakan /set_leverage <angka> untuk mengubah)")
 
-@dp.message(Command("set_max_positions"))
+@dp.message(Command("set_max_positions", "set_pos"))
 async def set_max_positions_handler(message: types.Message, command: CommandObject):
-    if command.args:
+    args = (command.args or "").strip().split()
+    if args:
         try:
-            val = int(command.args)
+            val = int(args[0])
             if val < 1:
-                await message.answer("❌ Maksimal posisi harus lebih besar dari 0")
+                await message.answer("❌ Maksimal posisi harus lebih besar dari 0.")
                 return
-            bot_config.update_max_positions(val)
-            await message.answer(f"✅ Maksimal open posisi berhasil diubah menjadi {val}")
+            per_side = int(args[1]) if len(args) > 1 else val
+            bot_config.update_max_positions(val, per_side)
+            await message.answer(
+                f"✅ **Maksimal Posisi Berhasil Diubah!**\n"
+                f"• Max Open Posisi Total: `{val}`\n"
+                f"• Max per Sisi (LONG/SHORT): `{per_side}` posisi",
+                parse_mode="Markdown"
+            )
         except ValueError:
-            await message.answer("❌ Format salah. Contoh: /set_max_positions 5")
+            await message.answer("❌ Format salah. Contoh:\n• `/set_max_positions 2` (Max 2 posisi)\n• `/set_pos 4 2` (Max 4 total, 2 per sisi)", parse_mode="Markdown")
     else:
-        await message.answer(f"ℹ️ Maksimal posisi saat ini: {bot_config.max_open_positions} (Gunakan /set_max_positions <angka> untuk mengubah)")
+        max_tot = getattr(bot_config, "max_open_positions", 2)
+        max_side = getattr(bot_config, "max_positions_per_side", max_tot)
+        await message.answer(
+            f"ℹ️ **Pengaturan Maksimal Posisi Saat Ini:**\n"
+            f"• Max Open Posisi Total: `{max_tot}`\n"
+            f"• Max per Sisi (LONG / SHORT): `{max_side}`\n\n"
+            f"**Cara Mengubah:**\n"
+            f"• `/set_max_positions 2` (Mengubah menjadi maksimal 2 posisi)\n"
+            f"• `/set_pos 4` (Mengubah menjadi maksimal 4 posisi)",
+            parse_mode="Markdown"
+        )
 
 @dp.message(Command("set_margin"))
 async def set_margin_handler(message: types.Message, command: CommandObject):
@@ -609,8 +775,12 @@ async def hitung_margin_handler(message: types.Message, command: CommandObject):
     current_balance = 50.0
     if client:
         try:
-            acc = await client.futures_account()
-            current_balance = float(acc.get("totalMarginBalance", 50.0))
+            if hasattr(client, "get_account_balance"):
+                bal = await client.get_account_balance()
+                current_balance = float(bal.get("total_wallet_balance", 50.0))
+            elif hasattr(client, "futures_account"):
+                acc = await client.futures_account()
+                current_balance = float(acc.get("totalMarginBalance", 50.0))
         except Exception:
             pass
 

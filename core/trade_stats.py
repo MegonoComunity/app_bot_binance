@@ -39,6 +39,9 @@ def _write_to_db_async(trade: dict) -> None:
 
 def record_closed_trade(trade: dict) -> dict:
     os.makedirs(os.path.dirname(STATS_FILE), exist_ok=True)
+    from config.settings import bot_config
+    if "exchange" not in trade or not trade["exchange"]:
+        trade["exchange"] = getattr(bot_config, "active_exchange", "BINANCE")
     stats = _load_stats()
     stats["trades"].append(trade)
     with open(STATS_FILE, "w", encoding="utf-8") as file:

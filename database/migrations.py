@@ -31,10 +31,12 @@ CREATE TABLE IF NOT EXISTS trade_history (
     duration_minutes NUMERIC(10, 2),
     order_type       VARCHAR(20),
     result           VARCHAR(10),
+    exchange         VARCHAR(30)    DEFAULT 'BINANCE',
     closed_at        TIMESTAMPTZ    NOT NULL DEFAULT NOW()
 );
 ALTER TABLE trade_history ADD COLUMN IF NOT EXISTS funding_fee NUMERIC(20, 8) DEFAULT 0;
 ALTER TABLE trade_history ADD COLUMN IF NOT EXISTS net_pnl NUMERIC(20, 8);
+ALTER TABLE trade_history ADD COLUMN IF NOT EXISTS exchange VARCHAR(30) DEFAULT 'BINANCE';
 """
 
 _CREATE_PATTERN_MEMORY = """
@@ -64,9 +66,11 @@ CREATE TABLE IF NOT EXISTS pattern_entries (
     conditions  JSONB,
     result      VARCHAR(10),
     pnl         NUMERIC(20, 8),
+    exchange    VARCHAR(30)    DEFAULT 'BINANCE',
     entered_at  TIMESTAMPTZ    DEFAULT NOW(),
     closed_at   TIMESTAMPTZ
 );
+ALTER TABLE pattern_entries ADD COLUMN IF NOT EXISTS exchange VARCHAR(30) DEFAULT 'BINANCE';
 """
 
 _CREATE_OHLCV_CANDLES = """
@@ -81,8 +85,10 @@ CREATE TABLE IF NOT EXISTS ohlcv_candles (
     close      NUMERIC(20, 8),
     volume     NUMERIC(30, 8),
     close_time TIMESTAMPTZ,
+    exchange   VARCHAR(30)    DEFAULT 'BINANCE',
     UNIQUE (symbol, timeframe, open_time)
 );
+ALTER TABLE ohlcv_candles ADD COLUMN IF NOT EXISTS exchange VARCHAR(30) DEFAULT 'BINANCE';
 """
 
 _CREATE_OHLCV_INDEX = """

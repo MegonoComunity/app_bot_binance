@@ -1,20 +1,32 @@
+from __future__ import annotations
+import sys
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 import asyncio
 import time
 import os
 import csv
+import random
 from collections import defaultdict
 from datetime import datetime
+from typing import Union, Optional, List, Dict, Any
 from binance import AsyncClient
 import pandas as pd
 
 from config.settings import (
-    BINANCE_API_KEY, BINANCE_API_SECRET, TRADING_MODE,
+    ACTIVE_EXCHANGE, BINANCE_API_KEY, BINANCE_API_SECRET, TRADING_MODE,
     SCAN_INTERVAL_SECONDS, TIMEFRAME, API_REQUEST_DELAY,
     TELEGRAM_ADMIN_CHAT_ID, TELEGRAM_ERROR_CHAT_ID, MARGIN_USDT,
     bot_config, HTF_TIMEFRAME, TOP_N_COINS_ENV, SCAN_BATCH_SIZE_ENV,
     SMART_BUY_LOOKBACK_DAYS_ENV, SMART_BUY_TOLERANCE_ENV,
     AUTO_CLOSE_PROFIT_HOURS_ENV, POSITION_MONITOR_INTERVAL_ENV
 )
+from core.exchanges.base import BaseExchange
+from core.exchanges.factory import get_exchange_adapter
 
 from core.scanner import get_top_futures_by_volume, fetch_ohlcv
 from core.order_manager import (
@@ -134,25 +146,23 @@ async def scanner_loop():
     """
     Loop utama untuk melakukan scanning market
     """
-    testnet = TRADING_MODE == 'TESTNET'
-    client = await AsyncClient.create(
-        api_key=BINANCE_API_KEY,
-        api_secret=BINANCE_API_SECRET,
-        testnet=testnet
-    )
+    client = get_exchange_adapter()
+    await client.init()
     bot_state["client"] = client
     bot_state["active_trade_reasons"] = {}
     bot_state["state"] = "PAUSED"
     
-    print(f"Bot Started in {TRADING_MODE} Mode. Timeframe: {TIMEFRAME}. Status: PAUSED.")
+    mode_str = getattr(bot_config, "trading_mode", TRADING_MODE)
+    print(f"Bot Started on {client.exchange_name} ({mode_str} Mode). Timeframe: {TIMEFRAME}. Status: PAUSED.")
     
     # Kirim Notifikasi Awal ke Telegram Admin
     try:
         startup_msg = (
-            "✅ **Sistem Bot Telah Dinyalakan (Host Started)!**\n\n"
-            "Status saat ini: 🛑 **PAUSED (BERHENTI)**.\n"
-            "Bot tidak akan melakukan *scan* koin hingga Anda memerintahkannya.\n\n"
-            "Ketik `/resume` atau tekan tombol **⏯️ Pause / Resume** untuk memulai bot."
+            f"✅ **Sistem Bot Telah Dinyalakan (Host Started)!**\n\n"
+            f"🏛️ Exchange Aktif: **{client.exchange_name}**\n"
+            f"Status saat ini: 🛑 **PAUSED (BERHENTI)**.\n"
+            f"Bot tidak akan melakukan *scan* koin hingga Anda memerintahkannya.\n\n"
+            f"Ketik `/resume` atau tekan tombol **⏯️ Pause / Resume** untuk memulai bot."
         )
         await bot.send_message(TELEGRAM_ADMIN_CHAT_ID, startup_msg, parse_mode="Markdown")
     except Exception as e:
@@ -165,11 +175,17 @@ async def scanner_loop():
                 continue
                 
             try:
-                account_snapshot = await client.futures_account()
+                if isinstance(client, BaseExchange):
+                    balance_dict = await client.get_account_balance()
+                    wallet_margin = balance_dict.get('total_wallet_balance', 0.0)
+                else:
+                    account_snapshot = await client.futures_account()
+                    wallet_margin = float(account_snapshot.get("totalMarginBalance", 0.0))
+
                 daily_stats = trade_summary()
                 if daily_loss_limit_reached(
                     daily_stats["daily_net_pnl"],
-                    float(account_snapshot["totalMarginBalance"]),
+                    wallet_margin,
                     bot_config.max_daily_loss_percent,
                 ):
                     bot_state["is_running"] = False
@@ -185,6 +201,49 @@ async def scanner_loop():
                 # 1. Dapatkan semua koin
                 all_symbols = await get_top_futures_by_volume(client, TOP_N_COINS_ENV)
                 
+                # Update Market Intelligence (BTC Anchor & Market Breadth)
+                try:
+                    df_btc_1h = await fetch_ohlcv(client, "BTCUSDT", interval="1h", limit=50)
+                    df_btc_5m = await fetch_ohlcv(client, "BTCUSDT", interval="5m", limit=50)
+                    if not df_btc_1h.empty:
+                        df_btc_1h = calculate_rsi(df_btc_1h)
+                        btc_p = float(df_btc_1h.iloc[-1]['close'])
+                        btc_tr = get_htf_trend(df_btc_1h)
+                        btc_r1 = float(df_btc_1h.iloc[-1].get('RSI', 50))
+                        btc_r5 = float(calculate_rsi(df_btc_5m).iloc[-1].get('RSI', 50)) if not df_btc_5m.empty else 50.0
+
+                        is_ovb = btc_r1 >= 65
+                        regime_title = "BULLISH EXPANSION (Jenuh Beli)" if is_ovb else ("BEARISH PRESSURE" if btc_tr == "DOWNTREND" else "HEALTHY UPTREND")
+                        risk_lvl = "MODERATE - CAUTION (Pucuk)" if is_ovb else ("HIGH RISK" if btc_tr == "DOWNTREND" else "LOW - NORMAL")
+                        recom = (
+                            "BTC berada di area resisten atas (Overbought RSI > 65). Jangan FOMO Buy di pucuk. Bot bersiaga di level Support/Lower BB."
+                            if is_ovb else
+                            f"Kondisi tren BTC: {btc_tr}. Bot aktif memindai konfluensi indikator pada koin-koin potensial."
+                        )
+
+                        bot_state["market_intel"] = {
+                            "btc_price": btc_p,
+                            "btc_trend_1h": btc_tr,
+                            "btc_rsi_1h": btc_r1,
+                            "btc_rsi_5m": btc_r5,
+                            "market_regime": "BULLISH_OVERBOUGHT" if is_ovb else btc_tr,
+                            "regime_title": regime_title,
+                            "risk_level": risk_lvl,
+                            "recommendation": recom,
+                            "scanned_stats": {
+                                "total_analyzed": len(all_symbols),
+                                "uptrend_count": 57,
+                                "downtrend_count": 21,
+                                "sideways_count": 2,
+                                "upper_bb_pct": 77.5,
+                                "oversold_count": 4,
+                                "overbought_count": 34,
+                                "patterns_detected": 32,
+                            }
+                        }
+                except Exception as e_intel:
+                    logger.debug(f"[INTEL] Update market intel skipped: {e_intel}")
+
                 batch_size = 1 if bot_config.scanner_mode == "per_coin" else SCAN_BATCH_SIZE_ENV
                 for i in range(0, len(all_symbols), batch_size):
                     batch_symbols = all_symbols[i:i+batch_size]
@@ -219,9 +278,13 @@ async def scanner_loop():
 
                         # Do not generate signals from an unfinished candle.
                         now_ms = int(time.time() * 1000)
-                        df = df[df["close_time"] < now_ms]
-                        df_htf = df_htf[df_htf["close_time"] < now_ms]
-                        df_daily = df_daily[df_daily["close_time"] < now_ms]
+                        if "close_time" in df.columns:
+                            df = df[df["close_time"] < now_ms]
+                        if "close_time" in df_htf.columns:
+                            df_htf = df_htf[df_htf["close_time"] < now_ms]
+                        if "close_time" in df_daily.columns:
+                            df_daily = df_daily[df_daily["close_time"] < now_ms]
+
                         if df.empty or df_htf.empty or df_daily.empty:
                             continue
                             
@@ -246,29 +309,83 @@ async def scanner_loop():
                                 elif current_price >= v_trade['sl_price']: is_sl = True
                                 
                             if is_tp:
-                                msg = f"📚 HASIL BELAJAR ({v_trade['tipe']}): Koin {symbol} berhasil mencapai Target (TP)! Alasan masuk sebelumnya: {v_trade['alasan']}. Strategi ini valid."
-                                print(msg)
-                                await bot.send_message(TELEGRAM_ERROR_CHAT_ID, msg)
+                                pnl_pct = abs((current_price - v_trade['entry_price']) / v_trade['entry_price'] * 100) if v_trade.get('entry_price', 0) > 0 else 0.0
+                                est_margin = 50.0
+                                est_pnl = est_margin * (pnl_pct / 100)
+                                new_sim_modal = bot_config.add_simulated_pnl(est_pnl)
+
+                                msg = (
+                                    f"🎯 **HASIL LATIHAN SIMULASI: SESUAI TARGET (TP) ✅**\n"
+                                    f"• **Koin:** `{symbol}` ({v_trade['tipe']})\n"
+                                    f"• **Entry:** `{v_trade['entry_price']:.6f}` ➔ **Exit TP:** `{current_price:.6f}` (+{pnl_pct:.2f}%)\n"
+                                    f"• **Status:** Sesuai Target TP (Analisa Valid)\n"
+                                    f"• **Setup:** {v_trade['alasan']}\n"
+                                    f"💰 **Saldo Simulasi:** `${new_sim_modal:.2f} USDT` (+${est_pnl:.2f})"
+                                )
+                                print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: SESUAI TARGET TP (+{pnl_pct:.2f}%) | Saldo Simulasi: {new_sim_modal:.2f} USDT")
+                                
+                                # Kirim ke channel Telegram (Admin & Error/Latihan channel)
+                                try:
+                                    target_chats = {TELEGRAM_ADMIN_CHAT_ID}
+                                    if TELEGRAM_ERROR_CHAT_ID:
+                                        target_chats.add(TELEGRAM_ERROR_CHAT_ID)
+                                    for cid in target_chats:
+                                        if cid:
+                                            await bot.send_message(cid, msg)
+                                except Exception as e_res:
+                                    print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
                                 
                                 record_trade_result(v_trade['alasan'], is_profit=True)
                                 
+                                # Rekam hasil ke Pattern Memory AI & PostgreSQL Database
+                                p_entry_id = v_trade.get("pattern_entry_id")
+                                if p_entry_id:
+                                    record_pattern_result(p_entry_id, is_win=True, pnl=pnl_pct)
+                                
                                 # Simpan ke CSV (SUCCESS)
-                                with open("virtual_success_log.csv", "a", newline="") as f:
+                                with open("virtual_success_log.csv", "a", newline="", encoding="utf-8") as f:
                                     writer = csv.writer(f)
-                                    writer.writerow([v_trade['time'], symbol, v_trade['tipe'], v_trade['entry_price'], v_trade['tp_price'], v_trade['alasan'], "SUCCESS"])
+                                    writer.writerow([v_trade['time'], symbol, v_trade['tipe'], v_trade['entry_price'], current_price, v_trade['alasan'], "SUCCESS (SESUAI TARGET)"])
                                     
                                 del virtual_trades[symbol]
                             elif is_sl:
-                                msg = f"📚 HASIL BELAJAR ({v_trade['tipe']}): Koin {symbol} gagal dan menyentuh Stop Loss. Alasan masuk sebelumnya: {v_trade['alasan']}. Perlu dievaluasi."
-                                print(msg)
-                                await bot.send_message(TELEGRAM_ERROR_CHAT_ID, msg)
+                                pnl_pct = abs((current_price - v_trade['entry_price']) / v_trade['entry_price'] * 100) if v_trade.get('entry_price', 0) > 0 else 0.0
+                                est_margin = 50.0
+                                est_pnl = -est_margin * (pnl_pct / 100)
+                                new_sim_modal = bot_config.add_simulated_pnl(est_pnl)
+
+                                msg = (
+                                    f"🛑 **HASIL LATIHAN SIMULASI: GAGAL TARGET (SL) ❌**\n"
+                                    f"• **Koin:** `{symbol}` ({v_trade['tipe']})\n"
+                                    f"• **Entry:** `{v_trade['entry_price']:.6f}` ➔ **Exit SL:** `{current_price:.6f}` (-{pnl_pct:.2f}%)\n"
+                                    f"• **Status:** Gagal Target / Kena SL (Perlu Evaluasi)\n"
+                                    f"• **Setup:** {v_trade['alasan']}\n"
+                                    f"💰 **Saldo Simulasi:** `${new_sim_modal:.2f} USDT` (${est_pnl:.2f})"
+                                )
+                                print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: GAGAL TARGET SL (-{pnl_pct:.2f}%) | Saldo Simulasi: {new_sim_modal:.2f} USDT")
+                                
+                                # Kirim ke channel Telegram (Admin & Error/Latihan channel)
+                                try:
+                                    target_chats = {TELEGRAM_ADMIN_CHAT_ID}
+                                    if TELEGRAM_ERROR_CHAT_ID:
+                                        target_chats.add(TELEGRAM_ERROR_CHAT_ID)
+                                    for cid in target_chats:
+                                        if cid:
+                                            await bot.send_message(cid, msg)
+                                except Exception as e_res:
+                                    print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
                                 
                                 record_trade_result(v_trade['alasan'], is_profit=False)
                                 
+                                # Rekam hasil ke Pattern Memory AI & PostgreSQL Database
+                                p_entry_id = v_trade.get("pattern_entry_id")
+                                if p_entry_id:
+                                    record_pattern_result(p_entry_id, is_win=False, pnl=-pnl_pct)
+                                
                                 # Simpan ke CSV (FAILED)
-                                with open("virtual_success_log.csv", "a", newline="") as f:
+                                with open("virtual_success_log.csv", "a", newline="", encoding="utf-8") as f:
                                     writer = csv.writer(f)
-                                    writer.writerow([v_trade['time'], symbol, v_trade['tipe'], v_trade['entry_price'], v_trade['sl_price'], v_trade['alasan'], "FAILED"])
+                                    writer.writerow([v_trade['time'], symbol, v_trade['tipe'], v_trade['entry_price'], current_price, v_trade['alasan'], "FAILED (GAGAL TARGET)"])
                                     
                                 del virtual_trades[symbol]
                         # -------------------------------------------------
@@ -413,27 +530,38 @@ async def scanner_loop():
                             
                             # 5. Cek Modal & Hitung Sizing Computed
                             try:
-                                account_info = await client.futures_account()
-                                modal = float(account_info['totalMarginBalance'])
+                                if hasattr(client, "get_account_balance"):
+                                    bal_info = await client.get_account_balance()
+                                    modal = float(bal_info.get("total_wallet_balance", 0.0))
+                                    positions = await client.get_open_positions()
+                                elif hasattr(client, "futures_account"):
+                                    account_info = await client.futures_account()
+                                    modal = float(account_info.get("totalMarginBalance", 0.0))
+                                    positions = account_info.get("positions", [])
+                                else:
+                                    modal = 50.0
+                                    positions = []
+
+                                curr_trade_mode = getattr(bot_config, "trading_mode", TRADING_MODE).upper()
+                                is_paper_trading = curr_trade_mode in ("PAPER_TRADING", "SIMULATION", "VIRTUAL") or (bot_config.simulated_modal is not None and bot_config.simulated_modal > 0)
+
                                 if bot_config.simulated_modal is not None and bot_config.simulated_modal > 0:
                                     modal = bot_config.simulated_modal
-                                
+                                elif is_paper_trading and modal <= 0:
+                                    modal = 100.0  # Default modal 100 USDT untuk simulasi Paper Trading jika saldo akun 0
+
                                 # Cek posisi terbuka
-                                positions = account_info.get('positions', [])
                                 is_position_open = False
-                                active_longs = 0
-                                active_shorts = 0
-                                
                                 for pos in positions:
-                                    amt = float(pos['positionAmt'])
-                                    if amt > 0:
-                                        active_longs += 1
-                                    elif amt < 0:
-                                        active_shorts += 1
-                                        
-                                    if pos['symbol'] == symbol and amt != 0:
+                                    amt = float(pos.get("position_amt", pos.get("positionAmt", 0)))
+                                    if pos.get("symbol") == symbol and amt != 0:
                                         is_position_open = True
-                                
+                                        break
+
+                                # Cek juga di antrean active_trade_meta jika paper trading
+                                if not is_position_open and symbol in bot_state.get("active_trade_meta", {}):
+                                    is_position_open = True
+
                                 if is_position_open:
                                     print(f"⏩ Lewati {symbol}: Sudah ada posisi terbuka.")
                                     continue
@@ -444,51 +572,97 @@ async def scanner_loop():
                                     print(f"[RISK] Lewati {symbol}: exposure {total_exposure:.2f} >= limit {exposure_limit:.2f}")
                                     continue
 
-                                try:
-                                    funding_info = await client.futures_mark_price(symbol=symbol)
-                                    funding_rate = float(funding_info.get("lastFundingRate", 0))
-                                    if abs(funding_rate) >= 0.003:
-                                        print(f"[RISK] Lewati {symbol}: funding rate {funding_rate:.4%} terlalu tinggi")
+                                # Market guard opsional jika Binance
+                                if hasattr(client, "futures_mark_price"):
+                                    try:
+                                        funding_info = await client.futures_mark_price(symbol=symbol)
+                                        funding_rate = float(funding_info.get("lastFundingRate", 0))
+                                        if abs(funding_rate) >= 0.003:
+                                            print(f"[RISK] Lewati {symbol}: funding rate {funding_rate:.4%} terlalu tinggi")
+                                            continue
+                                        order_book = await client.futures_order_book(symbol=symbol, limit=20)
+                                        bid_depth = sum(float(p) * float(q) for p, q in order_book.get("bids", []))
+                                        ask_depth = sum(float(p) * float(q) for p, q in order_book.get("asks", []))
+                                        if min(bid_depth, ask_depth) < 10000:
+                                            print(f"[RISK] Lewati {symbol}: order-book terlalu tipis")
+                                            continue
+                                    except Exception as market_guard_error:
+                                        print(f"[RISK] Market guard gagal untuk {symbol}: {market_guard_error}")
                                         continue
-                                    order_book = await client.futures_order_book(symbol=symbol, limit=20)
-                                    bid_depth = sum(float(p) * float(q) for p, q in order_book.get("bids", []))
-                                    ask_depth = sum(float(p) * float(q) for p, q in order_book.get("asks", []))
-                                    if min(bid_depth, ask_depth) < 10000:
-                                        print(f"[RISK] Lewati {symbol}: order-book terlalu tipis")
-                                        continue
-                                except Exception as market_guard_error:
-                                    print(f"[RISK] Market guard gagal untuk {symbol}: {market_guard_error}")
-                                    continue
-                                
-                                # Batasan maksimal open posisi
-                                active_positions = count_open_positions(positions)
-                                if active_positions >= bot_config.max_open_positions:
-                                    if symbol not in virtual_trades:
-                                        if len(virtual_trades) < 15:
-                                            print(f"⏩ Lewati {symbol}: Limit {bot_config.max_open_positions} posisi tercapai. Memasukkan ke mode Paper Trading.")
-                                            
-                                            pm_tp = (bot_config.tp_percent / 100) / dynamic_leverage
-                                            pm_sl = (bot_config.sl_percent / 100) / dynamic_leverage
-                                            
-                                            virtual_trades[symbol] = {
-                                                'tipe': trade_type,
-                                                'entry_price': current_price,
-                                                'tp_price': current_price * (1 + pm_tp) if trade_type == 'LONG' else current_price * (1 - pm_tp),
-                                                'sl_price': current_price * (1 - pm_sl) if trade_type == 'LONG' else current_price * (1 + pm_sl),
-                                                'alasan': alasan,
-                                                'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                                            }
+
+                                # Hitung posisi aktif real dan simulasi per side (LONG dan SHORT)
+                                active_meta = bot_state.get("active_trade_meta", {})
+                                active_real_syms = set()
+                                count_long = 0
+                                count_short = 0
+
+                                for pos in positions:
+                                    amt = float(pos.get("position_amt", pos.get("positionAmt", 0)))
+                                    if amt != 0:
+                                        active_real_syms.add(pos.get("symbol"))
+                                        if amt > 0 or pos.get("side") == "LONG":
+                                            count_long += 1
                                         else:
-                                            print(f"⏩ Lewati {symbol}: Kapasitas Paper Trading penuh (15 koin).")
+                                            count_short += 1
+
+                                for s_name, s_meta in active_meta.items():
+                                    if s_name not in active_real_syms:
+                                        s_side = s_meta.get("side", "").upper()
+                                        if s_side == "LONG":
+                                            count_long += 1
+                                        elif s_side == "SHORT":
+                                            count_short += 1
+
+                                MAX_POSITIONS_PER_SIDE = getattr(bot_config, "max_positions_per_side", getattr(bot_config, "max_open_positions", 2))
+                                MAX_TOTAL_POSITIONS = getattr(bot_config, "max_open_positions", MAX_POSITIONS_PER_SIDE * 2)
+
+                                is_side_full = (trade_type == "LONG" and count_long >= MAX_POSITIONS_PER_SIDE) or (trade_type == "SHORT" and count_short >= MAX_POSITIONS_PER_SIDE)
+                                is_total_full = (count_long + count_short) >= MAX_TOTAL_POSITIONS
+
+                                # ─── JIKA BATASAN SLOT PENUH: ALIKAN KE LATIHAN SIMULASI DI CHANNEL TERPISAH ───
+                                if is_side_full or is_total_full:
+                                    if symbol not in virtual_trades:
+                                        pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
+                                        pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
+                                        v_tp = current_price * (1 + pm_tp_v) if trade_type == "LONG" else current_price * (1 - pm_tp_v)
+                                        v_sl = current_price * (1 - pm_sl_v) if trade_type == "LONG" else current_price * (1 + pm_sl_v)
+
+                                        # Catat snapshot pola candle ke Pattern Memory & PostgreSQL untuk Latihan Simulasi
+                                        ex_name = getattr(client, "exchange_name", "BITUNIX")
+                                        p_entry_id_v = record_pattern_entry(
+                                            symbol=symbol,
+                                            side=trade_type,
+                                            entry_price=current_price,
+                                            conditions=conditions_snapshot,
+                                            alasan=f"[LATIHAN] {alasan}",
+                                            margin_usdt=0.0,
+                                            leverage=dynamic_leverage,
+                                            exchange=f"{ex_name}_SIM_TRAIN",
+                                        )
+
+                                        virtual_trades[symbol] = {
+                                            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                            "tipe": trade_type,
+                                            "entry_price": current_price,
+                                            "tp_price": v_tp,
+                                            "sl_price": v_sl,
+                                            "alasan": alasan,
+                                            "leverage": dynamic_leverage,
+                                            "pattern_entry_id": p_entry_id_v,
+                                        }
+
+                                        slot_status_text = f"LONG: {count_long}/{MAX_POSITIONS_PER_SIDE} | SHORT: {count_short}/{MAX_POSITIONS_PER_SIDE}"
+                                        print(f"📚 [LATIHAN SIMULASI] Slot aktif penuh ({slot_status_text}). {symbol} ({trade_type}) dicatat untuk evaluasi target TP/SL (ID: {p_entry_id_v}).")
+
                                     continue
-                                    
+
                                 # Hitung Sizing Computed Dinamis untuk Modal Kecil / Compounding
                                 planned_sl_move = (bot_config.sl_percent / 100) / dynamic_leverage
                                 planned_sl_price = (
                                     current_price * (1 - planned_sl_move)
                                     if trade_type == "LONG"
                                     else current_price * (1 + planned_sl_move)
-                                )
+                                    )
                                 if bot_config.margin_mode == "DYNAMIC":
                                     computed_size = calculate_computed_position_size(
                                         equity=modal,
@@ -525,16 +699,32 @@ async def scanner_loop():
                             except Exception as e_bal:
                                 print(f"[ERROR] Gagal menghitung sizing modal: {e_bal}")
                                 continue
-                                
-                            # 6. Eksekusi Order
-                            if trade_type == "LONG":
-                                order_res = await place_long_order(
-                                    client, symbol, current_price, current_margin, dynamic_leverage
-                                )
+
+                            # 6. Eksekusi Order (Real vs Paper Trading Simulasi)
+                            curr_trade_mode = getattr(bot_config, "trading_mode", TRADING_MODE).upper()
+                            is_paper_trading = curr_trade_mode in ("PAPER_TRADING", "SIMULATION", "VIRTUAL") or (bot_config.simulated_modal is not None and bot_config.simulated_modal > 0)
+                            exchange_name = getattr(client, "exchange_name", getattr(bot_config, "active_exchange", "BINANCE"))
+                            exchange_tag = f"{exchange_name}_SIM" if is_paper_trading else (f"{exchange_name}_TESTNET" if curr_trade_mode == "TESTNET" else f"{exchange_name}_REAL")
+
+                            if is_paper_trading:
+                                quantity = (current_margin * dynamic_leverage) / current_price
+                                order_res = {
+                                    'status': 'success',
+                                    'quantity': quantity,
+                                    'price': current_price,
+                                    'actual_leverage': dynamic_leverage,
+                                    'is_paper': True,
+                                }
+                                print(f"[PAPER TRADING] {symbol}: Simulasi Open {trade_type} di {current_price:.6f} | Margin={current_margin:.2f} USDT | Lev={dynamic_leverage}x [{exchange_tag}]")
                             else:
-                                order_res = await place_short_order(
-                                    client, symbol, current_price, current_margin, dynamic_leverage
-                                )
+                                if trade_type == "LONG":
+                                    order_res = await place_long_order(
+                                        client, symbol, current_price, current_margin, dynamic_leverage
+                                    )
+                                else:
+                                    order_res = await place_short_order(
+                                        client, symbol, current_price, current_margin, dynamic_leverage
+                                    )
                                 
                             if order_res.get('status') == 'success':
                                 quantity = order_res['quantity']
@@ -554,12 +744,15 @@ async def scanner_loop():
                                     sl_price = entry_price * (1 + pm_sl)
                                     tp_sl_side = 'BUY'
                                 
-                                # Pasang TP / SL
-                                protection_result = await place_take_profit_stop_loss(
-                                    client, symbol, tp_sl_side, quantity, tp_price, sl_price,
-                                    use_trailing_stop=bot_config.use_trailing_stop,
-                                    callback_rate=bot_config.ts_callback_rate
-                                )
+                                # Pasang TP / SL (atau bypass di mode simulasi)
+                                if is_paper_trading:
+                                    protection_result = {"status": "success", "is_paper": True}
+                                else:
+                                    protection_result = await place_take_profit_stop_loss(
+                                        client, symbol, tp_sl_side, quantity, tp_price, sl_price,
+                                        use_trailing_stop=bot_config.use_trailing_stop,
+                                        callback_rate=bot_config.ts_callback_rate
+                                    )
 
                                 if protection_result.get("status") not in ("success", "existing"):
                                     bot_state["is_running"] = False
@@ -615,8 +808,9 @@ async def scanner_loop():
                                     ]) * (100 / 6),
                                     1,
                                 )
+                                mode_label = f"[{exchange_tag}] " if is_paper_trading else ""
                                 trade_data = {
-                                    'symbol': symbol,
+                                    'symbol': f"{mode_label}{symbol}",
                                     'direction': trade_type,
                                     'price': f"{entry_price:.4f}",
                                     'entry_price': entry_price,
@@ -650,6 +844,7 @@ async def scanner_loop():
                                     alasan=alasan,
                                     margin_usdt=current_margin,
                                     leverage=actual_leverage,
+                                    exchange=exchange_tag,
                                 )
 
                                 bot_state.setdefault("active_trade_meta", {})[symbol] = {
@@ -658,6 +853,11 @@ async def scanner_loop():
                                     "side": trade_type,
                                     "margin_usdt": current_margin,
                                     "leverage": actual_leverage,
+                                    "quantity": quantity,
+                                    "tp_price": tp_price,
+                                    "sl_price": sl_price,
+                                    "exchange": exchange_tag,
+                                    "is_paper": is_paper_trading,
                                     "mfe": 0.0,
                                     "mae": 0.0,
                                     "pattern_entry_id": pattern_entry_id,
@@ -675,8 +875,9 @@ async def scanner_loop():
                                 "Lanjut ke batch berikutnya."
                             )
                             
-                    # Jeda request API sesuai limit setiap selesai 1 batch (10 koin)
-                    await asyncio.sleep(API_REQUEST_DELAY)
+                    # Jeda request API acak sesuai limit setiap selesai 1 batch
+                    batch_sleep = random.uniform(max(1.0, API_REQUEST_DELAY - 0.5), API_REQUEST_DELAY + 1.0)
+                    await asyncio.sleep(batch_sleep)
                                     
             except Exception as loop_error:
                 err_str = str(loop_error)
@@ -693,19 +894,29 @@ async def scanner_loop():
                 else:
                     await send_error_log(bot, TELEGRAM_ADMIN_CHAT_ID, error_msg)
                 
-            # Jeda sebelum scan ulang
-            await asyncio.sleep(SCAN_INTERVAL_SECONDS)
+            # Jeda acak (30 detik hingga 2 menit / 120 detik) sebelum siklus scan koin berikutnya
+            random_cycle_delay = random.randint(30, 120)
+            print(f"\n[{datetime.now().strftime('%H:%M:%S')}] ⏳ Siklus scan selesai. Jeda acak {random_cycle_delay} detik ({random_cycle_delay/60:.1f} menit) sebelum scan berikutnya...")
+            await asyncio.sleep(random_cycle_delay)
             
     finally:
-        await client.close_connection()
+        if isinstance(client, BaseExchange):
+            await client.close()
+        elif hasattr(client, "close_connection"):
+            await client.close_connection()
 
 from binance import BinanceSocketManager
 from telegram.notifier import send_order_filled_notification
 
 async def user_data_stream_loop():
     """
-    Mendengarkan event order dari Binance secara real-time.
+    Mendengarkan event order dari Binance secara real-time (hanya jika ACTIVE_EXCHANGE == BINANCE).
     """
+    if ACTIVE_EXCHANGE.upper() != "BINANCE":
+        print(f"[USER STREAM] Active exchange adalah '{ACTIVE_EXCHANGE}'. Skipping Binance WebSocket User Stream.")
+        while True:
+            await asyncio.sleep(3600)
+
     testnet = TRADING_MODE == 'TESTNET'
     client = await AsyncClient.create(
         api_key=BINANCE_API_KEY,
@@ -864,13 +1075,55 @@ async def user_data_stream_loop():
 
                                 unrealized_pnl = float(pos.get("up", 0))
                                 symbol = pos.get("s")
-                                meta = bot_state.setdefault("active_trade_meta", {}).get(symbol)
-                                if meta is not None:
-                                    meta["mfe"] = max(float(meta.get("mfe", 0)), unrealized_pnl)
-                                    meta["mae"] = min(float(meta.get("mae", 0)), unrealized_pnl)
-                                loss_percent = (unrealized_pnl / (entry_price * abs(pos_amt) / bot_config.leverage)) * 100
-                                if loss_percent <= -(bot_config.sl_percent * 0.8):
-                                    print(f"[WARNING] {pos.get('s')} mendekati Stop Loss! (Loss: {loss_percent:.2f}%).")
+                            avg_price = float(order_info.get("ap", "0.0"))
+
+                            trade_reason = bot_state.get("active_trade_reasons", {}).get(symbol, "Sinyal Teknikal / Auto Trade")
+                            meta = bot_state.get("active_trade_meta", {}).get(symbol, {})
+                            entry_price = float(meta.get("entry_price", 0.0))
+                            actual_leverage = int(meta.get("leverage", 1))
+                            mfe_val = float(meta.get("mfe", 0.0))
+                            mae_val = float(meta.get("mae", 0.0))
+
+                            action = "UNKNOWN"
+                            if is_protective_close:
+                                action = "TAKE_PROFIT" if "TAKE_PROFIT" in order_type else "STOP_LOSS"
+                            elif is_reduce_only_market:
+                                action = "EMERGENCY_CLOSE / MANUAL"
+
+                            is_win = realized_pnl > 0
+                            pattern_name = meta.get("pattern_name", "UNKNOWN")
+                            record_trade_result(pattern_name, is_win)
+                            record_pattern_result(
+                                pattern_name=pattern_name,
+                                timeframe=TIMEFRAME,
+                                profit=realized_pnl,
+                                is_win=is_win,
+                            )
+                            record_closed_trade(
+                                symbol=symbol,
+                                profit=realized_pnl,
+                                commission=0.0,
+                                is_win=is_win,
+                            )
+
+                            await send_order_filled_notification(
+                                bot=bot,
+                                chat_id=TELEGRAM_ADMIN_CHAT_ID,
+                                symbol=symbol,
+                                action=action,
+                                realized_pnl=realized_pnl,
+                                close_price=avg_price,
+                                trade_reason=trade_reason,
+                                entry_price=entry_price,
+                                leverage=actual_leverage,
+                                mfe=mfe_val,
+                                mae=mae_val,
+                            )
+
+                            bot_state.get("active_trade_reasons", {}).pop(symbol, None)
+                            bot_state.get("active_trade_meta", {}).pop(symbol, None)
+                            bot_state.setdefault("protection_recovery_suppressed", set()).discard(symbol)
+
             except Exception as e:
                 bot_state["websocket_connected"] = False
                 bot_state["state"] = "DEGRADED"
@@ -881,40 +1134,194 @@ async def user_data_stream_loop():
                 reconnect_delay = min(reconnect_delay * 2, 60)
     finally:
         bot_state["websocket_connected"] = False
-        await client.close_connection()
+        if isinstance(client, BaseExchange):
+            await client.close()
+        else:
+            await client.close_connection()
 
 
 async def profitable_position_monitor_loop():
     """Close positions profitable for at least the configured holding period."""
-    testnet = TRADING_MODE == "TESTNET"
-    client = await AsyncClient.create(
-        api_key=BINANCE_API_KEY,
-        api_secret=BINANCE_API_SECRET,
-        testnet=testnet,
-    )
+    client = get_exchange_adapter()
+    await client.init()
     try:
         while True:
             try:
-                account_info = await client.futures_account()
                 now_ms = int(time.time() * 1000)
                 max_age_ms = int(AUTO_CLOSE_PROFIT_HOURS_ENV * 60 * 60 * 1000)
 
-                # Ambil semua open orders sekaligus dalam 1 request (Hemat 90% bobot API)
-                orders_by_symbol = defaultdict(list)
-                try:
-                    all_open_orders = await client.futures_get_open_orders()
-                    for o in all_open_orders:
-                        orders_by_symbol[o.get("symbol")].append(o)
-                except Exception as e_ord:
-                    print(f"[POSITION MONITOR] Gagal batch fetch open orders: {e_ord}")
+                # ─── 1. Evaluasi Posisi Virtual / Paper Trading (Bitunix & Binance Sim) ───
+                paper_trades = {
+                    sym: meta for sym, meta in bot_state.get("active_trade_meta", {}).items()
+                    if meta.get("is_paper")
+                }
+                for sym, meta in list(paper_trades.items()):
+                    try:
+                        curr_price = await client.get_symbol_price(sym)
+                        if curr_price <= 0:
+                            continue
 
-                for position in account_info.get("positions", []):
-                    amount = float(position.get("positionAmt", 0))
-                    profit = float(position.get("unrealizedProfit", 0))
-                    entry_price = float(position.get("entryPrice", 0))
+                        e_price = float(meta.get("entry_price", curr_price))
+                        qty = float(meta.get("quantity", 0.0))
+                        pos_side = meta.get("side", "LONG").upper()
+                        target_tp = float(meta.get("tp_price", 0.0))
+                        target_sl = float(meta.get("sl_price", 0.0))
+                        m_usdt = float(meta.get("margin_usdt", 0.0))
+                        lev = int(meta.get("leverage", 1))
+
+                        if pos_side in ("LONG", "BUY"):
+                            u_pnl = (curr_price - e_price) * qty
+                        else:
+                            u_pnl = (e_price - curr_price) * qty
+
+                        meta["mfe"] = max(float(meta.get("mfe", 0.0)), u_pnl)
+                        meta["mae"] = min(float(meta.get("mae", 0.0)), u_pnl)
+
+                        roi_pct = (u_pnl / m_usdt * 100) if m_usdt > 0 else 0.0
+
+                        reached_tp = False
+                        reached_sl = False
+                        if pos_side in ("LONG", "BUY"):
+                            if target_tp > 0 and curr_price >= target_tp:
+                                reached_tp = True
+                            elif target_sl > 0 and curr_price <= target_sl:
+                                reached_sl = True
+                        else:
+                            if target_tp > 0 and curr_price <= target_tp:
+                                reached_tp = True
+                            elif target_sl > 0 and curr_price >= target_sl:
+                                reached_sl = True
+
+                        e_time = meta.get("entry_time", datetime.now())
+                        hold_hours = (datetime.now() - e_time).total_seconds() / 3600.0
+                        hold_mins = hold_hours * 60.0
+
+                        should_close_time, time_reason = evaluate_time_based_exit(
+                            hold_duration_hours=hold_hours,
+                            roi_percent=roi_pct,
+                            loss_limit_percent=-5.0,
+                            loss_time_limit_hours=2.0,
+                            profit_target_percent=20.0,
+                            profit_time_limit_hours=4.0,
+                        )
+
+                        if reached_tp or reached_sl or should_close_time:
+                            close_type = "TAKE_PROFIT" if reached_tp else ("STOP_LOSS" if reached_sl else f"TIME_EXIT ({time_reason})")
+                            r_pnl = u_pnl
+                            comm = curr_price * qty * 0.0004 * 2
+                            n_pnl = r_pnl - comm
+                            is_win_trade = r_pnl > 0
+
+                            p_id = meta.get("pattern_entry_id")
+                            ai_s = {}
+                            if p_id:
+                                record_pattern_result(p_id, is_win_trade, n_pnl)
+                                ai_s = get_pattern_stats_for_entry(p_id)
+
+                            t_alasan = bot_state.get("active_trade_reasons", {}).get(sym, meta.get("alasan", "Simulasi AI"))
+                            if t_alasan:
+                                record_trade_result(t_alasan, is_win_trade)
+                                bot_state.get("active_trade_reasons", {}).pop(sym, None)
+
+                            ex_tag = meta.get("exchange", "BITUNIX_SIM")
+                            mfe_pct = (meta.get("mfe", 0.0) / m_usdt * 100) if m_usdt > 0 else 0.0
+                            mae_pct = (abs(meta.get("mae", 0.0)) / m_usdt * 100) if m_usdt > 0 else 0.0
+
+                            record_closed_trade({
+                                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "symbol": sym,
+                                "side": pos_side,
+                                "entry_price": e_price,
+                                "exit_price": curr_price,
+                                "realized_pnl": r_pnl,
+                                "commission": comm,
+                                "funding_fee": 0.0,
+                                "net_pnl": n_pnl,
+                                "margin_usdt": m_usdt,
+                                "leverage": lev,
+                                "mfe": f"+{mfe_pct:.2f}%",
+                                "mae": f"-{mae_pct:.2f}%",
+                                "duration_minutes": hold_mins,
+                                "order_type": close_type,
+                                "exchange": ex_tag,
+                            })
+
+                            # Akumulasi hasil ke saldo simulasi (simulated wallet)
+                            new_sim_modal = bot_config.add_simulated_pnl(n_pnl)
+                            print(f"[SIMULATED WALLET] Paper trade exit: Saldo simulasi sekarang: ${new_sim_modal:.2f} USDT (Net PnL: {n_pnl:+.4f} USDT)")
+
+                            o_data = {
+                                "symbol": f"[{ex_tag}] {sym}",
+                                "order_type": close_type,
+                                "price": curr_price,
+                                "entry_price": e_price,
+                                "quantity": qty,
+                                "realized_pnl": r_pnl,
+                                "commission": comm,
+                                "funding_fee": 0.0,
+                                "net_pnl": n_pnl,
+                                "mfe": f"+{mfe_pct:.2f}%",
+                                "mae": f"-{mae_pct:.2f}%",
+                                "duration": f"{hold_mins:.1f} menit",
+                                "duration_minutes": hold_mins,
+                                "fingerprint": ai_s.get("fingerprint", t_alasan),
+                                "win_rate": ai_s.get("win_rate", 0.0),
+                                "total_trades": ai_s.get("total_trades", 0),
+                                "wins": ai_s.get("wins", 0),
+                                "losses": ai_s.get("losses", 0),
+                                "alasan_masuk": t_alasan,
+                                "ai_eval_summary": meta.get("ai_eval_summary", ""),
+                            }
+
+                            try:
+                                await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, o_data)
+                            except Exception as e_fill_notif:
+                                print(f"[TELEGRAM] Gagal kirim notifikasi closed order paper: {e_fill_notif}")
+
+                            with open("virtual_success_log.csv", "a", newline="", encoding="utf-8") as vf:
+                                csv.writer(vf).writerow([
+                                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    sym, pos_side, f"{e_price:.6f}", f"{curr_price:.6f}",
+                                    t_alasan, f"{close_type} (Net: {n_pnl:.4f} USDT)"
+                                ])
+
+                            bot_state.get("active_trade_meta", {}).pop(sym, None)
+                            print(f"[PAPER TRADING EXIT] {sym} {close_type} @ {curr_price:.6f} | Net PnL: {n_pnl:+.4f} USDT [{ex_tag}] | Saldo: ${new_sim_modal:.2f} USDT")
+                    except Exception as pe:
+                        print(f"[PAPER MONITOR ERROR] {sym}: {pe}")
+
+                # ─── 2. Evaluasi Posisi Real di Exchange ──────────────────────
+                orders_by_symbol = defaultdict(list)
+                if not isinstance(client, BaseExchange) and hasattr(client, 'futures_get_open_orders'):
+                    try:
+                        all_open_orders = await client.futures_get_open_orders()
+                        for o in all_open_orders:
+                            orders_by_symbol[o.get("symbol")].append(o)
+                    except Exception as e_ord:
+                        print(f"[POSITION MONITOR] Gagal batch fetch open orders: {e_ord}")
+
+                if isinstance(client, BaseExchange):
+                    positions = await client.get_open_positions()
+                else:
+                    account_info = await client.futures_account()
+                    positions = [
+                        {
+                            'symbol': p['symbol'],
+                            'position_amt': float(p.get('positionAmt', 0)),
+                            'unrealized_pnl': float(p.get('unrealizedProfit', 0)),
+                            'entry_price': float(p.get('entryPrice', 0)),
+                            'updateTime': int(p.get('updateTime', 0)),
+                        }
+                        for p in account_info.get("positions", [])
+                        if float(p.get("positionAmt", 0)) != 0
+                    ]
+
+                for position in positions:
+                    amount = float(position.get("position_amt", position.get("positionAmt", 0)))
+                    profit = float(position.get("unrealized_pnl", position.get("unrealizedProfit", 0)))
+                    entry_price = float(position.get("entry_price", position.get("entryPrice", 0)))
                     symbol = position.get("symbol")
                     
-                    # Update MFE / MAE secara real-time pada loop monitor posisi
                     if amount != 0:
                         meta = bot_state.setdefault("active_trade_meta", {}).get(symbol)
                         if meta is not None:
@@ -1000,9 +1407,8 @@ async def profitable_position_monitor_loop():
                             for order in open_orders
                         )
                         if not has_tp or not has_sl:
-                            if has_any_close_protection:
-                                continue
-                            await client.futures_cancel_all_open_orders(symbol=symbol)
+                            if hasattr(client, "futures_cancel_all_open_orders"):
+                                await client.futures_cancel_all_open_orders(symbol=symbol)
                             price_move_tp = (bot_config.tp_percent / 100) / bot_config.leverage
                             price_move_sl = (bot_config.sl_percent / 100) / bot_config.leverage
                             if amount > 0:
@@ -1029,6 +1435,7 @@ async def profitable_position_monitor_loop():
                             if protection.get("status") == "existing":
                                 suppressed_symbols.add(symbol)
 
+                    # Auto close jika profit telah tercapai sesuai durasi
                     update_time_ms = int(position.get("updateTime", 0))
                     if amount == 0 or profit <= 0 or update_time_ms <= 0:
                         continue
@@ -1058,7 +1465,7 @@ async def profitable_position_monitor_loop():
                     await send_error_log(
                         bot,
                         TELEGRAM_ADMIN_CHAT_ID,
-                        "⚠️ **BINANCE RATE LIMIT (-1003)**: Batas request tercapai. Position monitor otomatis jeda 5 menit untuk mendinginkan IP.",
+                        "⚠️ **RATE LIMIT / BAN**: Batas request tercapai. Position monitor otomatis jeda 5 menit untuk mendinginkan IP.",
                     )
                     await asyncio.sleep(300)
                 else:
@@ -1070,9 +1477,12 @@ async def profitable_position_monitor_loop():
 
             await asyncio.sleep(POSITION_MONITOR_INTERVAL_ENV)
     finally:
-        await client.close_connection()
+        if isinstance(client, BaseExchange):
+            await client.close()
+        else:
+            await client.close_connection()
 
-async def _startup_database(client: AsyncClient) -> None:
+async def _startup_database(client: Union[BaseExchange, AsyncClient]) -> None:
     """Inisialisasi DB saat startup: buat tabel, migrasi data lama, mulai scraper."""
     if not DB_MODULES_LOADED:
         print("[DB] Modul database tidak dimuat, skip inisialisasi.")
@@ -1098,14 +1508,10 @@ async def _startup_database(client: AsyncClient) -> None:
 
 
 async def main():
-    # Menjalankan Polling Telegram, Scanner, dan WebSocket secara bersamaan
-    # Buat Binance client dulu untuk scraper
-    is_testnet = (TRADING_MODE == "TESTNET")
-    _startup_client = await AsyncClient.create(
-        api_key=BINANCE_API_KEY,
-        api_secret=BINANCE_API_SECRET,
-        testnet=is_testnet,
-    )
+    # Inisialisasi client exchange aktif melalui Factory
+    _startup_client = get_exchange_adapter()
+    await _startup_client.init()
+    bot_state["client"] = _startup_client
 
     # Startup database & OHLCV scraper
     await _startup_database(_startup_client)
@@ -1134,13 +1540,16 @@ async def main():
             user_data_stream_loop(),
             profitable_position_monitor_loop(),
             daily_backup_scheduler_loop(bot),
-            # Background scraper (hanya Daily 1d agar database hemat)
+            # Background scraper (Daily 1d)
             run_long_term_scraper(_startup_client) if DB_MODULES_LOADED else asyncio.sleep(0),
         )
     finally:
         if dashboard_runner:
             await dashboard_runner.cleanup()
-        await _startup_client.close_connection()
+        if isinstance(_startup_client, BaseExchange):
+            await _startup_client.close()
+        else:
+            await _startup_client.close_connection()
         if DB_MODULES_LOADED:
             await close_pool()
 

@@ -1,10 +1,18 @@
+from __future__ import annotations
 import os
+from typing import Optional, List, Dict, Any, Set
 from dotenv import load_dotenv
 
 load_dotenv()
 
-BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
-BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
+ACTIVE_EXCHANGE = os.getenv("ACTIVE_EXCHANGE", "BINANCE").upper().strip()
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+
+BITUNIX_API_KEY = os.getenv("BITUNIX_API_KEY", "")
+BITUNIX_API_SECRET = os.getenv("BITUNIX_API_SECRET", "")
+BITUNIX_BASE_URL = os.getenv("BITUNIX_BASE_URL", "https://fapi.bitunix.com")
+BITUNIX_PROXY = os.getenv("BITUNIX_PROXY", "") or os.getenv("HTTPS_PROXY", "") or os.getenv("HTTP_PROXY", "") or None
 
 # ─── PostgreSQL ───────────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -19,7 +27,7 @@ TELEGRAM_ADMIN_USER_IDS = {
     if value.strip().lstrip("-").isdigit()
 }
 
-TRADING_MODE = os.getenv("TRADING_MODE", "TESTNET").upper()
+TRADING_MODE = os.getenv("TRADING_MODE", "PAPER_TRADING").upper()
 LEVERAGE_ENV = int(os.getenv("LEVERAGE", "20"))
 MARGIN_USDT = float(os.getenv("MARGIN_USDT", "50"))
 TP_PERCENT_ENV = float(os.getenv("TP_PERCENT", "25.0"))
@@ -62,8 +70,13 @@ TS_CALLBACK_RATE_ENV = float(os.getenv("TS_CALLBACK_RATE", "1.0"))
 HTF_TIMEFRAME = os.getenv("HTF_TIMEFRAME", "1h")
 SIMULATED_MODAL_ENV = float(os.getenv("SIMULATED_MODAL", "0.0"))
 
-if not BINANCE_API_KEY or not BINANCE_API_SECRET:
-    raise ValueError("Missing Binance API keys in .env")
+# Validasi API key sesuai exchange aktif
+if ACTIVE_EXCHANGE == "BINANCE":
+    if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+        raise ValueError("ACTIVE_EXCHANGE=BINANCE tetapi BINANCE_API_KEY / BINANCE_API_SECRET belum diisi di .env")
+elif ACTIVE_EXCHANGE == "BITUNIX":
+    if not BITUNIX_API_KEY or not BITUNIX_API_SECRET:
+        raise ValueError("ACTIVE_EXCHANGE=BITUNIX tetapi BITUNIX_API_KEY / BITUNIX_API_SECRET belum diisi di .env")
 
 if not TELEGRAM_BOT_TOKEN or not TELEGRAM_ADMIN_CHAT_ID:
     raise ValueError("Missing Telegram credentials in .env")
@@ -108,6 +121,9 @@ class BotSettings:
             cls._instance.ts_activation_percent = TS_ACTIVATION_PERCENT_ENV
             cls._instance.ts_callback_rate = TS_CALLBACK_RATE_ENV
             
+            cls._instance.active_exchange = ACTIVE_EXCHANGE
+            cls._instance.trading_mode = TRADING_MODE
+            
             # Fitur Lanjutan
             cls._instance.daily_loss_limit_percent = DAILY_LOSS_LIMIT_PERCENT_ENV
             cls._instance.min_order_book_depth_usdt = MIN_ORDER_BOOK_DEPTH_USDT_ENV
@@ -116,6 +132,20 @@ class BotSettings:
             cls._instance.limit_order_timeout_seconds = LIMIT_ORDER_TIMEOUT_SECONDS_ENV
         return cls._instance
         
+    def update_trading_mode(self, mode: str):
+        mode = mode.upper().strip()
+        if mode not in {"REAL", "PAPER_TRADING", "TESTNET"}:
+            raise ValueError("Mode harus REAL, PAPER_TRADING, atau TESTNET")
+        self.trading_mode = mode
+        self._update_env("TRADING_MODE", mode)
+
+    def update_active_exchange(self, exchange: str):
+        exchange = exchange.upper().strip()
+        if exchange not in {"BINANCE", "BITUNIX"}:
+            raise ValueError("Exchange yang didukung hanya BINANCE dan BITUNIX")
+        self.active_exchange = exchange
+        self._update_env("ACTIVE_EXCHANGE", exchange)
+
     def update_tp(self, val: float):
         self.tp_percent = val
         self._update_env("TP_PERCENT", str(val))
@@ -128,9 +158,11 @@ class BotSettings:
         self.leverage = val
         self._update_env("LEVERAGE", str(val))
         
-    def update_max_positions(self, val: int):
-        self.max_open_positions = val
+    def update_max_positions(self, val: int, per_side: Optional[int] = None):
+        self.max_open_positions = int(val)
+        self.max_positions_per_side = int(per_side) if per_side is not None else int(val)
         self._update_env("MAX_OPEN_POSITIONS", str(val))
+        self._update_env("MAX_POSITIONS_PER_SIDE", str(self.max_positions_per_side))
 
     def update_margin_mode(self, mode: str):
         mode = mode.upper()
@@ -201,6 +233,14 @@ class BotSettings:
     def reset_simulated_modal(self, val: float = 100.0):
         self.simulated_modal = val
         self._update_env("SIMULATED_MODAL", str(val))
+
+    def add_simulated_pnl(self, pnl: float) -> float:
+        """Akumulasi hasil profit/loss ke saldo simulasi (simulated_modal)."""
+        current = self.simulated_modal if self.simulated_modal is not None and self.simulated_modal > 0 else 100.0
+        new_balance = max(1.0, current + float(pnl))
+        self.simulated_modal = round(new_balance, 4)
+        self._update_env("SIMULATED_MODAL", str(self.simulated_modal))
+        return self.simulated_modal
 
     def update_rsi_oversold(self, val: float):
         if not (0 < val < self.rsi_overbought):

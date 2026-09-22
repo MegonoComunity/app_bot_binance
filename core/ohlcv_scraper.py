@@ -1,25 +1,18 @@
 """
 core/ohlcv_scraper.py
 
-OHLCV Scraper — mengambil data candlestick dari Binance Futures dan menyimpannya ke PostgreSQL.
-
-Scraping:
-  - Top 30 koin Futures berdasarkan volume tertinggi
-  - 4 Timeframe: 1d (Daily), 1w (Weekly), 1h (Hourly), 5m (5 Menit)
-  - 500 candle historis per symbol per timeframe
-
-Schedule (via asyncio loop):
-  - 1h & 5m : setiap 5 menit
-  - 1d & 1w : setiap 6 jam
+OHLCV Scraper — mengambil data candlestick dari Exchange Futures dan menyimpannya ke PostgreSQL.
+Mendukung multi-exchange (Binance, Bitunix, dll).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Union, List, Dict, Any
 
 from binance import AsyncClient
+from core.exchanges.base import BaseExchange
 from database.ohlcv_repo import upsert_candles
 
 logger = logging.getLogger(__name__)
@@ -45,7 +38,7 @@ _SYMBOL_REFRESH_HOURS = 6    # Refresh daftar top coins setiap 6 jam
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-async def _get_top_symbols(client: AsyncClient) -> list[str]:
+async def _get_top_symbols(client: Union[BaseExchange, AsyncClient]) -> list[str]:
     """
     Ambil Top N koin Futures berdasarkan quoteVolume 24H.
     Cache selama 6 jam.
@@ -59,20 +52,23 @@ async def _get_top_symbols(client: AsyncClient) -> list[str]:
             return _top_symbols
 
     try:
-        tickers = await client.futures_ticker()
-        usdt_pairs = [
-            t for t in tickers
-            if t["symbol"].endswith("USDT") and not t["symbol"].startswith("1000")
-        ]
-        # Urutkan berdasarkan quoteVolume turun
-        usdt_pairs.sort(key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
-        _top_symbols = [t["symbol"] for t in usdt_pairs[:TOP_N_COINS]]
+        if isinstance(client, BaseExchange):
+            top_coins = await client.get_top_futures_by_volume(n=TOP_N_COINS)
+            _top_symbols = [s for s in top_coins if not s.startswith("1000")][:TOP_N_COINS]
+        else:
+            tickers = await client.futures_ticker()
+            usdt_pairs = [
+                t for t in tickers
+                if t["symbol"].endswith("USDT") and not t["symbol"].startswith("1000")
+            ]
+            usdt_pairs.sort(key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
+            _top_symbols = [t["symbol"] for t in usdt_pairs[:TOP_N_COINS]]
+
         _last_symbol_refresh = now
         logger.info(f"[OHLCV] Top {TOP_N_COINS} symbols diperbarui: {_top_symbols[:5]}...")
     except Exception as exc:
         logger.error(f"[OHLCV] Gagal ambil top symbols: {exc}")
         if not _top_symbols:
-            # Fallback ke daftar statis major coins
             _top_symbols = [
                 "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
                 "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",
@@ -80,41 +76,59 @@ async def _get_top_symbols(client: AsyncClient) -> list[str]:
     return _top_symbols
 
 
-def _parse_klines(raw_klines: list) -> list[dict]:
-    """
-    Konversi response klines Binance ke list dict standar.
-    Format Binance: [open_time, open, high, low, close, volume, close_time, ...]
-    """
+def _df_to_candles(df) -> list[dict]:
+    """Konversi DataFrame OHLCV ke list dict format database."""
     candles = []
-    for k in raw_klines:
+    if df is None or df.empty:
+        return candles
+    for _, row in df.iterrows():
         try:
+            ts = int(row['timestamp'].timestamp() * 1000) if hasattr(row['timestamp'], 'timestamp') else int(row['timestamp'])
             candles.append({
-                "open_time":  int(k[0]),
-                "open":       float(k[1]),
-                "high":       float(k[2]),
-                "low":        float(k[3]),
-                "close":      float(k[4]),
-                "volume":     float(k[5]),
-                "close_time": int(k[6]),
+                "open_time":  ts,
+                "open":       float(row['open']),
+                "high":       float(row['high']),
+                "low":        float(row['low']),
+                "close":      float(row['close']),
+                "volume":     float(row['volume']),
+                "close_time": ts + 86400000,
             })
-        except (IndexError, ValueError, TypeError):
+        except Exception:
             continue
     return candles
 
 
 async def _scrape_one_symbol(
-    client: AsyncClient,
+    client: Union[BaseExchange, AsyncClient],
     symbol: str,
     timeframe: str,
 ) -> int:
     """Scrape satu symbol untuk satu timeframe. Return jumlah candle yang disimpan."""
     try:
-        raw = await client.futures_klines(
-            symbol=symbol,
-            interval=timeframe,
-            limit=CANDLE_LIMIT,
-        )
-        candles = _parse_klines(raw)
+        if isinstance(client, BaseExchange):
+            df = await client.fetch_ohlcv(symbol=symbol, interval=timeframe, limit=CANDLE_LIMIT)
+            candles = _df_to_candles(df)
+        else:
+            raw = await client.futures_klines(
+                symbol=symbol,
+                interval=timeframe,
+                limit=CANDLE_LIMIT,
+            )
+            candles = []
+            for k in raw:
+                try:
+                    candles.append({
+                        "open_time":  int(k[0]),
+                        "open":       float(k[1]),
+                        "high":       float(k[2]),
+                        "low":        float(k[3]),
+                        "close":      float(k[4]),
+                        "volume":     float(k[5]),
+                        "close_time": int(k[6]),
+                    })
+                except Exception:
+                    continue
+
         saved = await upsert_candles(symbol, timeframe, candles)
         return saved
     except Exception as exc:
@@ -122,9 +136,9 @@ async def _scrape_one_symbol(
         return 0
 
 
-async def scrape_all_timeframes(client: AsyncClient) -> dict[str, int]:
+async def scrape_all_timeframes(client: Union[BaseExchange, AsyncClient]) -> dict[str, int]:
     """
-    Scrape semua Top N symbols untuk semua 4 timeframe.
+    Scrape semua Top N symbols untuk timeframe terdaftar.
     Return dict {timeframe: total_candles_saved}
     """
     symbols = await _get_top_symbols(client)
@@ -144,12 +158,11 @@ async def scrape_all_timeframes(client: AsyncClient) -> dict[str, int]:
 
 # ─── Background Tasks ────────────────────────────────────────────────────────
 
-async def run_short_term_scraper(client: AsyncClient) -> None:
-    """
-    Background task untuk timeframe pendek (5m, 1h).
-    Berjalan setiap 5 menit.
-    """
+async def run_short_term_scraper(client: Union[BaseExchange, AsyncClient]) -> None:
+    """Background task untuk timeframe pendek."""
     short_tfs = [tf for tf, interval in TIMEFRAME_SCHEDULE if interval == 5 * 60]
+    if not short_tfs:
+        return
     logger.info(f"[OHLCV] Short-term scraper aktif: {short_tfs} (setiap 5 menit)")
 
     while True:
@@ -168,14 +181,11 @@ async def run_short_term_scraper(client: AsyncClient) -> None:
             break
         except Exception as exc:
             logger.error(f"[OHLCV] Error di short-term scraper: {exc}")
-        await asyncio.sleep(5 * 60)  # Tunggu 5 menit
+        await asyncio.sleep(5 * 60)
 
 
-async def run_long_term_scraper(client: AsyncClient) -> None:
-    """
-    Background task untuk timeframe panjang (1d, 1w).
-    Berjalan setiap 6 jam. Jalankan sekali langsung saat startup.
-    """
+async def run_long_term_scraper(client: Union[BaseExchange, AsyncClient]) -> None:
+    """Background task untuk timeframe panjang."""
     long_tfs = [tf for tf, interval in TIMEFRAME_SCHEDULE if interval == 6 * 60 * 60]
     logger.info(f"[OHLCV] Long-term scraper aktif: {long_tfs} (setiap 6 jam)")
 
@@ -195,16 +205,13 @@ async def run_long_term_scraper(client: AsyncClient) -> None:
             break
         except Exception as exc:
             logger.error(f"[OHLCV] Error di long-term scraper: {exc}")
-        await asyncio.sleep(6 * 60 * 60)  # Tunggu 6 jam
+        await asyncio.sleep(6 * 60 * 60)
 
 
-async def run_initial_scrape(client: AsyncClient) -> None:
-    """
-    Scrape pertama kali saat startup — ambil semua data historis (500 candle × 4 TF × 30 koin).
-    Berjalan di background, tidak memblokir startup bot.
-    """
+async def run_initial_scrape(client: Union[BaseExchange, AsyncClient]) -> None:
+    """Scrape pertama kali saat startup."""
     try:
-        logger.info("[OHLCV] Initial scrape dimulai (500 candle × 4 TF × Top 30 coins)...")
+        logger.info("[OHLCV] Initial scrape dimulai...")
         print("[OHLCV] 📊 Mengambil data historis candle... (background)")
         summary = await scrape_all_timeframes(client)
         total = sum(summary.values())

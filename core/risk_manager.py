@@ -32,15 +32,15 @@ def calculate_risk_margin(
 
 
 def count_open_positions(positions: list[dict]) -> int:
-    return sum(1 for position in positions if float(position.get("positionAmt", 0)) != 0)
+    return sum(1 for position in positions if float(position.get("positionAmt", position.get("position_amt", 0))) != 0)
 
 
 def calculate_position_pnl_percent(position: dict) -> float:
     """Return unrealized PnL as a percentage of the position's initial margin."""
-    amount = abs(float(position.get("positionAmt", 0)))
-    entry_price = float(position.get("entryPrice", 0))
+    amount = abs(float(position.get("positionAmt", position.get("position_amt", 0))))
+    entry_price = float(position.get("entryPrice", position.get("entry_price", 0)))
     leverage = float(position.get("leverage", 0) or 0)
-    unrealized_pnl = float(position.get("unrealizedProfit", 0))
+    unrealized_pnl = float(position.get("unrealizedProfit", position.get("unrealized_pnl", 0)))
     if amount <= 0 or entry_price <= 0 or leverage <= 0:
         return 0.0
     initial_margin = amount * entry_price / leverage
@@ -63,14 +63,14 @@ def daily_loss_limit_reached(realized_pnl: float, equity: float, limit_percent: 
 def total_position_notional(positions: list[dict]) -> float:
     total = 0.0
     for p in positions:
-        amt = abs(float(p.get("positionAmt", 0)))
+        amt = abs(float(p.get("positionAmt", p.get("position_amt", 0))))
         if amt == 0:
             continue
-        mark = float(p.get("markPrice", 0) or 0)
+        mark = float(p.get("markPrice", p.get("mark_price", 0)) or 0)
         if mark <= 0:
-            entry = float(p.get("entryPrice", 0) or 0)
-            pnl = float(p.get("unrealizedProfit", 0) or 0)
-            raw_amt = float(p.get("positionAmt", 0))
+            entry = float(p.get("entryPrice", p.get("entry_price", 0)) or 0)
+            pnl = float(p.get("unrealizedProfit", p.get("unrealized_pnl", 0)) or 0)
+            raw_amt = float(p.get("positionAmt", p.get("position_amt", 0)))
             mark = (entry + (pnl / raw_amt)) if raw_amt != 0 and entry > 0 else entry
         total += amt * mark
     return total

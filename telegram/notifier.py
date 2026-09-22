@@ -1,7 +1,33 @@
+import asyncio
 from aiogram import Bot
+from aiogram.exceptions import TelegramRetryAfter, TelegramAPIError
 from core.logger import log_error
 from core.trade_stats import trade_summary
 from datetime import datetime
+
+async def safe_send_message(bot: Bot, chat_id: str, text: str, parse_mode: str = "Markdown", max_retries: int = 3) -> bool:
+    """
+    Mengirim pesan ke Telegram dengan penanganan Flood Rate-Limit (HTTP 429) & Auto-Retry aman.
+    """
+    if not bot or not chat_id:
+        return False
+    for attempt in range(max_retries):
+        try:
+            await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+            # Beri jeda throttle kecil antar pesan agar aman dari rate limit Telegram (1 msg / sec)
+            await asyncio.sleep(0.3)
+            return True
+        except TelegramRetryAfter as e_flood:
+            wait_time = max(1, int(getattr(e_flood, 'retry_after', 3)))
+            print(f"[TELEGRAM RATE-LIMIT] Terkena flood limit. Menunggu {wait_time}s...")
+            await asyncio.sleep(wait_time)
+        except TelegramAPIError as e_api:
+            print(f"[TELEGRAM API ERROR] Attempt {attempt+1}/{max_retries}: {e_api}")
+            await asyncio.sleep(1)
+        except Exception as e_gen:
+            log_error("TELEGRAM_SEND_ERR", str(e_gen))
+            break
+    return False
 
 async def send_position_analysis_alert(bot: Bot, chat_id: str, data: dict):
     """
@@ -37,10 +63,7 @@ async def send_position_analysis_alert(bot: Bot, chat_id: str, data: dict):
         f"──────────────\n"
         f"📌 Keputusan: **HOLD** — Kondisi masih aman\n"
     )
-    try:
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
-    except Exception as e:
-        log_error("TELEGRAM_POSITION_ALERT", str(e))
+    await safe_send_message(bot, chat_id=chat_id, text=message, parse_mode="Markdown")
 
 async def send_early_close_notification(bot: Bot, chat_id: str, data: dict):
     """
@@ -86,11 +109,7 @@ async def send_early_close_notification(bot: Bot, chat_id: str, data: dict):
         f"💰 Total PNL Bersih: {net_pnl_icon} {net_pnl_hari_ini:+.4f} USDT\n"
         f"🎯 Win Rate Hari Ini: {win_rate_hari_ini:.1f}% ({summary['daily_wins']}W / {summary['daily_losses']}L)\n"
     )
-    try:
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
-    except Exception as e:
-        log_error("TELEGRAM_EARLY_CLOSE", str(e))
-
+    await safe_send_message(bot, chat_id=chat_id, text=message, parse_mode="Markdown")
 
 async def send_trade_notification(bot: Bot, chat_id: str, trade_data: dict):
     """
@@ -137,22 +156,14 @@ async def send_trade_notification(bot: Bot, chat_id: str, trade_data: dict):
         f"📊 **Metode / Setup:** `{method}`\n"
         f"🎯 **Signal Score:** `{score}` | 🧠 **Confidence:** `{confidence}`\n"
     )
-    try:
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
-    except Exception as e:
-        log_error("TELEGRAM_NOTIFY_TRADE", f"Gagal kirim notif trade ke {chat_id}: {e}")
-        print(f"Failed to send Telegram notification: {e}")
+    await safe_send_message(bot, chat_id=chat_id, text=message, parse_mode='Markdown')
 
 async def send_error_log(bot: Bot, chat_id: str, error: str):
     """
     Mengirim log error ke admin.
     """
     message = f"⚠️ **BOT ERROR:**\n`{error}`"
-    try:
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
-    except Exception as e:
-        log_error("TELEGRAM_NOTIFY_ERROR", f"Gagal kirim notif error ke {chat_id}: {e}")
-        print(f"Failed to send error log: {e}")
+    await safe_send_message(bot, chat_id=chat_id, text=message, parse_mode='Markdown')
 
 async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dict):
     """
@@ -199,6 +210,10 @@ async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dic
     net_pnl_icon = "🟢" if net_pnl_hari_ini >= 0 else "🔴"
     win_rate_hari_ini = (summary['daily_wins'] / summary['daily_total'] * 100) if summary['daily_total'] else 0
 
+    eval_section = ""
+    if ai_eval_summary:
+        eval_section = f"──────────────\n🧠 **EVALUASI INDIKATOR SAAT ENTRY:**\n{ai_eval_summary}\n"
+
     message = (
         f"{header_title}\n"
         f"──────────────\n"
@@ -209,6 +224,7 @@ async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dic
         f"💵 **Harga Entry:** `{entry_price}` ➔ **Harga Keluar:** `{price}`\n"
         f"⏱️ **Durasi Posisi:** `{duration}`\n"
         f"📈 **MFE (Max Profit):** `{mfe}` | 📉 **MAE (Max Drawdown):** `{mae}`\n"
+        f"{eval_section}"
         f"──────────────\n"
         f"🧠 **EVALUASI BRAIN AI (POST-TRADE LEARNING):**\n"
         f"• **Alasan Masuk Awal:** {alasan_masuk}\n"
@@ -220,9 +236,5 @@ async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dic
         f"💰 **Total PNL Bersih:** {net_pnl_icon} `{net_pnl_hari_ini:+.4f} USDT`\n"
         f"🎯 **Win Rate Hari Ini:** {win_rate_hari_ini:.1f}% ({summary['daily_wins']}W / {summary['daily_losses']}L)\n"
     )
-    try:
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
-    except Exception as e:
-        log_error("TELEGRAM_NOTIFY_TPSL", f"Gagal kirim notif TP/SL ke {chat_id}: {e}")
-        print(f"Failed to send TP/SL notification: {e}")
+    await safe_send_message(bot, chat_id=chat_id, text=message, parse_mode='Markdown')
 

@@ -69,6 +69,7 @@ def record_entry(
     alasan: str,
     margin_usdt: float = 0.0,
     leverage: int = 0,
+    exchange: str = "BINANCE",
 ) -> str:
     """
     Simpan snapshot kondisi indikator saat entry.
@@ -84,6 +85,7 @@ def record_entry(
         "entry_price": entry_price,
         "margin_usdt": margin_usdt,
         "leverage": leverage,
+        "exchange": exchange,
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "fingerprint": fp,
         "alasan": alasan,
@@ -94,14 +96,14 @@ def record_entry(
     _save(data)
 
     # Dual-write ke PostgreSQL (non-blocking)
-    _db_write_entry(entry_id, symbol, side, entry_price, fp, alasan, conditions)
+    _db_write_entry(entry_id, symbol, side, entry_price, fp, alasan, conditions, exchange)
 
     return entry_id
 
 
 def _db_write_entry(
     entry_id: str, symbol: str, side: str, entry_price: float,
-    fingerprint: str, alasan: str, conditions: dict
+    fingerprint: str, alasan: str, conditions: dict, exchange: str = "BINANCE"
 ) -> None:
     """Fire-and-forget: tulis pattern entry ke DB."""
     try:
@@ -109,11 +111,11 @@ def _db_write_entry(
         loop = asyncio.get_event_loop()
         if loop.is_running():
             asyncio.ensure_future(
-                db_record_entry(entry_id, symbol, side, entry_price, fingerprint, alasan, conditions)
+                db_record_entry(entry_id, symbol, side, entry_price, fingerprint, alasan, conditions, exchange)
             )
         else:
             loop.run_until_complete(
-                db_record_entry(entry_id, symbol, side, entry_price, fingerprint, alasan, conditions)
+                db_record_entry(entry_id, symbol, side, entry_price, fingerprint, alasan, conditions, exchange)
             )
     except Exception as exc:
         logger.warning(f"[DB] dual-write pattern entry gagal (non-fatal): {exc}")

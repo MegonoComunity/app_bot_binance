@@ -27,6 +27,7 @@ async def record_entry(
     fingerprint: str,
     alasan: str,
     conditions: dict,
+    exchange: str = "BINANCE",
 ) -> bool:
     """Simpan snapshot kondisi indikator saat entry trade."""
     try:
@@ -35,9 +36,11 @@ async def record_entry(
             await conn.execute(
                 """
                 INSERT INTO pattern_entries
-                    (entry_id, symbol, side, entry_price, fingerprint, alasan, conditions)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (entry_id) DO NOTHING
+                    (entry_id, symbol, side, entry_price, fingerprint, alasan, conditions, exchange)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (entry_id) DO UPDATE
+                    SET exchange = EXCLUDED.exchange,
+                        conditions = EXCLUDED.conditions
                 """,
                 entry_id,
                 symbol,
@@ -46,6 +49,7 @@ async def record_entry(
                 fingerprint,
                 alasan,
                 json.dumps(conditions, ensure_ascii=False),
+                exchange,
             )
         return True
     except Exception as exc:
