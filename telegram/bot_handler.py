@@ -143,7 +143,23 @@ async def status_handler(message: types.Message):
             pnl = float(p['unrealizedProfit'])
             pnl_percent = calculate_position_pnl_percent(p)
             entry = float(p['entryPrice'])
-            mark = float(p.get('markPrice', entry))
+            
+            # Hitung harga mark saat ini secara akurat (markPrice tidak dikembalikan oleh endpoint futures_account)
+            mark = float(p.get('markPrice', 0) or 0)
+            if mark <= 0 and amt != 0 and entry > 0:
+                mark = entry + (pnl / amt)
+            elif mark <= 0:
+                mark = entry
+                
+            # Update MFE (Max Profit Teramati) dan MAE (Max Drawdown) secara real-time
+            meta = bot_state.setdefault("active_trade_meta", {}).get(symbol)
+            if meta is not None:
+                meta["mfe"] = max(float(meta.get("mfe", 0.0)), pnl)
+                meta["mae"] = min(float(meta.get("mae", 0.0)), pnl)
+                mfe_val = float(meta.get("mfe", 0.0))
+            else:
+                mfe_val = max(0.0, pnl)
+
             leverage = float(p.get('leverage', 0) or bot_config.leverage)
             margin_target = abs(amt) * entry / leverage if leverage > 0 else 0
             price_tp_move = (bot_config.tp_percent / 100) / leverage if leverage > 0 else 0
@@ -171,11 +187,12 @@ async def status_handler(message: types.Message):
             mark_str = f"{mark:.8f}".rstrip('0').rstrip('.')
             tp_str = f"{tp_price:.8f}".rstrip('0').rstrip('.')
             sl_str = f"{sl_price:.8f}".rstrip('0').rstrip('.')
+            mfe_str = f"+{mfe_val:.2f} USDT" if mfe_val > 0 else "0.00 USDT"
 
             p_info = (
                 f"🔸 **{symbol}**\n"
                 f"   Margin target: `{margin_target:.4f} USDT`\n"
-                f"   PNL berjalan: `{pnl:+.2f} USDT ({pnl_percent:+.2f}%)`\n"
+                f"   PNL berjalan: `{pnl:+.2f} USDT ({pnl_percent:+.2f}%)` | MFE: `{mfe_str}`\n"
                 f"   Harga entry: `{entry_str}`\n"
                 f"   Harga sekarang: `{mark_str}`\n"
                 f"   Harga target TP: `{tp_str}`\n"

@@ -750,6 +750,17 @@ async def user_data_stream_loop():
                             margin_val = float(meta.get("margin_usdt", 0) or 0)
                             mfe_val = float(meta.get("mfe", 0) or 0)
                             mae_val = float(meta.get("mae", 0) or 0)
+
+                            # Pastikan MFE mencatat puncak profit minimal sebesar realized PnL jika trade berakhir profit
+                            if realized_pnl > 0:
+                                mfe_val = max(mfe_val, realized_pnl)
+                            # Pastikan MAE mencatat drawdown minimal sebesar realized PnL jika trade berakhir minus
+                            if realized_pnl < 0:
+                                mae_val = min(mae_val, realized_pnl)
+
+                            meta["mfe"] = mfe_val
+                            meta["mae"] = mae_val
+
                             mfe_pct = (mfe_val / margin_val * 100) if margin_val > 0 else 0.0
                             mae_pct = (abs(mae_val) / margin_val * 100) if margin_val > 0 else 0.0
 
@@ -867,6 +878,14 @@ async def profitable_position_monitor_loop():
                     profit = float(position.get("unrealizedProfit", 0))
                     entry_price = float(position.get("entryPrice", 0))
                     symbol = position.get("symbol")
+                    
+                    # Update MFE / MAE secara real-time pada loop monitor posisi
+                    if amount != 0:
+                        meta = bot_state.setdefault("active_trade_meta", {}).get(symbol)
+                        if meta is not None:
+                            meta["mfe"] = max(float(meta.get("mfe", 0.0)), profit)
+                            meta["mae"] = min(float(meta.get("mae", 0.0)), profit)
+
                     initial_margin = abs(amount) * entry_price / bot_config.leverage if entry_price > 0 else 0
                     roi_percent = (profit / initial_margin * 100) if initial_margin > 0 else 0
                     reached_take_profit = roi_percent >= bot_config.tp_percent

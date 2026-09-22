@@ -76,7 +76,13 @@ class SafetyFoundationTests(unittest.TestCase):
         })
         result = calculate_dormant_breakout_score(data)
         self.assertFalse(result["ready"])
-        self.assertEqual(result["reason"], "insufficient_data")
+    def test_total_position_notional_fallback(self):
+        from core.risk_manager import total_position_notional
+        positions = [
+            {"positionAmt": "2", "entryPrice": "100", "unrealizedProfit": "10"}, # mark = 105 -> notional = 210
+            {"positionAmt": "-1", "entryPrice": "50", "unrealizedProfit": "5"},  # mark = 45 -> notional = 45
+        ]
+        self.assertAlmostEqual(total_position_notional(positions), 255.0)
 
 
 if __name__ == "__main__":

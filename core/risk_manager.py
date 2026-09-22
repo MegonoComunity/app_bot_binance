@@ -61,7 +61,19 @@ def daily_loss_limit_reached(realized_pnl: float, equity: float, limit_percent: 
 
 
 def total_position_notional(positions: list[dict]) -> float:
-    return sum(abs(float(p.get("positionAmt", 0))) * float(p.get("markPrice", 0)) for p in positions)
+    total = 0.0
+    for p in positions:
+        amt = abs(float(p.get("positionAmt", 0)))
+        if amt == 0:
+            continue
+        mark = float(p.get("markPrice", 0) or 0)
+        if mark <= 0:
+            entry = float(p.get("entryPrice", 0) or 0)
+            pnl = float(p.get("unrealizedProfit", 0) or 0)
+            raw_amt = float(p.get("positionAmt", 0))
+            mark = (entry + (pnl / raw_amt)) if raw_amt != 0 and entry > 0 else entry
+        total += amt * mark
+    return total
 
 
 def evaluate_time_based_exit(
