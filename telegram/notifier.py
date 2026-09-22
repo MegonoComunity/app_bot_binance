@@ -118,9 +118,11 @@ async def send_trade_notification(bot: Bot, chat_id: str, trade_data: dict):
     ai_eval = trade_data.get("ai_evaluation", trade_data.get("syarat_2", "Sinyal Multi-Indikator"))
     method = trade_data.get("method", trade_data.get("syarat_2", "Multi-Indicator Confluence"))
 
+    action_text = "BUY/LONG" if direction in {"LONG", "BUY"} else "SELL/SHORT"
+
     message = (
         f"🚨 **AUTO-TRADE EXECUTED** 🚨\n"
-        f"**{direction_icon} BUY/LONG Coin : `{symbol}`**\n"
+        f"**{direction_icon} {action_text} Coin : `{symbol}`**\n"
         f"Harga Entry : `{entry_price}`\n"
         f"Time Frame  : `{tf}` | Tanggal: `{dt} WIB`\n"
         f"🔧 **Trade Setup:** Margin: `{margin_usdt:.2f} USDT` | Leverage: `{leverage}x` | Target: `{tp_sl_info}`\n"

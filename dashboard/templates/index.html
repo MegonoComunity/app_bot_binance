@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CryptoBot Analytics | Pro Terminal</title>
+  <title>CryptoBot Analytics | Pro Terminal & AI Brain</title>
   <!-- Google Fonts: Outfit & Inter -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,19 +15,20 @@
 
   <style>
     :root {
-      --bg-dark: #090d16;
-      --bg-card: rgba(18, 24, 38, 0.75);
-      --bg-card-hover: rgba(26, 35, 54, 0.85);
+      --bg-dark: #070a12;
+      --bg-card: rgba(15, 22, 36, 0.75);
+      --bg-card-hover: rgba(22, 32, 52, 0.88);
       --border-color: rgba(255, 255, 255, 0.08);
-      --border-glow: rgba(0, 242, 254, 0.2);
+      --border-glow: rgba(0, 242, 254, 0.25);
       
       --accent-cyan: #00f2fe;
       --accent-blue: #4facfe;
       --accent-emerald: #00e676;
       --accent-rose: #ff3366;
       --accent-amber: #ffb300;
+      --accent-purple: #9d4edd;
       
-      --text-main: #f1f5f9;
+      --text-main: #f8fafc;
       --text-muted: #94a3b8;
       --text-dim: #64748b;
     }
@@ -46,11 +47,12 @@
     body {
       background-color: var(--bg-dark);
       background-image: 
-        radial-gradient(circle at 10% 15%, rgba(0, 242, 254, 0.05) 0%, transparent 40%),
-        radial-gradient(circle at 90% 85%, rgba(79, 172, 254, 0.05) 0%, transparent 40%);
+        radial-gradient(circle at 10% 15%, rgba(0, 242, 254, 0.06) 0%, transparent 45%),
+        radial-gradient(circle at 90% 85%, rgba(79, 172, 254, 0.06) 0%, transparent 45%),
+        radial-gradient(circle at 50% 50%, rgba(157, 78, 221, 0.03) 0%, transparent 50%);
       color: var(--text-main);
       min-height: 100vh;
-      padding-bottom: 40px;
+      padding-bottom: 50px;
     }
 
     /* Scrollbar */
@@ -75,8 +77,8 @@
       justify-content: space-between;
       align-items: center;
       padding: 16px 32px;
-      background: rgba(11, 15, 25, 0.8);
-      backdrop-filter: blur(16px);
+      background: rgba(10, 15, 26, 0.85);
+      backdrop-filter: blur(20px);
       border-bottom: 1px solid var(--border-color);
       position: sticky;
       top: 0;
@@ -89,18 +91,18 @@
       gap: 12px;
     }
     .brand-logo {
-      width: 36px;
-      height: 36px;
+      width: 38px;
+      height: 38px;
       background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
       border-radius: 10px;
       display: flex;
       align-items: center;
       justify-content: center;
       color: #000;
-      box-shadow: 0 0 20px rgba(0, 242, 254, 0.4);
+      box-shadow: 0 0 24px rgba(0, 242, 254, 0.4);
     }
     .brand-name {
-      font-size: 1.25rem;
+      font-size: 1.3rem;
       font-weight: 700;
       letter-spacing: -0.5px;
       background: linear-gradient(90deg, #fff, #94a3b8);
@@ -111,7 +113,7 @@
     .nav-status {
       display: flex;
       align-items: center;
-      gap: 20px;
+      gap: 16px;
     }
     .badge-live {
       display: flex;
@@ -151,18 +153,19 @@
       gap: 8px;
       font-size: 0.85rem;
       font-weight: 500;
-      transition: all 0.2s;
+      transition: all 0.2s ease;
     }
     .btn-refresh:hover {
       background: var(--bg-card-hover);
       border-color: var(--accent-cyan);
+      box-shadow: 0 0 12px var(--border-glow);
     }
 
     /* Container */
     .container {
-      max-width: 1400px;
-      margin: 24px auto;
-      padding: 0 24px;
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 24px 24px 0 24px;
       display: flex;
       flex-direction: column;
       gap: 24px;
@@ -171,251 +174,287 @@
     /* Metrics Grid */
     .metrics-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
       gap: 16px;
     }
+
     .metric-card {
       background: var(--bg-card);
-      backdrop-filter: blur(12px);
       border: 1px solid var(--border-color);
       border-radius: 14px;
-      padding: 20px;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
       position: relative;
       overflow: hidden;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: transform 0.2s ease, border-color 0.2s ease;
+      backdrop-filter: blur(12px);
     }
     .metric-card:hover {
       transform: translateY(-2px);
-      border-color: rgba(255, 255, 255, 0.15);
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+      border-color: rgba(255, 255, 255, 0.16);
+      background: var(--bg-card-hover);
     }
     .metric-card::before {
       content: '';
       position: absolute;
-      top: 0; left: 0; right: 0;
+      top: 0;
+      left: 0;
+      right: 0;
       height: 2px;
-      background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
-      opacity: 0;
-      transition: opacity 0.3s;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
     }
-    .metric-card:hover::before {
-      opacity: 1;
-    }
+
     .metric-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 12px;
       color: var(--text-muted);
-      font-size: 0.85rem;
-      font-weight: 500;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
     .metric-icon {
       width: 32px;
       height: 32px;
       border-radius: 8px;
+      background: rgba(255, 255, 255, 0.04);
       display: flex;
       align-items: center;
       justify-content: center;
-      background: rgba(255, 255, 255, 0.05);
     }
     .metric-value {
-      font-size: 1.75rem;
-      font-weight: 700;
-      letter-spacing: -0.5px;
+      font-size: 1.55rem;
+      font-weight: 800;
       font-family: 'Outfit', sans-serif;
+      letter-spacing: -0.5px;
     }
     .metric-sub {
-      margin-top: 6px;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
-    .val-positive { color: var(--accent-emerald); }
-    .val-negative { color: var(--accent-rose); }
-    .val-neutral { color: var(--accent-cyan); }
 
-    /* Main Chart Section */
-    .chart-section {
+    .val-positive { color: var(--accent-emerald) !important; }
+    .val-negative { color: var(--accent-rose) !important; }
+    .val-neutral  { color: var(--text-main) !important; }
+
+    /* Active Positions Section */
+    .active-positions-section {
       background: var(--bg-card);
-      backdrop-filter: blur(12px);
       border: 1px solid var(--border-color);
       border-radius: 16px;
-      padding: 24px;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      backdrop-filter: blur(14px);
+    }
+    .section-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .positions-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 14px;
+    }
+    .position-card {
+      background: rgba(10, 15, 26, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: border-color 0.2s ease;
+    }
+    .position-card:hover {
+      border-color: rgba(0, 242, 254, 0.3);
+    }
+    .pos-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .pos-symbol {
+      font-size: 1.1rem;
+      font-weight: 800;
+      font-family: 'Outfit', sans-serif;
+    }
+    .pos-details-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      font-size: 0.8rem;
+    }
+    .pos-label { color: var(--text-dim); }
+    .pos-val { font-weight: 600; text-align: right; }
+
+    /* Chart Section */
+    .chart-section {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      backdrop-filter: blur(14px);
     }
     .chart-header {
       display: flex;
-      flex-wrap: wrap;
       justify-content: space-between;
       align-items: center;
-      gap: 16px;
-      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 12px;
     }
     .chart-title-area {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 12px;
     }
     .symbol-select {
-      background: #161f30;
+      background: #111827;
       border: 1px solid var(--border-color);
-      color: var(--text-main);
+      color: #fff;
       padding: 8px 14px;
       border-radius: 8px;
       font-size: 0.95rem;
-      font-weight: 600;
+      font-weight: 700;
       outline: none;
       cursor: pointer;
     }
-    .symbol-select:focus {
-      border-color: var(--accent-cyan);
-    }
     .tf-tabs {
       display: flex;
-      background: #111827;
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.04);
       padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
       gap: 4px;
     }
     .tf-btn {
       background: transparent;
       border: none;
       color: var(--text-muted);
-      padding: 6px 14px;
+      padding: 6px 12px;
       border-radius: 6px;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.2s ease;
     }
-    .tf-btn.active {
-      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
-      color: #000;
-      box-shadow: 0 0 10px rgba(0, 242, 254, 0.3);
+    .tf-btn.active, .tf-btn:hover {
+      background: rgba(0, 242, 254, 0.15);
+      color: var(--accent-cyan);
     }
     #tv-chart-container {
       width: 100%;
       height: 480px;
-      position: relative;
+      border-radius: 8px;
+      overflow: hidden;
     }
 
-    /* Tabs Layout */
+    /* Tab Section */
     .tab-section {
       background: var(--bg-card);
-      backdrop-filter: blur(12px);
       border: 1px solid var(--border-color);
       border-radius: 16px;
       padding: 24px;
+      backdrop-filter: blur(14px);
     }
     .nav-tabs {
       display: flex;
-      gap: 12px;
+      gap: 8px;
       border-bottom: 1px solid var(--border-color);
       padding-bottom: 14px;
       margin-bottom: 20px;
+      overflow-x: auto;
     }
     .nav-tab-btn {
       background: transparent;
-      border: none;
+      border: 1px solid transparent;
       color: var(--text-muted);
-      font-size: 0.95rem;
-      font-weight: 600;
-      padding: 8px 16px;
+      padding: 8px 18px;
       border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
       cursor: pointer;
       display: flex;
       align-items: center;
       gap: 8px;
-      transition: all 0.2s;
+      transition: all 0.2s ease;
+      white-space: nowrap;
     }
     .nav-tab-btn:hover {
       color: var(--text-main);
-      background: rgba(255, 255, 255, 0.05);
+      background: rgba(255, 255, 255, 0.04);
     }
     .nav-tab-btn.active {
-      color: var(--accent-cyan);
       background: rgba(0, 242, 254, 0.1);
-      border: 1px solid rgba(0, 242, 254, 0.2);
+      border-color: rgba(0, 242, 254, 0.3);
+      color: var(--accent-cyan);
     }
 
     /* Tables */
     .table-responsive {
       overflow-x: auto;
+      border-radius: 10px;
     }
     table {
       width: 100%;
       border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    thead th {
       text-align: left;
-      font-size: 0.875rem;
-    }
-    th {
-      background: rgba(255, 255, 255, 0.03);
-      color: var(--text-muted);
-      font-weight: 600;
-      padding: 14px 16px;
-      border-bottom: 1px solid var(--border-color);
-      text-transform: uppercase;
+      padding: 12px 14px;
+      color: var(--text-dim);
       font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
       letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border-color);
+      background: rgba(10, 15, 26, 0.5);
     }
-    td {
-      padding: 14px 16px;
+    tbody td {
+      padding: 14px 14px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.04);
       color: var(--text-main);
     }
-    tr:hover td {
+    tbody tr:hover {
       background: rgba(255, 255, 255, 0.02);
     }
 
-    /* Badges */
     .badge {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
       padding: 4px 10px;
       border-radius: 6px;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 700;
-      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
-    .badge-approved {
-      background: rgba(0, 230, 118, 0.12);
-      color: var(--accent-emerald);
-      border: 1px solid rgba(0, 230, 118, 0.3);
-    }
-    .badge-blacklisted {
-      background: rgba(255, 51, 102, 0.12);
-      color: var(--accent-rose);
-      border: 1px solid rgba(255, 51, 102, 0.3);
-    }
-    .badge-learning {
-      background: rgba(255, 179, 0, 0.12);
-      color: var(--accent-amber);
-      border: 1px solid rgba(255, 179, 0, 0.3);
-    }
-    .badge-long {
-      background: rgba(0, 230, 118, 0.15);
-      color: var(--accent-emerald);
-    }
-    .badge-short {
-      background: rgba(255, 51, 102, 0.15);
-      color: var(--accent-rose);
-    }
-
-    .fingerprint-text {
-      font-family: monospace;
-      font-size: 0.8rem;
-      background: rgba(0, 0, 0, 0.3);
-      padding: 4px 8px;
-      border-radius: 4px;
-      color: #93c5fd;
-      border: 1px solid rgba(255, 255, 255, 0.05);
-    }
+    .badge-approved { background: rgba(0, 230, 118, 0.12); color: var(--accent-emerald); border: 1px solid rgba(0, 230, 118, 0.3); }
+    .badge-blacklisted { background: rgba(255, 51, 102, 0.12); color: var(--accent-rose); border: 1px solid rgba(255, 51, 102, 0.3); }
+    .badge-learning { background: rgba(255, 179, 0, 0.12); color: var(--accent-amber); border: 1px solid rgba(255, 179, 0, 0.3); }
+    .badge-long { background: rgba(0, 230, 118, 0.15); color: var(--accent-emerald); border: 1px solid rgba(0, 230, 118, 0.4); }
+    .badge-short { background: rgba(255, 51, 102, 0.15); color: var(--accent-rose); border: 1px solid rgba(255, 51, 102, 0.4); }
 
     .progress-bar-container {
       width: 100px;
       height: 6px;
-      background: rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.08);
       border-radius: 3px;
       overflow: hidden;
       margin-top: 4px;
@@ -424,19 +463,28 @@
       height: 100%;
       border-radius: 3px;
     }
+    .fingerprint-text {
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: #93c5fd;
+      background: rgba(147, 197, 253, 0.06);
+      padding: 4px 8px;
+      border-radius: 4px;
+      display: inline-block;
+    }
   </style>
 </head>
 <body>
 
-  <!-- Navbar -->
+  <!-- Top Navigation Header -->
   <header class="navbar">
     <div class="brand">
       <div class="brand-logo">
-        <i data-lucide="trending-up" style="width: 20px; height: 20px;"></i>
+        <i data-lucide="cpu" style="width: 20px; height: 20px;"></i>
       </div>
       <div>
-        <div class="brand-name">CryptoBot Pro Analytics</div>
-        <div style="font-size: 0.75rem; color: var(--text-dim);">Pattern Memory & 20-Day OHLCV Engine</div>
+        <div class="brand-name">CRYPTO-BOT AI ANALYTICS</div>
+        <div style="font-size: 0.75rem; color: var(--text-dim);">Deep Learning & Algorithmic Futures Engine</div>
       </div>
     </div>
 
@@ -455,54 +503,95 @@
   <!-- Main Container -->
   <main class="container">
 
-    <!-- Top Metrics Grid -->
+    <!-- Top 6 Hero Metrics Grid -->
     <section class="metrics-grid">
-      <!-- Total Realized Net PnL -->
+      <!-- 1. Daily Realized Net PnL -->
       <div class="metric-card">
         <div class="metric-header">
-          <span>Net Realized PnL</span>
+          <span>PnL Harian (Realized)</span>
           <div class="metric-icon" style="color: var(--accent-cyan);">
+            <i data-lucide="calendar" style="width: 18px;"></i>
+          </div>
+        </div>
+        <div class="metric-value" id="val-daily-pnl">$0.00</div>
+        <div class="metric-sub" id="sub-daily-pnl">Gross: +$0.00 | -$0.00</div>
+      </div>
+
+      <!-- 2. Floating Live Unrealized PnL -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span>Floating PnL Live</span>
+          <div class="metric-icon" style="color: var(--accent-emerald);">
+            <i data-lucide="trending-up" style="width: 18px;"></i>
+          </div>
+        </div>
+        <div class="metric-value" id="val-floating-pnl">$0.00</div>
+        <div class="metric-sub" id="sub-floating-pnl">Posisi Aktif Berjalan</div>
+      </div>
+
+      <!-- 3. Daily Win Rate -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span>Winrate Harian</span>
+          <div class="metric-icon" style="color: var(--accent-amber);">
+            <i data-lucide="target" style="width: 18px;"></i>
+          </div>
+        </div>
+        <div class="metric-value" id="val-daily-wr">0.0%</div>
+        <div class="metric-sub" id="sub-daily-wr">0 Menang / 0 Kalah</div>
+      </div>
+
+      <!-- 4. Profit Factor (Daily & All-Time) -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span>Profit Factor</span>
+          <div class="metric-icon" style="color: var(--accent-purple);">
+            <i data-lucide="bar-chart-3" style="width: 18px;"></i>
+          </div>
+        </div>
+        <div class="metric-value" id="val-profit-factor">0.00</div>
+        <div class="metric-sub" id="sub-profit-factor">All-Time PF: 0.00</div>
+      </div>
+
+      <!-- 5. All-Time Net Realized PnL -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span>All-Time Net PnL</span>
+          <div class="metric-icon" style="color: var(--accent-blue);">
             <i data-lucide="dollar-sign" style="width: 18px;"></i>
           </div>
         </div>
         <div class="metric-value" id="val-net-pnl">$0.00</div>
-        <div class="metric-sub" id="sub-pnl">Total Profit / Loss Bersih</div>
+        <div class="metric-sub" id="sub-alltime-pnl">Total All-Time WR: 0.0%</div>
       </div>
 
-      <!-- Win Rate % -->
+      <!-- 6. Active Positions Count & Virtual Stats -->
       <div class="metric-card">
         <div class="metric-header">
-          <span>Win Rate Akurasi</span>
-          <div class="metric-icon" style="color: var(--accent-emerald);">
-            <i data-lucide="target" style="width: 18px;"></i>
-          </div>
-        </div>
-        <div class="metric-value" id="val-win-rate">0.0%</div>
-        <div class="metric-sub" id="sub-win-rate">0 Menang / 0 Kalah</div>
-      </div>
-
-      <!-- Total Trades & AI Sinyal -->
-      <div class="metric-card">
-        <div class="metric-header">
-          <span>Total Eksekusi & Sinyal</span>
-          <div class="metric-icon" style="color: var(--accent-amber);">
-            <i data-lucide="activity" style="width: 18px;"></i>
-          </div>
-        </div>
-        <div class="metric-value" id="val-total-trades">0</div>
-        <div class="metric-sub" id="sub-virtual-trades">+0 Virtual TP Signals</div>
-      </div>
-
-      <!-- Active Position & Risk -->
-      <div class="metric-card">
-        <div class="metric-header">
-          <span>Posisi Terbuka Aktif</span>
-          <div class="metric-icon" style="color: var(--accent-blue);">
+          <span>Posisi Aktif & Virtual</span>
+          <div class="metric-icon" style="color: var(--accent-cyan);">
             <i data-lucide="layers" style="width: 18px;"></i>
           </div>
         </div>
-        <div class="metric-value" id="val-active-positions">0</div>
-        <div class="metric-sub" id="sub-active-positions">Risk: Auto-Close 2h(-5%) / 4h(+20%)</div>
+        <div class="metric-value" id="val-active-positions">0 / 3</div>
+        <div class="metric-sub" id="sub-virtual-trades">+0 Virtual Paper Signals</div>
+      </div>
+    </section>
+
+    <!-- Real-time Active Open Positions Section -->
+    <section class="active-positions-section">
+      <div class="section-title">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <i data-lucide="radar" style="color: var(--accent-cyan); width: 20px;"></i>
+          <span>Posisi Terbuka Aktif Real-Time (Live Positions)</span>
+        </div>
+        <span id="active-pos-count-badge" class="badge badge-approved">0 POSISI TERBUKA</span>
+      </div>
+
+      <div id="active-positions-container" class="positions-grid">
+        <div style="grid-column: 1 / -1; text-align: center; color: var(--text-dim); padding: 20px;">
+          Tidak ada posisi aktif saat ini. Bot sedang memindai peluang teknikal...
+        </div>
       </div>
     </section>
 
@@ -516,15 +605,15 @@
             <option value="SOLUSDT">SOLUSDT</option>
           </select>
           <div style="font-size: 0.85rem; color: var(--text-dim);">
-            📊 Data 20 Hari OHLCV Tersimpan di PostgreSQL
+            📊 Data OHLCV Tersinkronisasi PostgreSQL & Binance
           </div>
         </div>
 
         <div class="tf-tabs">
           <button class="tf-btn" data-tf="5m" onclick="changeTimeframe('5m')">5m</button>
+          <button class="tf-btn" data-tf="15m" onclick="changeTimeframe('15m')">15m</button>
           <button class="tf-btn" data-tf="1h" onclick="changeTimeframe('1h')">1h</button>
           <button class="tf-btn active" data-tf="1d" onclick="changeTimeframe('1d')">1D (20D)</button>
-          <button class="tf-btn" data-tf="1w" onclick="changeTimeframe('1w')">1W</button>
         </div>
       </div>
 
@@ -532,16 +621,20 @@
       <div id="tv-chart-container"></div>
     </section>
 
-    <!-- Navigation Tabs Section: Patterns, Trades, Active Positions -->
+    <!-- Navigation Tabs Section: Strategies, Pattern Intelligence, Trades, Virtual Signals -->
     <section class="tab-section">
       <div class="nav-tabs">
-        <button class="nav-tab-btn active" onclick="switchTab('patterns-tab', this)">
+        <button class="nav-tab-btn active" onclick="switchTab('strategies-tab', this)">
+          <i data-lucide="layers" style="width: 16px;"></i>
+          Active Strategi & Performa NET
+        </button>
+        <button class="nav-tab-btn" onclick="switchTab('patterns-tab', this)">
           <i data-lucide="brain" style="width: 16px;"></i>
-          AI Pattern Intelligence
+          AI Pattern Fingerprint Intelligence
         </button>
         <button class="nav-tab-btn" onclick="switchTab('trades-tab', this)">
           <i data-lucide="history" style="width: 16px;"></i>
-          Riwayat Transaksi Real
+          Riwayat Transaksi Real (Closed Trades)
         </button>
         <button class="nav-tab-btn" onclick="switchTab('virtual-tab', this)">
           <i data-lucide="sparkles" style="width: 16px;"></i>
@@ -549,8 +642,28 @@
         </button>
       </div>
 
-      <!-- Tab 1: Pattern Intelligence -->
-      <div id="patterns-tab" class="tab-content">
+      <!-- Tab 1: Active Strategies & AI Breakdown -->
+      <div id="strategies-tab" class="tab-content">
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Nama Strategi / Setup Pola</th>
+                <th>Status AI Learner</th>
+                <th>Win / Loss</th>
+                <th>Win Rate (%)</th>
+                <th>Akurasi Evaluasi</th>
+              </tr>
+            </thead>
+            <tbody id="strategies-table-body">
+              <tr><td colspan="5" style="text-align: center; color: var(--text-dim);">Memuat data strategi...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tab 2: Pattern Fingerprint Intelligence -->
+      <div id="patterns-tab" class="tab-content" style="display: none;">
         <div class="table-responsive">
           <table>
             <thead>
@@ -570,7 +683,7 @@
         </div>
       </div>
 
-      <!-- Tab 2: Real Trades History -->
+      <!-- Tab 3: Real Trades History -->
       <div id="trades-tab" class="tab-content" style="display: none;">
         <div class="table-responsive">
           <table>
@@ -581,9 +694,9 @@
                 <th>Posisi</th>
                 <th>Entry / Exit</th>
                 <th>Gross PnL</th>
-                <th>Komisi</th>
-                <th>Funding Fee</th>
+                <th>Komisi & Funding</th>
                 <th>Net PnL</th>
+                <th>MFE / MAE</th>
                 <th>Durasi</th>
                 <th>Hasil</th>
               </tr>
@@ -595,7 +708,7 @@
         </div>
       </div>
 
-      <!-- Tab 3: Virtual Signals -->
+      <!-- Tab 4: Virtual Signals -->
       <div id="virtual-tab" class="tab-content" style="display: none;">
         <div class="table-responsive">
           <table>
@@ -605,7 +718,7 @@
                 <th>Koin</th>
                 <th>Posisi</th>
                 <th>Harga Entry</th>
-                <th>Target TP</th>
+                <th>Target TP/SL</th>
                 <th>Alasan Setup Indikator</th>
                 <th>Status</th>
               </tr>
@@ -698,7 +811,7 @@
       }
     }
 
-    // Ambil data Candlestick OHLCV 20 hari
+    // Ambil data Candlestick OHLCV
     async function loadCandles() {
       const symbol = document.getElementById('select-symbol').value;
       if (!symbol) return;
@@ -729,33 +842,163 @@
       loadCandles();
     }
 
-    // Fetch Overview Metrics
+    // Format currency helper
+    function fmtCurrency(val) {
+      const num = Number(val) || 0;
+      return (num >= 0 ? '+$' : '-$') + Math.abs(num).toFixed(2);
+    }
+
+    // Fetch Overview Metrics & Live Positions
     async function loadOverview() {
       try {
         const res = await fetch('/api/overview');
         const data = await res.json();
         const s = data.trade_summary;
 
-        // PnL
+        // 1. PnL Harian (Realized)
+        const dailyPnl = s.daily_net_pnl || 0;
+        const dailyPnlEl = document.getElementById('val-daily-pnl');
+        dailyPnlEl.textContent = fmtCurrency(dailyPnl);
+        dailyPnlEl.className = 'metric-value ' + (dailyPnl >= 0 ? 'val-positive' : 'val-negative');
+        document.getElementById('sub-daily-pnl').textContent = `Gross: +$${(s.daily_gross_profit || 0).toFixed(2)} | -$${(s.daily_gross_loss || 0).toFixed(2)}`;
+
+        // 2. Floating Live Unrealized PnL
+        const floatPnl = data.floating_pnl || 0;
+        const floatPnlEl = document.getElementById('val-floating-pnl');
+        floatPnlEl.textContent = fmtCurrency(floatPnl);
+        floatPnlEl.className = 'metric-value ' + (floatPnl >= 0 ? 'val-positive' : 'val-negative');
+        document.getElementById('sub-floating-pnl').textContent = `${data.active_positions.length} Posisi Berjalan`;
+
+        // 3. Winrate Harian
+        const dailyWr = s.daily_win_rate || (s.daily_total ? (s.daily_wins / s.daily_total * 100) : 0);
+        document.getElementById('val-daily-wr').textContent = dailyWr.toFixed(1) + '%';
+        document.getElementById('sub-daily-wr').textContent = `${s.daily_wins || 0}W / ${s.daily_losses || 0}L (${s.daily_total || 0} Total)`;
+
+        // 4. Profit Factor
+        const dailyPf = s.daily_profit_factor || 0;
+        const alltimePf = s.profit_factor || 0;
+        document.getElementById('val-profit-factor').textContent = (dailyPf > 0 ? dailyPf.toFixed(2) : (alltimePf > 0 ? alltimePf.toFixed(2) : '1.00'));
+        document.getElementById('sub-profit-factor').textContent = `All-Time PF: ${alltimePf.toFixed(2)}`;
+
+        // 5. All-Time Net PnL
         const netPnl = s.net_pnl || 0;
         const pnlEl = document.getElementById('val-net-pnl');
-        pnlEl.textContent = (netPnl >= 0 ? '+$' : '-$') + Math.abs(netPnl).toFixed(2);
+        pnlEl.textContent = fmtCurrency(netPnl);
         pnlEl.className = 'metric-value ' + (netPnl >= 0 ? 'val-positive' : 'val-negative');
+        document.getElementById('sub-alltime-pnl').textContent = `All-Time WR: ${(s.win_rate || 0).toFixed(1)}% (${s.total || 0} Trades)`;
 
-        // Win Rate
-        const wrEl = document.getElementById('val-win-rate');
-        wrEl.textContent = (s.win_rate || 0).toFixed(1) + '%';
-        document.getElementById('sub-win-rate').textContent = `${s.wins || 0} Menang / ${s.losses || 0} Kalah`;
+        // 6. Active Positions Count
+        document.getElementById('val-active-positions').textContent = `${data.active_positions.length} / 3`;
+        document.getElementById('sub-virtual-trades').textContent = `+${data.virtual_signals_count || 0} Virtual Sinyal`;
 
-        // Total Trades
-        document.getElementById('val-total-trades').textContent = s.total || 0;
-        document.getElementById('sub-virtual-trades').textContent = `+${data.virtual_signals_count || 0} Virtual Sinyal Sukses`;
+        // Render Active Positions Cards
+        renderActivePositions(data.active_positions);
 
-        // Active positions
-        document.getElementById('val-active-positions').textContent = data.active_positions.length;
+        // Render Active Strategies
+        renderStrategies(data.strategies);
+
       } catch (e) {
         console.error('Error load overview:', e);
       }
+    }
+
+    // Render Active Live Positions
+    function renderActivePositions(positions) {
+      const container = document.getElementById('active-positions-container');
+      const badge = document.getElementById('active-pos-count-badge');
+      
+      if (!positions || positions.length === 0) {
+        badge.textContent = '0 POSISI TERBUKA';
+        badge.className = 'badge badge-learning';
+        container.innerHTML = `
+          <div style="grid-column: 1 / -1; text-align: center; color: var(--text-dim); padding: 24px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+            🛡️ Tidak ada posisi terbuka saat ini. Scanner bot aktif memantau market untuk setup probabilitas tinggi.
+          </div>
+        `;
+        return;
+      }
+
+      badge.textContent = `${positions.length} POSISI TERBUKA`;
+      badge.className = 'badge badge-approved';
+      container.innerHTML = '';
+
+      positions.forEach(pos => {
+        const isLong = pos.side === 'LONG';
+        const pnl = pos.unrealized_pnl || 0;
+        const pnlPct = pos.unrealized_pnl_pct || 0;
+        const isProfit = pnl >= 0;
+
+        const card = document.createElement('div');
+        card.className = 'position-card';
+        card.innerHTML = `
+          <div class="pos-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="pos-symbol">${pos.symbol}</span>
+              <span class="badge ${isLong ? 'badge-long' : 'badge-short'}">${pos.side} ${pos.leverage}x</span>
+            </div>
+            <div class="${isProfit ? 'val-positive' : 'val-negative'}" style="font-size: 1.05rem; font-weight: 800;">
+              ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USDT (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)
+            </div>
+          </div>
+
+          <div class="pos-details-grid">
+            <div><span class="pos-label">Harga Entry:</span></div>
+            <div class="pos-val">${pos.entry_price ? pos.entry_price.toFixed(4) : '-'}</div>
+
+            <div><span class="pos-label">Harga Sekarang:</span></div>
+            <div class="pos-val" style="color: var(--accent-cyan);">${pos.mark_price ? pos.mark_price.toFixed(4) : '-'}</div>
+
+            <div><span class="pos-label">Margin Alokasi:</span></div>
+            <div class="pos-val">${pos.margin_usdt ? pos.margin_usdt.toFixed(2) : '0.00'} USDT</div>
+
+            <div><span class="pos-label">MFE (Peak Profit):</span></div>
+            <div class="pos-val val-positive">+${(pos.mfe || 0).toFixed(2)} USDT</div>
+
+            <div><span class="pos-label">Durasi Hold:</span></div>
+            <div class="pos-val">${pos.duration_minutes || 0} menit</div>
+
+            <div><span class="pos-label">Metode Entry:</span></div>
+            <div class="pos-val" style="color: #93c5fd; font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+              ${pos.alasan || '-'}
+            </div>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    // Render Strategies Table
+    function renderStrategies(strategies) {
+      const tbody = document.getElementById('strategies-table-body');
+      tbody.innerHTML = '';
+
+      if (!strategies || strategies.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-dim);">Belum ada data strategi tersimpan.</td></tr>';
+        return;
+      }
+
+      strategies.forEach(st => {
+        const tr = document.createElement('tr');
+        const wr = st.win_rate || 0;
+        let badgeClass = 'badge-approved';
+        if (wr < 45) badgeClass = 'badge-blacklisted';
+        else if (wr < 60) badgeClass = 'badge-learning';
+
+        tr.innerHTML = `
+          <td><strong>${st.name}</strong></td>
+          <td><span class="badge ${badgeClass}">${st.status}</span></td>
+          <td>${st.wins}W / ${st.losses}L (${st.total}x)</td>
+          <td>
+            <strong style="color: ${wr >= 50 ? 'var(--accent-emerald)' : 'var(--accent-rose)'};">${wr.toFixed(1)}%</strong>
+          </td>
+          <td>
+            <div class="progress-bar-container" style="width: 140px;">
+              <div class="progress-bar-fill" style="width: ${Math.min(wr, 100)}%; background: ${wr >= 50 ? 'var(--accent-emerald)' : 'var(--accent-rose)'};"></div>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
     }
 
     // Fetch Patterns
@@ -822,20 +1065,23 @@
             const netVal = t.net_pnl !== undefined ? t.net_pnl : (t.realized_pnl - t.commission);
             const isWin = netVal > 0;
             const ffVal = t.funding_fee || 0;
+            const mfeStr = t.mfe !== null && t.mfe !== undefined ? `+${Number(t.mfe).toFixed(2)}` : '-';
+            const maeStr = t.mae !== null && t.mae !== undefined ? `${Number(t.mae).toFixed(2)}` : '-';
+
             tr.innerHTML = `
               <td style="color: var(--text-dim); font-size: 0.8rem;">${t.closed_at}</td>
               <td><strong>${t.symbol}</strong></td>
               <td><span class="badge ${t.side === 'LONG' ? 'badge-long' : 'badge-short'}">${t.side}</span></td>
               <td style="font-size: 0.8rem;">${t.entry_price ? t.entry_price.toFixed(4) : '-'} → ${t.exit_price ? t.exit_price.toFixed(4) : '-'}</td>
               <td>${t.realized_pnl >= 0 ? '+' : ''}${t.realized_pnl.toFixed(2)}</td>
-              <td style="color: var(--text-dim); font-size: 0.8rem;">-${t.commission.toFixed(4)}</td>
-              <td class="${ffVal >= 0 ? 'val-positive' : 'val-negative'}" style="font-size: 0.8rem;">
-                ${ffVal >= 0 ? '+' : ''}${ffVal.toFixed(4)}
-              </td>
+              <td style="color: var(--text-dim); font-size: 0.8rem;">Comm: -${t.commission.toFixed(3)} | FF: ${ffVal >= 0 ? '+' : ''}${ffVal.toFixed(3)}</td>
               <td class="${isWin ? 'val-positive' : 'val-negative'}">
                 <strong>${netVal >= 0 ? '+' : ''}${netVal.toFixed(2)} USDT</strong>
               </td>
-              <td>${t.duration_minutes ? t.duration_minutes.toFixed(1) + ' min' : '-'}</td>
+              <td style="font-size: 0.78rem;">
+                <span class="val-positive">${mfeStr}</span> / <span class="val-negative">${maeStr}</span>
+              </td>
+              <td>${t.duration_minutes ? t.duration_minutes.toFixed(1) + 'm' : '-'}</td>
               <td><span class="badge ${isWin ? 'badge-approved' : 'badge-blacklisted'}">${t.result}</span></td>
             `;
             tbodyReal.appendChild(tr);
@@ -850,6 +1096,7 @@
         } else {
           data.virtual_trades.forEach(v => {
             const tr = document.createElement('tr');
+            const isSuccess = (v.Status || '').toUpperCase() === 'SUCCESS';
             tr.innerHTML = `
               <td style="color: var(--text-dim); font-size: 0.8rem;">${v.Time || '-'}</td>
               <td><strong>${v.Symbol || '-'}</strong></td>
@@ -857,7 +1104,7 @@
               <td>${v['Entry Price'] || '-'}</td>
               <td>${v['TP Price'] || '-'}</td>
               <td style="color: #93c5fd; font-size: 0.8rem;">${v.Alasan || '-'}</td>
-              <td><span class="badge badge-approved">TARGET HIT</span></td>
+              <td><span class="badge ${isSuccess ? 'badge-approved' : 'badge-blacklisted'}">${v.Status || 'COMPLETED'}</span></td>
             `;
             tbodyVirt.appendChild(tr);
           });
@@ -889,8 +1136,8 @@
       loadPatterns();
       loadTrades();
 
-      // Auto refresh setiap 15 detik
-      setInterval(refreshAllData, 15000);
+      // Auto refresh setiap 10 detik
+      setInterval(refreshAllData, 10000);
     });
   </script>
 </body>

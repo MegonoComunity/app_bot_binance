@@ -103,7 +103,7 @@ async def insert_trade(trade: dict) -> bool:
 
 
 async def get_trade_summary() -> dict:
-    """Agregasi statistik dari tabel trade_history."""
+    """Agregasi statistik komprehensif dari tabel trade_history."""
     try:
         pool = await get_pool()
         today = datetime.now().date()
@@ -115,9 +115,13 @@ async def get_trade_summary() -> dict:
                     SUM(CASE WHEN result = 'WIN'  THEN 1 ELSE 0 END) AS wins,
                     SUM(CASE WHEN result = 'LOSS' THEN 1 ELSE 0 END) AS losses,
                     SUM(COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0))) AS net_pnl,
+                    SUM(CASE WHEN COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0)) > 0 THEN COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0)) ELSE 0 END) AS alltime_gross_profit,
+                    SUM(CASE WHEN COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0)) < 0 THEN ABS(COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0))) ELSE 0 END) AS alltime_gross_loss,
                     SUM(commission) AS commission_total,
                     SUM(COALESCE(funding_fee, 0)) AS funding_fee_total,
                     SUM(CASE WHEN closed_at::date = $1 THEN COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0)) ELSE 0 END) AS daily_net_pnl,
+                    SUM(CASE WHEN closed_at::date = $1 AND COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0)) > 0 THEN COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0)) ELSE 0 END) AS daily_gross_profit,
+                    SUM(CASE WHEN closed_at::date = $1 AND COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0)) < 0 THEN ABS(COALESCE(net_pnl, realized_pnl - commission + COALESCE(funding_fee, 0))) ELSE 0 END) AS daily_gross_loss,
                     COUNT(CASE WHEN closed_at::date = $1 THEN 1 END) AS daily_total,
                     SUM(CASE WHEN closed_at::date = $1 AND result='WIN' THEN 1 ELSE 0 END) AS daily_wins
                 FROM trade_history
@@ -127,18 +131,34 @@ async def get_trade_summary() -> dict:
         total = row["total"] or 0
         wins  = row["wins"]  or 0
         losses = row["losses"] or 0
+        alltime_gp = float(row["alltime_gross_profit"] or 0)
+        alltime_gl = float(row["alltime_gross_loss"] or 0)
+        alltime_pf = round(alltime_gp / alltime_gl, 2) if alltime_gl > 0 else (round(alltime_gp, 2) if alltime_gp > 0 else 0.0)
+
+        daily_total = row["daily_total"] or 0
+        daily_wins  = row["daily_wins"]  or 0
+        daily_losses = daily_total - daily_wins
+        daily_gp = float(row["daily_gross_profit"] or 0)
+        daily_gl = float(row["daily_gross_loss"] or 0)
+        daily_pf = round(daily_gp / daily_gl, 2) if daily_gl > 0 else (round(daily_gp, 2) if daily_gp > 0 else 0.0)
+
         return {
-            "total":        total,
-            "wins":         wins,
-            "losses":       losses,
-            "win_rate":     round(wins / total * 100, 1) if total > 0 else 0.0,
-            "net_pnl":      round(float(row["net_pnl"] or 0), 4),
-            "commission":   round(float(row["commission_total"] or 0), 4),
-            "funding_fee":  round(float(row["funding_fee_total"] or 0), 4),
-            "daily_net_pnl": round(float(row["daily_net_pnl"] or 0), 4),
-            "daily_total":  row["daily_total"] or 0,
-            "daily_wins":   row["daily_wins"]  or 0,
-            "daily_losses": (row["daily_total"] or 0) - (row["daily_wins"] or 0),
+            "total":                total,
+            "wins":                 wins,
+            "losses":               losses,
+            "win_rate":             round(wins / total * 100, 1) if total > 0 else 0.0,
+            "profit_factor":        alltime_pf,
+            "net_pnl":              round(float(row["net_pnl"] or 0), 4),
+            "commission":           round(float(row["commission_total"] or 0), 4),
+            "funding_fee":          round(float(row["funding_fee_total"] or 0), 4),
+            "daily_net_pnl":        round(float(row["daily_net_pnl"] or 0), 4),
+            "daily_total":          daily_total,
+            "daily_wins":           daily_wins,
+            "daily_losses":         daily_losses,
+            "daily_win_rate":       round(daily_wins / daily_total * 100, 1) if daily_total > 0 else 0.0,
+            "daily_profit_factor":  daily_pf,
+            "daily_gross_profit":   round(daily_gp, 4),
+            "daily_gross_loss":     round(daily_gl, 4),
         }
     except Exception as exc:
         logger.error(f"[DB] Gagal ambil trade summary: {exc}")

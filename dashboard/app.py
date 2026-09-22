@@ -27,7 +27,7 @@ TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 # ─── API Routes ──────────────────────────────────────────────────────────────
 
 async def api_overview(request: web.Request) -> web.Response:
-    """Mengembalikan ringkasan statistik performa bot."""
+    """Mengembalikan ringkasan statistik performa bot lengkap (PNL Harian, Floating, Winrate, Profit Factor, Active Posisi, Strategi)."""
     summary = await get_trade_summary()
     
     # Ambil virtual log count
@@ -40,19 +40,100 @@ async def api_overview(request: web.Request) -> web.Response:
             pass
 
     active_positions = []
-    # Jika bot_state memiliki active meta
+    total_floating_pnl = 0.0
+    client = bot_state.get("client")
     active_meta = bot_state.get("active_trade_meta", {})
-    for sym, meta in active_meta.items():
-        entry_time = meta.get("entry_time")
-        duration_min = round((datetime.now() - entry_time).total_seconds() / 60, 1) if entry_time else 0
-        active_positions.append({
-            "symbol": sym,
-            "side": meta.get("side", "LONG"),
-            "entry_price": meta.get("entry_price", 0),
-            "mfe": meta.get("mfe", 0),
-            "mae": meta.get("mae", 0),
-            "duration_minutes": duration_min,
-        })
+
+    if client:
+        try:
+            account_info = await client.futures_account()
+            for p in account_info.get("positions", []):
+                amt = float(p.get("positionAmt", 0))
+                if amt == 0:
+                    continue
+                sym = p.get("symbol")
+                pnl = float(p.get("unrealizedProfit", 0))
+                total_floating_pnl += pnl
+                entry = float(p.get("entryPrice", 0))
+                mark = entry + (pnl / amt) if amt != 0 and entry > 0 else entry
+                meta = active_meta.get(sym, {})
+                entry_time = meta.get("entry_time")
+                duration_min = round((datetime.now() - entry_time).total_seconds() / 60, 1) if entry_time else 0
+                leverage = float(p.get("leverage", 0) or meta.get("leverage", 10))
+                init_margin = abs(amt) * entry / leverage if leverage > 0 else 0
+                pnl_pct = (pnl / init_margin * 100) if init_margin > 0 else 0
+                
+                mfe_val = float(meta.get("mfe", 0) or 0)
+                mae_val = float(meta.get("mae", 0) or 0)
+                mfe_val = max(mfe_val, pnl)
+                mae_val = min(mae_val, pnl)
+                if meta:
+                    meta["mfe"] = mfe_val
+                    meta["mae"] = mae_val
+
+                active_positions.append({
+                    "symbol": sym,
+                    "side": "LONG" if amt > 0 else "SHORT",
+                    "amount": abs(amt),
+                    "entry_price": entry,
+                    "mark_price": mark,
+                    "margin_usdt": round(init_margin, 4),
+                    "leverage": int(leverage),
+                    "unrealized_pnl": round(pnl, 4),
+                    "unrealized_pnl_pct": round(pnl_pct, 2),
+                    "mfe": round(mfe_val, 4),
+                    "mae": round(mae_val, 4),
+                    "duration_minutes": duration_min,
+                    "alasan": meta.get("alasan", "Sinyal Multi-Indikator AI"),
+                })
+        except Exception as e_pos:
+            logger.warning(f"[DASHBOARD] Gagal fetch live active positions: {e_pos}")
+
+    # Fallback jika client belum terhubung tapi active_meta ada
+    if not active_positions and active_meta:
+        for sym, meta in active_meta.items():
+            entry_time = meta.get("entry_time")
+            duration_min = round((datetime.now() - entry_time).total_seconds() / 60, 1) if entry_time else 0
+            active_positions.append({
+                "symbol": sym,
+                "side": meta.get("side", "LONG"),
+                "amount": 0,
+                "entry_price": meta.get("entry_price", 0),
+                "mark_price": meta.get("entry_price", 0),
+                "margin_usdt": meta.get("margin_usdt", 0),
+                "leverage": meta.get("leverage", 10),
+                "unrealized_pnl": 0.0,
+                "unrealized_pnl_pct": 0.0,
+                "mfe": meta.get("mfe", 0),
+                "mae": meta.get("mae", 0),
+                "duration_minutes": duration_min,
+                "alasan": meta.get("alasan", "Sinyal Multi-Indikator AI"),
+            })
+
+    # Breakdown Strategi Aktif & AI Learning Stats
+    strategies = []
+    if os.path.exists("data/pattern_stats.json"):
+        try:
+            with open("data/pattern_stats.json", "r", encoding="utf-8") as f:
+                stats = json.load(f)
+                for name, s in stats.items():
+                    tot = s.get("total", 0)
+                    if tot > 0:
+                        w = s.get("win", 0)
+                        l = s.get("loss", 0)
+                        wr = round((w / tot) * 100, 1)
+                        status = "🟢 TIER-A (HIGH WR)" if wr >= 60 else ("🟡 NORMAL" if wr >= 45 else "🔴 BLACKLISTED")
+                        strategies.append({
+                            "name": name,
+                            "total": tot,
+                            "wins": w,
+                            "losses": l,
+                            "win_rate": wr,
+                            "status": status,
+                        })
+        except Exception as e_st:
+            logger.warning(f"[DASHBOARD] Gagal load pattern_stats: {e_st}")
+    strategies.sort(key=lambda x: (x["win_rate"], x["total"]), reverse=True)
 
     data = {
         "status": "online",
@@ -60,10 +141,13 @@ async def api_overview(request: web.Request) -> web.Response:
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "trade_summary": summary or {
             "total": 0, "wins": 0, "losses": 0, "win_rate": 0.0,
-            "net_pnl": 0.0, "daily_net_pnl": 0.0
+            "net_pnl": 0.0, "daily_net_pnl": 0.0, "profit_factor": 0.0,
+            "daily_profit_factor": 0.0, "daily_win_rate": 0.0
         },
+        "floating_pnl": round(total_floating_pnl, 4),
         "virtual_signals_count": virtual_count,
         "active_positions": active_positions,
+        "strategies": strategies,
     }
     return web.json_response(data)
 
