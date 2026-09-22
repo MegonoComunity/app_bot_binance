@@ -94,39 +94,47 @@ async def send_early_close_notification(bot: Bot, chat_id: str, data: dict):
 
 async def send_trade_notification(bot: Bot, chat_id: str, trade_data: dict):
     """
-    Mengirim notifikasi trade ke Telegram dengan format standar.
+    Mengirim notifikasi trade ke Telegram dengan detail Evaluasi Brain AI lengkap saat ORDER.
     """
+    symbol = trade_data.get("symbol", "")
     direction = trade_data.get("direction", "LONG")
     entry_price = float(trade_data.get("entry_price", 0) or 0)
     tp_price = float(trade_data.get("tp_price", 0) or 0)
     sl_price = float(trade_data.get("sl_price", 0) or 0)
     quantity = float(trade_data.get("quantity", 0) or 0)
-    tp_value = abs(tp_price - entry_price) * quantity
-    sl_value = abs(sl_price - entry_price) * quantity
+    margin_usdt = float(trade_data.get("margin_usdt", 0) or 0)
+    leverage = trade_data.get("leverage", 10)
+    notional_usdt = float(trade_data.get("notional_usdt", 0) or 0)
     score = trade_data.get("score", "N/A")
     confidence = trade_data.get("confidence", "N/A")
+    tf = trade_data.get("tf", "15m")
+    dt = trade_data.get("datetime", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    tp_sl_info = trade_data.get("tp_sl_info", "")
     direction_icon = "🟢" if direction in {"LONG", "BUY"} else "🔴"
+    
+    tp_value = abs(tp_price - entry_price) * quantity
+    sl_value = abs(sl_price - entry_price) * quantity
+    
+    ai_eval = trade_data.get("ai_evaluation", trade_data.get("syarat_2", "Sinyal Multi-Indikator"))
+    method = trade_data.get("method", trade_data.get("syarat_2", "Multi-Indicator Confluence"))
 
-    message = f"""
-🚨 **BOT ORDER**
-──────────────
-🪙 **Koin:** {trade_data.get('symbol')}
-{direction_icon} **Arah:** {direction}
-💰 **Margin Target:** {float(trade_data.get('margin_usdt', 0) or 0):.6f} USDT
-⚙️ **Leverage Efektif:** {trade_data.get('leverage')}x
-💼 **Notional Target:** {float(trade_data.get('notional_usdt', 0) or 0):.2f} USDT
-📦 **Kuantitas:** {quantity}
-💵 **Harga Masuk:** {entry_price}
-──────────────
-🎯 **Score:** {score}
-🧠 **Confidence:** {confidence}
-──────────────
-🎯 **Target TP:**
-{tp_price} (+${tp_value:.2f})
-──────────────
-🛡️ **Target SL:**
-{sl_price} (-${sl_value:.2f})
-"""
+    message = (
+        f"🚨 **AUTO-TRADE EXECUTED** 🚨\n"
+        f"**{direction_icon} BUY/LONG Coin : `{symbol}`**\n"
+        f"Harga Entry : `{entry_price}`\n"
+        f"Time Frame  : `{tf}` | Tanggal: `{dt} WIB`\n"
+        f"🔧 **Trade Setup:** Margin: `{margin_usdt:.2f} USDT` | Leverage: `{leverage}x` | Target: `{tp_sl_info}`\n"
+        f"📦 **Kuantitas:** `{quantity}` (Notional: `{notional_usdt:.2f} USDT`)\n"
+        f"──────────────\n"
+        f"🎯 **Target TP:** `{tp_price}` (+${tp_value:.2f})\n"
+        f"🛡️ **Target SL:** `{sl_price}` (-${sl_value:.2f})\n"
+        f"──────────────\n"
+        f"🧠 **EVALUASI BRAIN AI & ALASAN ENTRY:**\n"
+        f"{ai_eval}\n"
+        f"──────────────\n"
+        f"📊 **Metode / Setup:** `{method}`\n"
+        f"🎯 **Signal Score:** `{score}` | 🧠 **Confidence:** `{confidence}`\n"
+    )
     try:
         await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
     except Exception as e:
@@ -147,11 +155,12 @@ async def send_error_log(bot: Bot, chat_id: str, error: str):
 async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dict):
     """
     Mengirim notifikasi ketika Take Profit, Stop Loss, atau Market Close tereksekusi.
-    Format mencakup Koin, Hasil Akhir, Net PnL, Harga Keluar, Durasi, MFE/MAE, Evaluasi AI Memory, dan Rekap PNL.
+    Format mencakup Koin, Hasil Akhir, Net PnL, Harga Keluar, Durasi, MFE/MAE, Evaluasi Brain AI, dan Rekap PNL.
     """
     order_type = order_data.get('order_type', '')
     symbol = order_data.get('symbol', '')
     price = order_data.get('price', '')
+    entry_price = order_data.get('entry_price', 'N/A')
     realized_pnl = float(order_data.get('realized_pnl', 0) or 0)
     commission = float(order_data.get('commission', 0) or 0)
     funding_fee = float(order_data.get('funding_fee', 0) or 0)
@@ -164,15 +173,23 @@ async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dic
     fingerprint = order_data.get('fingerprint', 'Kombinasi Standar')
     win_rate = float(order_data.get('win_rate', 0.0) or 0.0)
     total_trades = int(order_data.get('total_trades', 0) or 0)
+    wins = int(order_data.get('wins', 0) or 0)
+    losses = int(order_data.get('losses', 0) or 0)
+
+    alasan_masuk = order_data.get('alasan_masuk', order_data.get('alasan', 'Sinyal Multi-Indikator AI'))
+    ai_eval_summary = order_data.get('ai_eval_summary', '')
 
     summary = trade_summary()
 
     if 'TAKE_PROFIT' in order_type:
         header_title = "🏁 **BOT CLOSED ORDER (TAKE PROFIT)** 🏁"
+        trigger_reason = "🎯 Target Take Profit Tercapai (Profit Terkunci)"
     elif 'STOP' in order_type:
         header_title = "🏁 **BOT CLOSED ORDER (STOP LOSS)** 🏁"
+        trigger_reason = "🛡️ Proteksi Stop Loss Tertrigger (Risiko Dibatasi)"
     else:
-        header_title = "🏁 **BOT CLOSED ORDER** 🏁"
+        header_title = f"🏁 **BOT CLOSED ORDER ({order_type})** 🏁"
+        trigger_reason = f"🤖 Market Exit ({order_type})"
 
     result_icon = "🟢" if net_pnl > 0 else "🔴"
     result_text = "PROFIT" if net_pnl > 0 else "LOSS"
@@ -187,10 +204,15 @@ async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dic
         f"🏆 **Hasil Akhir:** {result_icon} **{result_text}**\n"
         f"──────────────\n"
         f"💰 **Net PnL Bersih:** `{result_icon} {net_pnl:+.4f} USDT`\n"
-        f"💵 **Harga Keluar:** `{price}`\n"
+        f"💵 **Harga Entry:** `{entry_price}` ➔ **Harga Keluar:** `{price}`\n"
         f"⏱️ **Durasi Posisi:** `{duration}`\n"
-        f"📈 **MFE (Max Profit Teramati):** `{mfe}` | 📉 **MAE (Max Drawdown Teramati):** `{mae}`\n"
-        f"🧠 **Evaluasi AI Memory:** Pola `'{fingerprint}'` -> Win Rate: **{win_rate:.1f}%** (Total: {total_trades}x)\n"
+        f"📈 **MFE (Max Profit):** `{mfe}` | 📉 **MAE (Max Drawdown):** `{mae}`\n"
+        f"──────────────\n"
+        f"🧠 **EVALUASI BRAIN AI (POST-TRADE LEARNING):**\n"
+        f"• **Alasan Masuk Awal:** {alasan_masuk}\n"
+        f"• **Trigger Exit:** {trigger_reason}\n"
+        f"• **Sidik Jari Pola:** `{fingerprint}`\n"
+        f"• **Statistik Pola AI:** Win Rate: **{win_rate:.1f}%** ({wins}W / {losses}L dari {total_trades}x trade)\n"
         f"──────────────\n"
         f"📊 **Rekap PNL Hari Ini**\n"
         f"💰 **Total PNL Bersih:** {net_pnl_icon} `{net_pnl_hari_ini:+.4f} USDT`\n"

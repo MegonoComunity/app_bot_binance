@@ -577,6 +577,33 @@ async def scanner_loop():
                                     continue
                                 
                                 # 7. Kirim Notifikasi
+                                # Analisis Evaluasi Komprehensif Brain AI
+                                ai_eval_lines = []
+                                rsi_status = "Oversold 🟢" if is_oversold else ("Overbought 🔴" if is_overbought else "Neutral ⚪")
+                                ai_eval_lines.append(f"• **Indikator RSI ({bot_config.rsi_length}):** `{rsi_value:.1f}` ({rsi_status})")
+                                
+                                vol_tag = "Lonjakan Kuat 🚀" if vol_ratio >= 1.5 else ("Diatas Rata-rata 📈" if vol_ratio >= 1.2 else "Normal 📊")
+                                ai_eval_lines.append(f"• **Volume Surge:** `{vol_ratio:.2f}x` vs MA20 ({vol_tag})")
+                                
+                                bb_status = "Menyentuh Lower Band" if near_lower_bb else ("Menyentuh Upper Band" if near_upper_bb else "Zona Mid Band")
+                                sr_status = "Di Zona Support Valid 🛡️" if near_support else ("Di Zona Resistance 🛑" if near_resistance else "Struktur Netral")
+                                ai_eval_lines.append(f"• **Bollinger & S/R:** {bb_status} | {sr_status}")
+                                
+                                if smart_buy_level and smart_buy_level.get('touches', 0) > 0:
+                                    ai_eval_lines.append(f"• **Modul 20-30 Hari:** Level `{smart_buy_level['level']:.6f}` ({smart_buy_level['touches']}x pantulan Open/Close)")
+                                else:
+                                    ai_eval_lines.append(f"• **Modul 20-30 Hari:** Tidak ada level kunci terdekat")
+                                    
+                                if pattern_detected and pattern_name:
+                                    ai_eval_lines.append(f"• **Pola Candlestick:** `{pattern_name}` ({'Tier-A Reversal 🌟' if pattern_info.get('is_high_quality') else 'Konfirmasi Pola'})")
+                                else:
+                                    ai_eval_lines.append(f"• **Pola Candlestick:** `Momentum Price Action`")
+                                    
+                                htf_icon = "🟢 (Uptrend Kuat)" if htf_trend == "UPTREND" else ("🔴 (Downtrend)" if htf_trend == "DOWNTREND" else "🟡 (Sideways Konsolidasi)")
+                                ai_eval_lines.append(f"• **Tren HTF ({HTF_TIMEFRAME}):** `{htf_trend}` {htf_icon}")
+                                
+                                ai_eval_text = "\n".join(ai_eval_lines)
+
                                 signal_score = round(
                                     sum([
                                         htf_trend in (["UPTREND", "SIDEWAYS"] if trade_type == "LONG" else ["DOWNTREND", "SIDEWAYS"]),
@@ -607,7 +634,9 @@ async def scanner_loop():
                                     'tp_sl_info': f"TP: {tp_price:.4f} ({bot_config.tp_percent}%), SL: {sl_price:.4f} ({bot_config.sl_percent}%)",
                                     'syarat_1': f"Area {'Support' if trade_type == 'LONG' else 'Resistance'} Divalidasi. Tren {HTF_TIMEFRAME}: {htf_trend}",
                                     'syarat_2': alasan,
-                                    'pola_ml': pattern_name if pattern_detected else "Computed Sizing"
+                                    'pola_ml': pattern_name if pattern_detected else "Computed Sizing",
+                                    'ai_evaluation': ai_eval_text,
+                                    'method': alasan,
                                 }
                                 await send_trade_notification(bot, TELEGRAM_ADMIN_CHAT_ID, trade_data)
                                 bot_state["active_trade_reasons"][symbol] = alasan
@@ -633,6 +662,7 @@ async def scanner_loop():
                                     "mae": 0.0,
                                     "pattern_entry_id": pattern_entry_id,
                                     "alasan": alasan,
+                                    "ai_eval_summary": ai_eval_text,
                                 }
                                 
                             # Hindari spam trade di koin yang sama, beri jeda
@@ -771,6 +801,7 @@ async def user_data_stream_loop():
                                 "symbol": symbol,
                                 "order_type": order_type,
                                 "price": order_info.get("ap"),
+                                "entry_price": meta.get("entry_price", "N/A"),
                                 "quantity": order_info.get("q"),
                                 "realized_pnl": realized_pnl,
                                 "commission": commission,
@@ -783,6 +814,10 @@ async def user_data_stream_loop():
                                 "fingerprint": ai_stats.get("fingerprint", meta.get("alasan", "Kombinasi Standar")),
                                 "win_rate": ai_stats.get("win_rate", 0.0),
                                 "total_trades": ai_stats.get("total_trades", 0),
+                                "wins": ai_stats.get("wins", 0),
+                                "losses": ai_stats.get("losses", 0),
+                                "alasan_masuk": meta.get("alasan", "Sinyal Multi-Indikator AI"),
+                                "ai_eval_summary": meta.get("ai_eval_summary", ""),
                             }
                             record_closed_trade({
                                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
