@@ -55,8 +55,10 @@ from ml_vision.preprocessor import preprocess_chart_image
 from ml_vision.model import get_model
 from ml_vision.inference import predict_candle_pattern
 
+import re
 from telegram.bot_handler import bot, dp, bot_state, setup_bot_commands
-from telegram.notifier import send_trade_notification, send_error_log
+from telegram.notifier import send_trade_notification, send_error_log, safe_send_message
+
 
 def calculate_atr(df: pd.DataFrame, period: int = 14) -> float:
     """Menghitung Average True Range (ATR) untuk analisis volatilitas dinamis."""
@@ -102,33 +104,64 @@ ml_model = get_model("ml_vision/candle_model.pth") # Bisa diisi parameter model_
 
 from collections import deque
 
+_global_ip_ban_until: float = 0.0
+
+def extract_ban_cooldown(err_str: str, default_seconds: int = 300) -> int:
+    """
+    Ekstrak timestamp ban dari pesan error Binance seperti:
+    'IP(...) banned until 1790127773554'
+    """
+    match = re.search(r'banned until (\d+)', err_str)
+    if match:
+        ban_until_ms = int(match.group(1))
+        now_ms = int(time.time() * 1000)
+        diff_sec = int((ban_until_ms - now_ms) / 1000)
+        if diff_sec > 0:
+            return diff_sec + 5 # tambah buffer 5 detik
+    return default_seconds
+
+def register_ip_ban(seconds: int):
+    global _global_ip_ban_until
+    _global_ip_ban_until = max(_global_ip_ban_until, time.time() + seconds)
+
+async def wait_if_ip_banned():
+    global _global_ip_ban_until
+    now = time.time()
+    if _global_ip_ban_until > now:
+        wait_s = _global_ip_ban_until - now
+        print(f"[RATE LIMIT GUARD] IP Ban masih aktif. Menunggu {wait_s:.0f} detik lagi...")
+        await asyncio.sleep(wait_s)
+
 class RateLimiter:
-    def __init__(self, max_requests=200, time_window=60):
+    def __init__(self, max_requests=120, time_window=60):
         self.max_requests = max_requests
         self.time_window = time_window
         self.requests = deque()
 
-    async def wait_if_needed(self):
+    async def wait_if_needed(self, count: int = 1):
+        await wait_if_ip_banned()
         now = time.time()
         
         while self.requests and now - self.requests[0] > self.time_window:
             self.requests.popleft()
             
-        if len(self.requests) >= self.max_requests:
+        if len(self.requests) + count > self.max_requests:
             sleep_time = self.time_window - (now - self.requests[0])
             if sleep_time > 0:
-                print(f"[RATE LIMIT] Mencapai {len(self.requests)}/{self.max_requests} request per menit. Pause {sleep_time:.2f} detik...")
+                print(f"[RATE LIMIT] Kuota request lokal mendekati batas ({len(self.requests)}/{self.max_requests}). Cooling down {sleep_time:.2f}s...")
                 await asyncio.sleep(sleep_time)
                 
             now = time.time()
             while self.requests and now - self.requests[0] > self.time_window:
                 self.requests.popleft()
                 
-        self.requests.append(now)
+        for _ in range(count):
+            self.requests.append(now)
         return len(self.requests)
 
-# Mengatur batas aman: misal 200 request per menit
-rate_limiter = RateLimiter(max_requests=200, time_window=60)
+# Mengatur batas aman: 120 request per menit (sangat aman di bawah limit 1200 weight Binance)
+rate_limiter = RateLimiter(max_requests=120, time_window=60)
+
 
 async def scanner_loop():
     """
@@ -248,7 +281,7 @@ async def scanner_loop():
                             if is_tp:
                                 msg = f"📚 HASIL BELAJAR ({v_trade['tipe']}): Koin {symbol} berhasil mencapai Target (TP)! Alasan masuk sebelumnya: {v_trade['alasan']}. Strategi ini valid."
                                 print(msg)
-                                await bot.send_message(TELEGRAM_ERROR_CHAT_ID, msg)
+                                await safe_send_message(bot, TELEGRAM_ERROR_CHAT_ID, msg)
                                 
                                 record_trade_result(v_trade['alasan'], is_profit=True)
                                 
@@ -261,7 +294,7 @@ async def scanner_loop():
                             elif is_sl:
                                 msg = f"📚 HASIL BELAJAR ({v_trade['tipe']}): Koin {symbol} gagal dan menyentuh Stop Loss. Alasan masuk sebelumnya: {v_trade['alasan']}. Perlu dievaluasi."
                                 print(msg)
-                                await bot.send_message(TELEGRAM_ERROR_CHAT_ID, msg)
+                                await safe_send_message(bot, TELEGRAM_ERROR_CHAT_ID, msg)
                                 
                                 record_trade_result(v_trade['alasan'], is_profit=False)
                                 
@@ -272,6 +305,10 @@ async def scanner_loop():
                                     
                                 del virtual_trades[symbol]
                         # -------------------------------------------------
+                        
+                        # Pacing delay antar koin untuk mencegah spike request weight Binance
+                        await asyncio.sleep(0.2)
+
                         
                         # Filter Anti Koin Receh / Micin
                         if current_price < 0.01:
@@ -683,13 +720,15 @@ async def scanner_loop():
                 error_msg = f"Error in scanner loop: {str(loop_error)}"
                 print(error_msg)
                 if "-1003" in err_str or "429" in err_str or "too many requests" in err_str.lower() or "banned" in err_str.lower():
-                    print("[RATE LIMIT PROTECTION] Scanner mendeteksi IP Ban / Rate Limit (-1003). Cooldown 5 menit...")
+                    cooldown_sec = extract_ban_cooldown(err_str, default_seconds=300)
+                    register_ip_ban(cooldown_sec)
+                    print(f"[RATE LIMIT PROTECTION] Scanner mendeteksi IP Ban / Rate Limit (-1003). Cooldown {cooldown_sec} detik...")
                     await send_error_log(
                         bot,
                         TELEGRAM_ADMIN_CHAT_ID,
-                        "⚠️ **BINANCE RATE LIMIT (-1003)**: Terdeteksi batas request. Scanner otomatis jeda 5 menit untuk mendinginkan koneksi.",
+                        f"⚠️ **BINANCE RATE LIMIT (-1003)**: Terdeteksi batas request. Seluruh loop bot otomatis jeda {cooldown_sec} detik untuk mendinginkan IP.",
                     )
-                    await asyncio.sleep(300)
+                    await asyncio.sleep(cooldown_sec)
                 else:
                     await send_error_log(bot, TELEGRAM_ADMIN_CHAT_ID, error_msg)
                 
@@ -1054,13 +1093,15 @@ async def profitable_position_monitor_loop():
                 err_str = str(monitor_error)
                 print(f"[POSITION MONITOR] {monitor_error}")
                 if "-1003" in err_str or "429" in err_str or "too many requests" in err_str.lower() or "banned" in err_str.lower():
-                    print("[RATE LIMIT PROTECTION] Monitor mendeteksi IP Ban / Rate Limit (-1003). Cooldown 5 menit...")
+                    cooldown_sec = extract_ban_cooldown(err_str, default_seconds=300)
+                    register_ip_ban(cooldown_sec)
+                    print(f"[RATE LIMIT PROTECTION] Monitor mendeteksi IP Ban / Rate Limit (-1003). Cooldown {cooldown_sec} detik...")
                     await send_error_log(
                         bot,
                         TELEGRAM_ADMIN_CHAT_ID,
-                        "⚠️ **BINANCE RATE LIMIT (-1003)**: Batas request tercapai. Position monitor otomatis jeda 5 menit untuk mendinginkan IP.",
+                        f"⚠️ **BINANCE RATE LIMIT (-1003)**: Batas request tercapai. Position monitor otomatis jeda {cooldown_sec} detik untuk mendinginkan IP.",
                     )
-                    await asyncio.sleep(300)
+                    await asyncio.sleep(cooldown_sec)
                 else:
                     await send_error_log(
                         bot,

@@ -1,7 +1,47 @@
+import asyncio
+import time
+from typing import Dict, Optional
 from aiogram import Bot
+from aiogram.exceptions import TelegramRetryAfter, TelegramAPIError
 from core.logger import log_error
 from core.trade_stats import trade_summary
 from datetime import datetime
+
+# Rate limiting & deduplication state
+_last_sent_time: float = 0.0
+_telegram_lock = asyncio.Lock()
+_recent_errors: Dict[str, float] = {}
+
+async def safe_send_message(bot: Bot, chat_id: str, text: str, parse_mode: str = "Markdown") -> bool:
+    """
+    Kirim pesan Telegram dengan proteksi Rate Limit & Anti-Flood:
+    1. Jeda minimum 0.5s antar pesan untuk menghindari Telegram 429 Flood Control.
+    2. Menangani TelegramRetryAfter secara otomatis.
+    """
+    global _last_sent_time
+    async with _telegram_lock:
+        now = time.time()
+        elapsed = now - _last_sent_time
+        if elapsed < 0.6:
+            await asyncio.sleep(0.6 - elapsed)
+            
+        try:
+            await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+            _last_sent_time = time.time()
+            return True
+        except TelegramRetryAfter as e:
+            print(f"[TELEGRAM FLOOD] Kena rate limit Telegram. Cooldown {e.retry_after} detik...")
+            await asyncio.sleep(e.retry_after + 1)
+            try:
+                await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+                _last_sent_time = time.time()
+                return True
+            except Exception as e2:
+                log_error("TELEGRAM_RETRY_FAILED", str(e2))
+                return False
+        except Exception as e:
+            log_error("TELEGRAM_SEND_FAILED", str(e))
+            return False
 
 async def send_position_analysis_alert(bot: Bot, chat_id: str, data: dict):
     """
@@ -37,10 +77,8 @@ async def send_position_analysis_alert(bot: Bot, chat_id: str, data: dict):
         f"──────────────\n"
         f"📌 Keputusan: **HOLD** — Kondisi masih aman\n"
     )
-    try:
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
-    except Exception as e:
-        log_error("TELEGRAM_POSITION_ALERT", str(e))
+    await safe_send_message(bot, chat_id=chat_id, text=message, parse_mode="Markdown")
+
 
 async def send_early_close_notification(bot: Bot, chat_id: str, data: dict):
     """
@@ -137,22 +175,27 @@ async def send_trade_notification(bot: Bot, chat_id: str, trade_data: dict):
         f"📊 **Metode / Setup:** `{method}`\n"
         f"🎯 **Signal Score:** `{score}` | 🧠 **Confidence:** `{confidence}`\n"
     )
-    try:
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
-    except Exception as e:
-        log_error("TELEGRAM_NOTIFY_TRADE", f"Gagal kirim notif trade ke {chat_id}: {e}")
-        print(f"Failed to send Telegram notification: {e}")
+    await safe_send_message(bot, chat_id=chat_id, text=message, parse_mode='Markdown')
 
 async def send_error_log(bot: Bot, chat_id: str, error: str):
     """
-    Mengirim log error ke admin.
+    Mengirim log error ke admin dengan deduplikasi (mencegah spam saat rate limit berulang).
     """
+    global _recent_errors
+    now = time.time()
+    
+    # Bersihkan error lama > 300 detik
+    _recent_errors = {k: v for k, v in _recent_errors.items() if now - v < 300}
+    
+    # Simple error key (20 chars pertama)
+    err_key = error[:40]
+    if err_key in _recent_errors and (now - _recent_errors[err_key]) < 60:
+        # Skip pengiriman error yang sama jika baru dikirim dalam 60 detik terakhir
+        return
+        
+    _recent_errors[err_key] = now
     message = f"⚠️ **BOT ERROR:**\n`{error}`"
-    try:
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
-    except Exception as e:
-        log_error("TELEGRAM_NOTIFY_ERROR", f"Gagal kirim notif error ke {chat_id}: {e}")
-        print(f"Failed to send error log: {e}")
+    await safe_send_message(bot, chat_id=chat_id, text=message, parse_mode='Markdown')
 
 async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dict):
     """
@@ -220,9 +263,6 @@ async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dic
         f"💰 **Total PNL Bersih:** {net_pnl_icon} `{net_pnl_hari_ini:+.4f} USDT`\n"
         f"🎯 **Win Rate Hari Ini:** {win_rate_hari_ini:.1f}% ({summary['daily_wins']}W / {summary['daily_losses']}L)\n"
     )
-    try:
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
-    except Exception as e:
-        log_error("TELEGRAM_NOTIFY_TPSL", f"Gagal kirim notif TP/SL ke {chat_id}: {e}")
-        print(f"Failed to send TP/SL notification: {e}")
+    await safe_send_message(bot, chat_id=chat_id, text=message, parse_mode='Markdown')
+
 
