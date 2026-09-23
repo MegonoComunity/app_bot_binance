@@ -32,39 +32,36 @@ def detect_support_zones(df: pd.DataFrame, lookback: int = 50, window: int = 5) 
         
     return merged_supports
 
-def detect_resistance_zones(df: pd.DataFrame, window: int = 20) -> list:
+def detect_resistance_zones(df: pd.DataFrame, lookback: int = 50, window: int = 5) -> list[float]:
     """
-    Mendeteksi zona resistance menggunakan local maxima.
-    window: jumlah bar kiri-kanan untuk menentukan titik puncak
+    Mendeteksi zona resistance berdasarkan local maxima dalam periode lookback.
     """
-    if len(df) < window * 2:
-        return []
+    if len(df) < lookback:
+        lookback = len(df)
         
+    recent_data = df.tail(lookback).copy()
+    recent_data = recent_data.reset_index(drop=True)
+    
     resistances = []
-    highs = df['high'].values
-    
-    for i in range(window, len(df) - window):
-        # Cek apakah i adalah local maxima
-        if highs[i] == max(highs[i - window : i + window + 1]):
-            resistances.append(highs[i])
+    for i in range(window, len(recent_data) - window):
+        if all(recent_data['high'].iloc[i] > recent_data['high'].iloc[i - window:i]) and \
+           all(recent_data['high'].iloc[i] > recent_data['high'].iloc[i + 1:i + window + 1]):
+            resistances.append(recent_data['high'].iloc[i])
             
-    # Mengelompokkan resistance yang berdekatan (selisih < 1%)
-    zones = []
-    if not resistances:
-        return zones
+    # Menggabungkan zona resistance yang berdekatan (toleransi 1%)
+    merged_resistances = []
+    if resistances:
+        resistances.sort()
+        current_zone = [resistances[0]]
+        for r in resistances[1:]:
+            if r <= current_zone[-1] * 1.01:
+                current_zone.append(r)
+            else:
+                merged_resistances.append(sum(current_zone) / len(current_zone))
+                current_zone = [r]
+        merged_resistances.append(sum(current_zone) / len(current_zone))
         
-    current_zone = [resistances[0]]
-    
-    for i in range(1, len(resistances)):
-        if abs(resistances[i] - current_zone[0]) / current_zone[0] < 0.01:
-            current_zone.append(resistances[i])
-        else:
-            zones.append(sum(current_zone) / len(current_zone))
-            current_zone = [resistances[i]]
-            
-    zones.append(sum(current_zone) / len(current_zone))
-    
-    return zones
+    return merged_resistances
 
 def is_near_support(current_price: float, support_zones: list, threshold: float = 0.01) -> bool:
     """

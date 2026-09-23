@@ -39,7 +39,13 @@ from core.order_manager import (
 from indicators.bollinger import calculate_bollinger_bands
 from indicators.support_resistance import detect_support_zones, is_near_support, detect_resistance_zones, is_near_resistance
 from indicators.rsi import calculate_rsi
-from indicators.patterns import detect_candlestick_patterns, is_bull_trap
+from indicators.patterns import (
+    detect_candlestick_patterns,
+    is_bull_trap,
+    is_bear_trap,
+    check_consecutive_green_candles,
+    check_consecutive_red_candles,
+)
 from indicators.trend import get_htf_trend
 from core.learner import is_pattern_reliable, record_trade_result
 from core.risk_manager import (
@@ -312,7 +318,6 @@ async def scanner_loop():
                                 pnl_pct = abs((current_price - v_trade['entry_price']) / v_trade['entry_price'] * 100) if v_trade.get('entry_price', 0) > 0 else 0.0
                                 est_margin = 50.0
                                 est_pnl = est_margin * (pnl_pct / 100)
-                                new_sim_modal = bot_config.add_simulated_pnl(est_pnl)
 
                                 msg = (
                                     f"🎯 **HASIL LATIHAN SIMULASI: SESUAI TARGET (TP) ✅**\n"
@@ -320,20 +325,16 @@ async def scanner_loop():
                                     f"• **Entry:** `{v_trade['entry_price']:.6f}` ➔ **Exit TP:** `{current_price:.6f}` (+{pnl_pct:.2f}%)\n"
                                     f"• **Status:** Sesuai Target TP (Analisa Valid)\n"
                                     f"• **Setup:** {v_trade['alasan']}\n"
-                                    f"💰 **Saldo Simulasi:** `${new_sim_modal:.2f} USDT` (+${est_pnl:.2f})"
+                                    f"📚 *Catatan: Hasil latihan simulasi hanya untuk pembelajaran AI & pola (tidak memotong/menambah saldo wallet).* "
                                 )
-                                print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: SESUAI TARGET TP (+{pnl_pct:.2f}%) | Saldo Simulasi: {new_sim_modal:.2f} USDT")
+                                print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: SESUAI TARGET TP (+{pnl_pct:.2f}%) | Setup: {v_trade['alasan']}")
                                 
-                                # Kirim ke channel Telegram (Admin & Error/Latihan channel)
-                                try:
-                                    target_chats = {TELEGRAM_ADMIN_CHAT_ID}
-                                    if TELEGRAM_ERROR_CHAT_ID:
-                                        target_chats.add(TELEGRAM_ERROR_CHAT_ID)
-                                    for cid in target_chats:
-                                        if cid:
-                                            await bot.send_message(cid, msg)
-                                except Exception as e_res:
-                                    print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
+                                # Kirim hasil latihan HANYA ke Channel Telegram terpisah (tidak dikirim ke Admin DM)
+                                if TELEGRAM_ERROR_CHAT_ID and str(TELEGRAM_ERROR_CHAT_ID) != str(TELEGRAM_ADMIN_CHAT_ID):
+                                    try:
+                                        await bot.send_message(TELEGRAM_ERROR_CHAT_ID, msg)
+                                    except Exception as e_res:
+                                        print(f"[TELEGRAM] Gagal kirim hasil latihan ke channel: {e_res}")
                                 
                                 record_trade_result(v_trade['alasan'], is_profit=True)
                                 
@@ -352,7 +353,6 @@ async def scanner_loop():
                                 pnl_pct = abs((current_price - v_trade['entry_price']) / v_trade['entry_price'] * 100) if v_trade.get('entry_price', 0) > 0 else 0.0
                                 est_margin = 50.0
                                 est_pnl = -est_margin * (pnl_pct / 100)
-                                new_sim_modal = bot_config.add_simulated_pnl(est_pnl)
 
                                 msg = (
                                     f"🛑 **HASIL LATIHAN SIMULASI: GAGAL TARGET (SL) ❌**\n"
@@ -360,20 +360,16 @@ async def scanner_loop():
                                     f"• **Entry:** `{v_trade['entry_price']:.6f}` ➔ **Exit SL:** `{current_price:.6f}` (-{pnl_pct:.2f}%)\n"
                                     f"• **Status:** Gagal Target / Kena SL (Perlu Evaluasi)\n"
                                     f"• **Setup:** {v_trade['alasan']}\n"
-                                    f"💰 **Saldo Simulasi:** `${new_sim_modal:.2f} USDT` (${est_pnl:.2f})"
+                                    f"📚 *Catatan: Hasil latihan simulasi hanya untuk pembelajaran AI & pola (tidak memotong/menambah saldo wallet).* "
                                 )
-                                print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: GAGAL TARGET SL (-{pnl_pct:.2f}%) | Saldo Simulasi: {new_sim_modal:.2f} USDT")
+                                print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: GAGAL TARGET SL (-{pnl_pct:.2f}%) | Setup: {v_trade['alasan']}")
                                 
-                                # Kirim ke channel Telegram (Admin & Error/Latihan channel)
-                                try:
-                                    target_chats = {TELEGRAM_ADMIN_CHAT_ID}
-                                    if TELEGRAM_ERROR_CHAT_ID:
-                                        target_chats.add(TELEGRAM_ERROR_CHAT_ID)
-                                    for cid in target_chats:
-                                        if cid:
-                                            await bot.send_message(cid, msg)
-                                except Exception as e_res:
-                                    print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
+                                # Kirim hasil latihan HANYA ke Channel Telegram terpisah (tidak dikirim ke Admin DM)
+                                if TELEGRAM_ERROR_CHAT_ID and str(TELEGRAM_ERROR_CHAT_ID) != str(TELEGRAM_ADMIN_CHAT_ID):
+                                    try:
+                                        await bot.send_message(TELEGRAM_ERROR_CHAT_ID, msg)
+                                    except Exception as e_res:
+                                        print(f"[TELEGRAM] Gagal kirim hasil latihan ke channel: {e_res}")
                                 
                                 record_trade_result(v_trade['alasan'], is_profit=False)
                                 
@@ -409,7 +405,8 @@ async def scanner_loop():
                         current_price = last_row['close']
                         
                         # 4. Cek Kondisi Teknikal Entry LONG
-                        near_lower_bb = last_row.get('is_near_lower_band', False)
+                        lower_band = last_row.get('lower_band', last_row.get('bb_lower'))
+                        near_lower_bb = last_row.get('is_near_lower_band', False) or (current_price <= lower_band * 1.005 if pd.notnull(lower_band) else False)
                         near_support = is_near_support(current_price, support_zones)
                         smart_buy_level = find_frequent_open_close_level(
                             df_daily,
@@ -423,19 +420,21 @@ async def scanner_loop():
                         )
                         rsi_value = float(last_row.get('RSI', 50))
                         is_oversold = rsi_value < bot_config.rsi_oversold
+                        two_green_at_support = near_support and check_consecutive_green_candles(df, min_candles=2)
                         
                         # 4. Cek Kondisi Teknikal Entry SHORT
-                        upper_band = last_row.get('upper_band')
-                        near_upper_bb = current_price >= upper_band * 0.995 if pd.notnull(upper_band) else False
+                        upper_band = last_row.get('upper_band', last_row.get('bb_upper'))
+                        near_upper_bb = last_row.get('is_near_upper_band', False) or (current_price >= upper_band * 0.995 if pd.notnull(upper_band) else False)
                         resistance_zones = detect_resistance_zones(df)
                         near_resistance = is_near_resistance(current_price, resistance_zones)
                         is_overbought = rsi_value > bot_config.rsi_overbought
+                        two_red_at_resistance = near_resistance and check_consecutive_red_candles(df, min_candles=2)
                         
                         pattern_detected = pattern_info['detected']
                         pattern_name = pattern_info['pattern']
                         pattern_type = pattern_info['type']
                         vol_ratio = pattern_info.get('volume_ratio', 1.0)
-                        has_volume_surge = vol_ratio >= 1.5
+                        has_volume_surge = vol_ratio >= 1.25
 
                         # Hitung Volatilitas ATR
                         atr_val = calculate_atr(df, period=14)
@@ -443,9 +442,12 @@ async def scanner_loop():
                             atr_val, current_price, base_leverage=bot_config.leverage
                         )
                         
-                        # Skenario Tier-A Reversal & Breakout untuk LONG
-                        syarat_teknikal_long = near_lower_bb and near_support and is_oversold and htf_trend in ["UPTREND", "SIDEWAYS"]
-                        syarat_pola_long = near_support and pattern_detected and pattern_type == 'LONG' and htf_trend in ["UPTREND", "SIDEWAYS"]
+                        # Skenario Tier-A Reversal & Breakout untuk LONG (High Win-Rate)
+                        syarat_teknikal_long = (
+                            (near_lower_bb and near_support and is_oversold and htf_trend in ["UPTREND", "SIDEWAYS"]) or
+                            (two_green_at_support and (near_lower_bb or is_oversold or near_support) and htf_trend in ["UPTREND", "SIDEWAYS"])
+                        )
+                        syarat_pola_long = (near_support or near_lower_bb) and pattern_detected and pattern_type == 'LONG' and htf_trend in ["UPTREND", "SIDEWAYS"]
                         syarat_smart_buy_long = (
                             near_smart_buy_level
                             and htf_trend in ["UPTREND", "SIDEWAYS"]
@@ -458,18 +460,22 @@ async def scanner_loop():
                             and htf_trend in ["UPTREND", "SIDEWAYS"]
                         )
                         
-                        # Skenario untuk SHORT
+                        # Skenario Tier-A Reversal & Breakdown untuk SHORT (High Win-Rate)
+                        syarat_teknikal_short = (
+                            (near_upper_bb and near_resistance and is_overbought and htf_trend in ["DOWNTREND", "SIDEWAYS"]) or
+                            (two_red_at_resistance and (near_upper_bb or is_overbought or near_resistance) and htf_trend in ["DOWNTREND", "SIDEWAYS"])
+                        )
+                        syarat_pola_short = (near_resistance or near_upper_bb) and pattern_detected and pattern_type == 'SHORT' and htf_trend in ["DOWNTREND", "SIDEWAYS"]
                         syarat_breakout_short = (
                             breakout["ready"]
                             and breakout["score"] >= bot_config.breakout_min_score
                             and last_row["close"] < last_row["open"]
                             and htf_trend in ["DOWNTREND", "SIDEWAYS"]
                         )
-                        syarat_teknikal_short = near_upper_bb and near_resistance and is_overbought and htf_trend in ["DOWNTREND", "SIDEWAYS"]
-                        syarat_pola_short = near_resistance and pattern_detected and pattern_type == 'SHORT' and htf_trend in ["DOWNTREND", "SIDEWAYS"]
                         
-                        # Anti-Bull Trap (Untuk LONG)
+                        # Anti-Trap Filters
                         bull_trap_detected = is_bull_trap(last_row['open'], last_row['high'], last_row['low'], last_row['close']) or (pattern_type == 'CLOSE_LONG')
+                        bear_trap_detected = is_bear_trap(last_row['open'], last_row['high'], last_row['low'], last_row['close']) or (pattern_type == 'CLOSE_SHORT')
                         
                         if syarat_breakout_long:
                             alasan_long = (
@@ -478,6 +484,8 @@ async def scanner_loop():
                             )
                         elif syarat_pola_long:
                             alasan_long = f"Pola Tier-A {pattern_name} (Vol: {vol_ratio:.2f}x, HTF: {htf_trend})"
+                        elif two_green_at_support:
+                            alasan_long = f"Reversal 2x Candle Hijau di Support (Vol: {vol_ratio:.2f}x, HTF: {htf_trend})"
                         elif syarat_smart_buy_long:
                             alasan_long = (
                                 f"Smart Buy level {smart_buy_level['level']:.8f} "
@@ -493,6 +501,8 @@ async def scanner_loop():
                             )
                         elif syarat_pola_short:
                             alasan_short = f"Pola Reversal {pattern_name} (Vol: {vol_ratio:.2f}x, HTF: {htf_trend})"
+                        elif two_red_at_resistance:
+                            alasan_short = f"Reversal 2x Candle Merah di Resistance (Vol: {vol_ratio:.2f}x, HTF: {htf_trend})"
                         else:
                             alasan_short = f"RSI Overbought ({rsi_value:.2f}) di Upper BB (HTF: {htf_trend})"
                         
@@ -501,7 +511,7 @@ async def scanner_loop():
                         reliable_short = is_pattern_reliable(alasan_short) if (syarat_teknikal_short or syarat_pola_short or syarat_breakout_short) else True
                         
                         trigger_long = (syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or syarat_breakout_long) and not bull_trap_detected and reliable_long
-                        trigger_short = (syarat_teknikal_short or syarat_pola_short or syarat_breakout_short) and reliable_short
+                        trigger_short = (syarat_teknikal_short or syarat_pola_short or syarat_breakout_short) and not bear_trap_detected and reliable_short
                         
                         if trigger_long or trigger_short:
                             trade_type = "LONG" if trigger_long else "SHORT"
@@ -858,6 +868,7 @@ async def scanner_loop():
                                     "sl_price": sl_price,
                                     "exchange": exchange_tag,
                                     "is_paper": is_paper_trading,
+                                    "is_bot_trade": True,
                                     "mfe": 0.0,
                                     "mae": 0.0,
                                     "pattern_entry_id": pattern_entry_id,
@@ -1196,17 +1207,17 @@ async def profitable_position_monitor_loop():
                         hold_hours = (datetime.now() - e_time).total_seconds() / 3600.0
                         hold_mins = hold_hours * 60.0
 
-                        should_close_time, time_reason = evaluate_time_based_exit(
+                        should_close_time, exit_type, time_reason = evaluate_time_based_exit(
                             hold_duration_hours=hold_hours,
                             roi_percent=roi_pct,
                             loss_limit_percent=-5.0,
-                            loss_time_limit_hours=2.0,
+                            loss_time_limit_hours=4.0,
                             profit_target_percent=20.0,
-                            profit_time_limit_hours=4.0,
+                            profit_time_limit_hours=8.0,
                         )
 
                         if reached_tp or reached_sl or should_close_time:
-                            close_type = "TAKE_PROFIT" if reached_tp else ("STOP_LOSS" if reached_sl else f"TIME_EXIT ({time_reason})")
+                            close_type = "TAKE_PROFIT" if reached_tp else ("STOP_LOSS" if reached_sl else exit_type)
                             r_pnl = u_pnl
                             comm = curr_price * qty * 0.0004 * 2
                             n_pnl = r_pnl - comm
@@ -1262,7 +1273,7 @@ async def profitable_position_monitor_loop():
                                 "net_pnl": n_pnl,
                                 "mfe": f"+{mfe_pct:.2f}%",
                                 "mae": f"-{mae_pct:.2f}%",
-                                "duration": f"{hold_mins:.1f} menit",
+                                "duration": f"{hold_mins:.1f} menit ({hold_hours:.1f} jam)",
                                 "duration_minutes": hold_mins,
                                 "fingerprint": ai_s.get("fingerprint", t_alasan),
                                 "win_rate": ai_s.get("win_rate", 0.0),
@@ -1270,7 +1281,7 @@ async def profitable_position_monitor_loop():
                                 "wins": ai_s.get("wins", 0),
                                 "losses": ai_s.get("losses", 0),
                                 "alasan_masuk": t_alasan,
-                                "ai_eval_summary": meta.get("ai_eval_summary", ""),
+                                "ai_eval_summary": meta.get("ai_eval_summary", time_reason if should_close_time else ""),
                             }
 
                             try:
@@ -1322,11 +1333,20 @@ async def profitable_position_monitor_loop():
                     entry_price = float(position.get("entry_price", position.get("entryPrice", 0)))
                     symbol = position.get("symbol")
                     
-                    if amount != 0:
-                        meta = bot_state.setdefault("active_trade_meta", {}).get(symbol)
-                        if meta is not None:
-                            meta["mfe"] = max(float(meta.get("mfe", 0.0)), profit)
-                            meta["mae"] = min(float(meta.get("mae", 0.0)), profit)
+                    if amount == 0 or not symbol:
+                        continue
+
+                    meta = bot_state.setdefault("active_trade_meta", {}).get(symbol)
+                    if meta is not None:
+                        meta["mfe"] = max(float(meta.get("mfe", 0.0)), profit)
+                        meta["mae"] = min(float(meta.get("mae", 0.0)), profit)
+
+                    # Pastikan posisi yang BUKAN dibuka oleh bot (manual trade) TIDAK diintervensi oleh bot
+                    is_bot_trade = meta is not None and meta.get("is_bot_trade", False)
+                    if not is_bot_trade:
+                        # Trade dibuka manual oleh user di exchange: bot hanya memantau info di /status Telegram
+                        # tanpa melakukan auto close, time exit, ataupun auto TP/SL agar tidak bertabrakan.
+                        continue
 
                     initial_margin = abs(amount) * entry_price / bot_config.leverage if entry_price > 0 else 0
                     roi_percent = (profit / initial_margin * 100) if initial_margin > 0 else 0
@@ -1352,7 +1372,7 @@ async def profitable_position_monitor_loop():
                         )
                         continue
 
-                    # Evaluasi Time-Based Risk Exit (Hold > 2h & ROI <= -5% atau Hold > 4h & ROI >= +20%)
+                    # Evaluasi Time-Based Risk Exit (Hold >= 4h & ROI <= -5% atau Hold >= 8h & ROI >= +20%)
                     meta = bot_state.get("active_trade_meta", {}).get(symbol, {})
                     entry_time = meta.get("entry_time")
                     if entry_time:
@@ -1361,13 +1381,13 @@ async def profitable_position_monitor_loop():
                         update_time_ms = int(position.get("updateTime", 0))
                         hold_duration_hours = ((now_ms - update_time_ms) / 3600000.0) if update_time_ms > 0 else 0.0
 
-                    should_time_close, time_close_reason = evaluate_time_based_exit(
+                    should_time_close, exit_type, time_close_reason = evaluate_time_based_exit(
                         hold_duration_hours=hold_duration_hours,
                         roi_percent=roi_percent,
                         loss_limit_percent=-5.0,
-                        loss_time_limit_hours=2.0,
+                        loss_time_limit_hours=4.0,
                         profit_target_percent=20.0,
-                        profit_time_limit_hours=4.0,
+                        profit_time_limit_hours=8.0,
                     )
 
                     if amount != 0 and should_time_close:
@@ -1381,11 +1401,63 @@ async def profitable_position_monitor_loop():
                             f"[TIME-BASED AUTO CLOSE] {symbol}: {time_close_reason} "
                             f"status={close_result.get('status')}"
                         )
-                        await send_error_log(
-                            bot,
-                            TELEGRAM_ADMIN_CHAT_ID,
-                            f"⏱️ TIME-BASED AUTO CLOSE {symbol}\n{time_close_reason}\nStatus: {close_result.get('status')}",
-                        )
+                        
+                        hold_mins = hold_duration_hours * 60.0
+                        pos_side = "LONG" if amount > 0 else "SHORT"
+                        is_win_trade = profit > 0
+                        t_alasan = bot_state.get("active_trade_reasons", {}).get(symbol, meta.get("alasan", "Real Trade"))
+                        if t_alasan:
+                            record_trade_result(t_alasan, is_win_trade)
+                            bot_state.get("active_trade_reasons", {}).pop(symbol, None)
+
+                        ex_tag = getattr(bot_config, 'exchange', 'BINANCE').upper()
+                        record_closed_trade({
+                            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "symbol": symbol,
+                            "side": pos_side,
+                            "entry_price": entry_price,
+                            "exit_price": entry_price,
+                            "realized_pnl": profit,
+                            "commission": 0.0,
+                            "funding_fee": 0.0,
+                            "net_pnl": profit,
+                            "margin_usdt": initial_margin,
+                            "leverage": bot_config.leverage,
+                            "mfe": "+0.00%",
+                            "mae": "-0.00%",
+                            "duration_minutes": hold_mins,
+                            "order_type": exit_type,
+                            "exchange": ex_tag,
+                        })
+
+                        o_data = {
+                            "symbol": f"[{ex_tag}] {symbol}",
+                            "order_type": exit_type,
+                            "price": entry_price,
+                            "entry_price": entry_price,
+                            "quantity": abs(amount),
+                            "realized_pnl": profit,
+                            "commission": 0.0,
+                            "funding_fee": 0.0,
+                            "net_pnl": profit,
+                            "mfe": "+0.00%",
+                            "mae": "-0.00%",
+                            "duration": f"{hold_mins:.1f} menit ({hold_duration_hours:.1f} jam)",
+                            "duration_minutes": hold_mins,
+                            "fingerprint": t_alasan,
+                            "win_rate": 0.0,
+                            "total_trades": 0,
+                            "wins": 0,
+                            "losses": 0,
+                            "alasan_masuk": t_alasan,
+                            "ai_eval_summary": time_close_reason,
+                        }
+                        try:
+                            await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, o_data)
+                        except Exception as e_ntf:
+                            print(f"[TELEGRAM] Gagal kirim notifikasi real time exit: {e_ntf}")
+
+                        bot_state.get("active_trade_meta", {}).pop(symbol, None)
                         continue
 
                     if amount != 0 and entry_price > 0:

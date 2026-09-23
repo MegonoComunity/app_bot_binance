@@ -194,7 +194,13 @@ async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dic
 
     summary = trade_summary()
 
-    if 'TAKE_PROFIT' in order_type:
+    if 'SAFETY_CUT_LOSS' in order_type:
+        header_title = "🛡️ **SAFETY AUTO-EXIT (4H LOSS CUT)** 🛡️"
+        trigger_reason = "⏱️ Stale Loss Cut: Hold >= 4 Jam & posisi minus >= 5%/10% (Proteksi Modal AI & Evaluasi Metode)"
+    elif 'SAFETY_PROFIT_LOCK' in order_type:
+        header_title = "🎯 **SAFETY AUTO-EXIT (8H PROFIT LOCK)** 🎯"
+        trigger_reason = "⏱️ Profit Guard: Hold >= 8 Jam & profit >= +20% (Kunci Profit & Hindari Reversal Arah)"
+    elif 'TAKE_PROFIT' in order_type:
         header_title = "🏁 **BOT CLOSED ORDER (TAKE PROFIT)** 🏁"
         trigger_reason = "🎯 Target Take Profit Tercapai (Profit Terkunci)"
     elif 'STOP' in order_type:
