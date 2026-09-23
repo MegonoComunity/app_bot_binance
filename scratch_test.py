@@ -1,15 +1,20 @@
 import asyncio
-from binance.client import AsyncClient
 import os
+import asyncpg
+from dotenv import load_dotenv
 
-async def test():
-    client = await AsyncClient.create()
-    try:
-        await client.futures_time()
-        print(client.response.headers.get('x-mbx-used-weight-1m', 'N/A'))
-    except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        await client.close_connection()
+load_dotenv()
+db_url = os.getenv('DATABASE_URL').split('?')[0]
 
-asyncio.run(test())
+async def check():
+    conn = await asyncpg.connect(db_url)
+    table_names = await conn.fetch("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
+    print("=== STATUS TABEL DATABASE (db_trade_bot) ===")
+    for t in table_names:
+        name = t['table_name']
+        count = await conn.fetchval(f"SELECT COUNT(*) FROM {name}")
+        print(f"[OK] Table '{name}': {count:,} rows")
+    await conn.close()
+
+if __name__ == '__main__':
+    asyncio.run(check())

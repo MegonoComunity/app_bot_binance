@@ -13,15 +13,92 @@ from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.types import FSInputFile
 
+from urllib.parse import urlparse
+import json
+
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
-DB_NAME = os.getenv("DB_NAME", "db_crypto_learn")
+
+DB_URL = os.getenv("DATABASE_URL", "")
+if DB_URL:
+    _parsed = urlparse(DB_URL)
+    DB_HOST = _parsed.hostname or "localhost"
+    DB_PORT = str(_parsed.port or 5432)
+    DB_USER = _parsed.username or "postgres"
+    DB_PASSWORD = _parsed.password or "postgres"
+    DB_NAME = _parsed.path.lstrip("/") or "db_trade_bot"
+else:
+    DB_HOST = os.getenv("DB_HOST", "localhost")
+    DB_PORT = os.getenv("DB_PORT", "5432")
+    DB_USER = os.getenv("DB_USER", "postgres")
+    DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+    DB_NAME = os.getenv("DB_NAME", "db_trade_bot")
+
+
+async def _dump_database_with_asyncpg(sql_path: str) -> bool:
+    """Fallback dump seluruh tabel PostgreSQL ke file SQL menggunakan asyncpg."""
+    try:
+        from database.connection import get_pool
+        pool = await get_pool()
+        
+        tables = [
+            "trade_history",
+            "pattern_memory",
+            "pattern_entries",
+            "trade_analysis_session",
+            "ohlcv_candles",
+        ]
+        
+        with open(sql_path, "w", encoding="utf-8") as f:
+            f.write(f"-- PostgreSQL Database Backup\n")
+            f.write(f"-- Database: {DB_NAME}\n")
+            f.write(f"-- Exported at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            
+            async with pool.acquire() as conn:
+                for tbl in tables:
+                    # Cek apakah tabel ada
+                    exists = await conn.fetchval(
+                        "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = $1)", tbl
+                    )
+                    if not exists:
+                        continue
+                    
+                    f.write(f"\n-- ----------------------------\n-- Table: {tbl}\n-- ----------------------------\n")
+                    rows = await conn.fetch(f"SELECT * FROM {tbl}")
+                    if not rows:
+                        f.write(f"-- No data in {tbl}\n")
+                        continue
+                    
+                    cols = list(rows[0].keys())
+                    cols_joined = ", ".join(f'"{c}"' for c in cols)
+                    
+                    for r in rows:
+                        vals = []
+                        for c in cols:
+                            v = r[c]
+                            if v is None:
+                                vals.append("NULL")
+                            elif isinstance(v, (int, float)):
+                                vals.append(str(v))
+                            elif isinstance(v, bool):
+                                vals.append("TRUE" if v else "FALSE")
+                            elif isinstance(v, dict):
+                                json_str = json.dumps(v, ensure_ascii=False).replace("'", "''")
+                                vals.append(f"'{json_str}'::jsonb")
+                            elif isinstance(v, datetime):
+                                vals.append(f"'{v.isoformat()}'")
+                            else:
+                                clean_v = str(v).replace("'", "''")
+                                vals.append(f"'{clean_v}'")
+                        vals_joined = ", ".join(vals)
+                        f.write(f"INSERT INTO {tbl} ({cols_joined}) VALUES ({vals_joined}) ON CONFLICT DO NOTHING;\n")
+                        
+        return True
+    except Exception as exc:
+        print(f"[ERROR] asyncpg fallback dump gagal: {exc}")
+        return False
 
 
 async def execute_database_backup(bot: Bot | None = None, chat_id: str | None = None) -> bool:
@@ -37,17 +114,35 @@ async def execute_database_backup(bot: Bot | None = None, chat_id: str | None = 
     timestamp = datetime.now().strftime("%Y_%m_%d_%H%M%S")
     os.makedirs("database", exist_ok=True)
     sql_file = f"database/backup_{timestamp}.sql"
-    zip_file = f"database/backup_db_crypto_learn_{timestamp}.zip"
+    zip_file = f"database/backup_{DB_NAME}_{timestamp}.zip"
 
     print(f"[1/3] Mendump database '{DB_NAME}' ke {sql_file}...")
-    pg_dump = r"C:\laragon\bin\postgresql\pgsql-11\bin\pg_dump.exe"
-    if not os.path.exists(pg_dump):
-        pg_dump = "pg_dump"
+    dump_success = False
+    
+    # Coba pg_dump terlebih dahulu
+    pg_dump_paths = [
+        r"C:\laragon\bin\postgresql\pgsql-11\bin\pg_dump.exe",
+        r"C:\Program Files\PostgreSQL\16\bin\pg_dump.exe",
+        r"C:\Program Files\PostgreSQL\15\bin\pg_dump.exe",
+        r"C:\Program Files\PostgreSQL\14\bin\pg_dump.exe",
+        "pg_dump"
+    ]
+    for pg_dump in pg_dump_paths:
+        if os.path.exists(pg_dump) or pg_dump == "pg_dump":
+            cmd = f'set PGPASSWORD={DB_PASSWORD}&& "{pg_dump}" -h {DB_HOST} -p {DB_PORT} -U {DB_USER} -d {DB_NAME} --clean --if-exists --inserts -f "{sql_file}"'
+            ret = os.system(cmd)
+            if ret == 0 and os.path.exists(sql_file) and os.path.getsize(sql_file) > 0:
+                dump_success = True
+                print(f"[OK] pg_dump berhasil menggunakan {pg_dump}.")
+                break
 
-    cmd = f'set PGPASSWORD={DB_PASSWORD}&& "{pg_dump}" -h {DB_HOST} -p {DB_PORT} -U {DB_USER} -d {DB_NAME} --clean --if-exists --inserts -f "{sql_file}"'
-    ret = os.system(cmd)
-    if ret != 0 or not os.path.exists(sql_file):
-        print(f"[ERROR] pg_dump gagal dengan return code {ret}")
+    # Jika pg_dump tidak berhasil, gunakan asyncpg exporter
+    if not dump_success:
+        print("[INFO] Menjalankan fallback native export asyncpg...")
+        dump_success = await _dump_database_with_asyncpg(sql_file)
+
+    if not dump_success or not os.path.exists(sql_file):
+        print(f"[ERROR] Seluruh metode dump database gagal.")
         return False
 
     sql_size_mb = os.path.getsize(sql_file) / (1024 * 1024)
