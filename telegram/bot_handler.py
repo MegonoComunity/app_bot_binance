@@ -298,7 +298,10 @@ async def set_exchange_handler(message: types.Message, command: CommandObject):
 @dp.message(Command("status"))
 async def status_handler(message: types.Message):
     state = bot_state.get("state", "PAUSED")
-    if state not in {"DEGRADED", "KILL_SWITCH", "RECONCILING"}:
+    if state == "DEGRADED" and bot_state.get("websocket_connected"):
+        state = "RUNNING" if bot_state.get("is_running", False) else "PAUSED"
+        bot_state["state"] = state
+    elif state not in {"DEGRADED", "KILL_SWITCH", "RECONCILING"}:
         state = "RUNNING" if bot_state.get("is_running", False) else "PAUSED"
         bot_state["state"] = state
     status_emoji = "🟢 RUNNING" if state == "RUNNING" else f"🔴 {state}"
@@ -381,20 +384,28 @@ async def status_handler(message: types.Message):
                     tp_price = entry * (1 - price_tp_move)
                     sl_price = entry * (1 + price_sl_move)
             
-            update_time_ms = int(p.get('updateTime', 0))
+            update_time_ms = int(p.get('update_time') or p.get('updateTime') or 0)
             if update_time_ms > 0:
                 open_time = datetime.fromtimestamp(update_time_ms / 1000)
-                diff = datetime.now() - open_time
-                hours, remainder = divmod(diff.total_seconds(), 3600)
-                minutes, _ = divmod(remainder, 60)
-                hold_time = f"{int(hours)}j {int(minutes)}m"
+                diff = abs(datetime.now() - open_time)
+                total_sec = diff.total_seconds()
+                if total_sec < 60:
+                    hold_time = f"{int(total_sec)} detik"
+                else:
+                    hours, remainder = divmod(total_sec, 3600)
+                    minutes, _ = divmod(remainder, 60)
+                    hold_time = f"{int(hours)}j {int(minutes)}m" if hours > 0 else f"{int(minutes)}m"
             else:
                 entry_time = meta.get("entry_time") if meta else None
                 if entry_time:
-                    diff = datetime.now() - entry_time
-                    hours, remainder = divmod(diff.total_seconds(), 3600)
-                    minutes, _ = divmod(remainder, 60)
-                    hold_time = f"{int(hours)}j {int(minutes)}m"
+                    diff = abs(datetime.now() - entry_time)
+                    total_sec = diff.total_seconds()
+                    if total_sec < 60:
+                        hold_time = f"{int(total_sec)} detik"
+                    else:
+                        hours, remainder = divmod(total_sec, 3600)
+                        minutes, _ = divmod(remainder, 60)
+                        hold_time = f"{int(hours)}j {int(minutes)}m" if hours > 0 else f"{int(minutes)}m"
                 else:
                     hold_time = "N/A"
                 

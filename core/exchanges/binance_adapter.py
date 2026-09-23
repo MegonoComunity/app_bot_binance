@@ -125,6 +125,7 @@ class BinanceAdapter(BaseExchange):
                         'unrealized_pnl': float(pos.get('unRealizedProfit', 0.0)),
                         'leverage': int(pos.get('leverage', 1)),
                         'liquidation_price': float(pos.get('liquidationPrice', 0.0)),
+                        'update_time': int(pos.get('updateTime', 0)),
                     })
             return active_positions
         except Exception as e:

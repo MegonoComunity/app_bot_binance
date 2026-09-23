@@ -986,6 +986,8 @@ async def user_data_stream_loop():
                 print("Menghubungkan ke User Data Stream (WebSocket)...")
                 async with ts as stream:
                     bot_state["websocket_connected"] = True
+                    if bot_state.get("state") == "DEGRADED":
+                        bot_state["state"] = "RUNNING" if bot_state.get("is_running") else "PAUSED"
                     reconnect_delay = 2
                     print("Berhasil terhubung ke WebSocket Binance.")
                     while True:
