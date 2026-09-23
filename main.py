@@ -1104,7 +1104,10 @@ async def user_data_stream_loop():
                                 "duration_minutes": duration_minutes,
                                 "order_type": order_type,
                             })
-                            await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                            try:
+                                await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                            except Exception as e_notif:
+                                print(f"[TELEGRAM NOTIF ERROR] Gagal kirim notifikasi closed order: {e_notif}")
 
                             import csv
                             waktu_sekarang = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1124,62 +1127,17 @@ async def user_data_stream_loop():
                                 ])
 
                         elif res.get("e") == "ACCOUNT_UPDATE":
-                            for pos in res.get("a", {}).get("P", []):
-                                pos_amt = float(pos.get("pa", 0))
-                                entry_price = float(pos.get("ep", 0))
-                                if pos_amt == 0 or entry_price <= 0:
-                                    continue
-
-                                unrealized_pnl = float(pos.get("up", 0))
-                                symbol = pos.get("s")
-                            avg_price = float(order_info.get("ap", "0.0"))
-
-                            trade_reason = bot_state.get("active_trade_reasons", {}).get(symbol, "Sinyal Teknikal / Auto Trade")
-                            meta = bot_state.get("active_trade_meta", {}).get(symbol, {})
-                            entry_price = float(meta.get("entry_price", 0.0))
-                            actual_leverage = int(meta.get("leverage", 1))
-                            mfe_val = float(meta.get("mfe", 0.0))
-                            mae_val = float(meta.get("mae", 0.0))
-
-                            action = "UNKNOWN"
-                            if is_protective_close:
-                                action = "TAKE_PROFIT" if "TAKE_PROFIT" in order_type else "STOP_LOSS"
-                            elif is_reduce_only_market:
-                                action = "EMERGENCY_CLOSE / MANUAL"
-
-                            is_win = realized_pnl > 0
-                            pattern_name = meta.get("pattern_name", "UNKNOWN")
-                            record_trade_result(pattern_name, is_win)
-                            record_pattern_result(
-                                pattern_name=pattern_name,
-                                timeframe=TIMEFRAME,
-                                profit=realized_pnl,
-                                is_win=is_win,
-                            )
-                            record_closed_trade(
-                                symbol=symbol,
-                                profit=realized_pnl,
-                                commission=0.0,
-                                is_win=is_win,
-                            )
-
-                            await send_order_filled_notification(
-                                bot=bot,
-                                chat_id=TELEGRAM_ADMIN_CHAT_ID,
-                                symbol=symbol,
-                                action=action,
-                                realized_pnl=realized_pnl,
-                                close_price=avg_price,
-                                trade_reason=trade_reason,
-                                entry_price=entry_price,
-                                leverage=actual_leverage,
-                                mfe=mfe_val,
-                                mae=mae_val,
-                            )
-
-                            bot_state.get("active_trade_reasons", {}).pop(symbol, None)
-                            bot_state.get("active_trade_meta", {}).pop(symbol, None)
-                            bot_state.setdefault("protection_recovery_suppressed", set()).discard(symbol)
+                            # Tangani update posisi akun secara aman
+                            try:
+                                for pos in res.get("a", {}).get("P", []):
+                                    pos_amt = float(pos.get("pa", 0))
+                                    sym = pos.get("s")
+                                    if pos_amt == 0 and sym:
+                                        bot_state.get("active_trade_reasons", {}).pop(sym, None)
+                                        bot_state.get("active_trade_meta", {}).pop(sym, None)
+                                        bot_state.setdefault("protection_recovery_suppressed", set()).discard(sym)
+                            except Exception as e_acc:
+                                logger.debug(f"[ACCOUNT_UPDATE] Error: {e_acc}")
 
             except Exception as e:
                 bot_state["websocket_connected"] = False
@@ -1467,7 +1425,10 @@ async def profitable_position_monitor_loop():
                                 "duration_minutes": duration_minutes,
                                 "order_type": f"AUTO_{reason}",
                             })
-                            await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                            try:
+                                await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                            except Exception as e_fill_notif:
+                                print(f"[TELEGRAM] Gagal kirim notifikasi closed order monitor: {e_fill_notif}")
                         continue
 
                     # Evaluasi Time-Based Risk Exit (Hold > 2h & ROI <= -5% atau Hold > 4h & ROI >= +20%)
