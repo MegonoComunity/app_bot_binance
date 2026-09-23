@@ -61,6 +61,7 @@ from core.pattern_memory import (
 )
 from indicators.smart_buy import find_frequent_open_close_level, is_near_frequent_level
 from indicators.dormant_breakout import calculate_dormant_breakout_score
+from indicators.pre_pump_detector import detect_explosive_pre_pump
 
 from ml_vision.chart_renderer import render_ohlcv_to_image
 from ml_vision.preprocessor import preprocess_chart_image
@@ -278,6 +279,7 @@ async def scanner_loop():
                     logger.debug(f"[INTEL] Update market intel skipped: {e_intel}")
 
                 batch_size = 1 if bot_config.scanner_mode == "per_coin" else SCAN_BATCH_SIZE_ENV
+                active_pump_alerts: List[Dict[str, Any]] = []
                 for i in range(0, len(all_symbols), batch_size):
                     batch_symbols = all_symbols[i:i+batch_size]
                     tahap = (i // batch_size) + 1
@@ -443,6 +445,17 @@ async def scanner_loop():
                         support_zones = detect_support_zones(df)
                         pattern_info = detect_candlestick_patterns(df)
                         
+                        # Deteksi Pre-Pump & ATH Breakout (Target +10% s.d +50% | 1000% ROI on 20x)
+                        pump_intel = detect_explosive_pre_pump(df, symbol=symbol)
+                        if pump_intel.get("is_alert"):
+                            active_pump_alerts.append(pump_intel)
+                            bot_state["pre_pump_alerts"] = list(active_pump_alerts)
+                            print(
+                                f"🔥 [PUMP RADAR] {symbol} ({pump_intel['tier']}) | "
+                                f"Score: {pump_intel['score']}/100 | RVOL: {pump_intel['rvol']}x | "
+                                f"TP1: {pump_intel['tp1_price']:.6f} (+10%) | TP3: {pump_intel['tp3_price']:.6f} (+50% / +1000% ROI 20x)"
+                            )
+
                         last_row = df.iloc[-1]
                         current_price = last_row['close']
                         
@@ -984,16 +997,18 @@ async def user_data_stream_loop():
                                 continue
 
                             order_type = order_info.get("o", "")
+                            realized_pnl = float(order_info.get("rp", "0.0"))
                             is_protective_close = "TAKE_PROFIT" in order_type or "STOP" in order_type
                             is_reduce_only_market = (
                                 order_type == "MARKET"
                                 and str(order_info.get("R", "")).lower() == "true"
                             )
-                            if not is_protective_close and not is_reduce_only_market:
+                            is_closing_trade = is_protective_close or is_reduce_only_market or (realized_pnl != 0)
+                            if not is_closing_trade:
                                 continue
 
                             symbol = order_info.get("s")
-                            realized_pnl = float(order_info.get("rp", "0.0"))
+
                             commission = float(order_info.get("n", 0) or 0)
                             meta = bot_state.get("active_trade_meta", {}).pop(symbol, {})
                             duration_minutes = None
@@ -1379,17 +1394,78 @@ async def profitable_position_monitor_loop():
                             "SELL" if amount > 0 else "BUY",
                             abs(amount),
                         )
-                        reason = "TP" if reached_take_profit else "SL"
+                        reason = "TAKE_PROFIT" if reached_take_profit else "STOP_LOSS"
                         print(
                             f"[ROI AUTO CLOSE] {symbol} {reason}: "
                             f"ROI={roi_percent:+.2f}% status={close_result.get('status')}"
                         )
-                        await send_error_log(
-                            bot,
-                            TELEGRAM_ADMIN_CHAT_ID,
-                            f"ROI AUTO CLOSE {symbol}: {reason} tercapai "
-                            f"({roi_percent:+.2f}%). Status: {close_result.get('status')}",
-                        )
+                        if close_result.get("status") == "success":
+                            meta = bot_state.get("active_trade_meta", {}).pop(symbol, {})
+                            duration_minutes = None
+                            if meta.get("entry_time"):
+                                duration_minutes = round((datetime.now() - meta["entry_time"]).total_seconds() / 60, 1)
+
+                            margin_val = float(meta.get("margin_usdt", initial_margin) or initial_margin)
+                            mfe_val = float(meta.get("mfe", profit) or profit)
+                            mae_val = float(meta.get("mae", 0.0) or 0.0)
+                            if profit > 0:
+                                mfe_val = max(mfe_val, profit)
+                            if profit < 0:
+                                mae_val = min(mae_val, profit)
+
+                            mfe_pct = (mfe_val / margin_val * 100) if margin_val > 0 else 0.0
+                            mae_pct = (abs(mae_val) / margin_val * 100) if margin_val > 0 else 0.0
+                            mfe_str = f"+{mfe_pct:.2f}%" if margin_val > 0 else f"{mfe_val:+.4f}"
+                            mae_str = f"-{mae_pct:.2f}%" if margin_val > 0 else f"{mae_val:+.4f}"
+
+                            exit_price = float(close_result.get("price") or (entry_price + (profit / amount) if amount != 0 else entry_price))
+
+                            order_data = {
+                                "symbol": symbol,
+                                "order_type": f"AUTO_{reason}",
+                                "price": f"{exit_price:.6f}",
+                                "entry_price": meta.get("entry_price", entry_price),
+                                "quantity": abs(amount),
+                                "realized_pnl": profit,
+                                "commission": 0.0,
+                                "funding_fee": 0.0,
+                                "net_pnl": profit,
+                                "mfe": mfe_str,
+                                "mae": mae_str,
+                                "duration": f"{duration_minutes:.1f} menit" if duration_minutes is not None else "N/A",
+                                "duration_minutes": duration_minutes,
+                                "fingerprint": meta.get("fingerprint", meta.get("alasan", "Kombinasi Standar")),
+                                "win_rate": 0.0,
+                                "total_trades": 0,
+                                "wins": 0,
+                                "losses": 0,
+                                "alasan_masuk": meta.get("alasan", "Sinyal Multi-Indikator AI"),
+                                "ai_eval_summary": meta.get("ai_eval_summary", ""),
+                            }
+                            pattern_entry_id = meta.get("pattern_entry_id")
+                            if pattern_entry_id:
+                                record_pattern_result(pattern_entry_id, profit > 0, profit)
+                            alasan = bot_state.get("active_trade_reasons", {}).pop(symbol, None)
+                            if alasan:
+                                record_trade_result(alasan, profit > 0)
+                            record_closed_trade({
+                                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "symbol": symbol,
+                                "side": "LONG" if amount > 0 else "SHORT",
+                                "entry_price": entry_price,
+                                "exit_price": exit_price,
+                                "realized_pnl": profit,
+                                "commission": 0.0,
+                                "funding_fee": 0.0,
+                                "net_pnl": profit,
+                                "margin_usdt": margin_val,
+                                "leverage": bot_config.leverage,
+                                "mfe": mfe_val,
+                                "mae": mae_val,
+                                "duration_minutes": duration_minutes,
+                                "order_type": f"AUTO_{reason}",
+                            })
+                            await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
                         continue
 
                     # Evaluasi Time-Based Risk Exit (Hold > 2h & ROI <= -5% atau Hold > 4h & ROI >= +20%)
@@ -1421,11 +1497,34 @@ async def profitable_position_monitor_loop():
                             f"[TIME-BASED AUTO CLOSE] {symbol}: {time_close_reason} "
                             f"status={close_result.get('status')}"
                         )
-                        await send_error_log(
-                            bot,
-                            TELEGRAM_ADMIN_CHAT_ID,
-                            f"⏱️ TIME-BASED AUTO CLOSE {symbol}\n{time_close_reason}\nStatus: {close_result.get('status')}",
-                        )
+                        if close_result.get("status") == "success":
+                            meta = bot_state.get("active_trade_meta", {}).pop(symbol, {})
+                            duration_minutes = round(hold_duration_hours * 60, 1)
+                            margin_val = float(meta.get("margin_usdt", initial_margin) or initial_margin)
+                            exit_price = float(close_result.get("price") or (entry_price + (profit / amount) if amount != 0 else entry_price))
+                            order_data = {
+                                "symbol": symbol,
+                                "order_type": "TIME_BASED_EXIT",
+                                "price": f"{exit_price:.6f}",
+                                "entry_price": meta.get("entry_price", entry_price),
+                                "quantity": abs(amount),
+                                "realized_pnl": profit,
+                                "commission": 0.0,
+                                "funding_fee": 0.0,
+                                "net_pnl": profit,
+                                "mfe": f"{profit:+.4f}",
+                                "mae": "0.00%",
+                                "duration": f"{duration_minutes:.1f} menit",
+                                "duration_minutes": duration_minutes,
+                                "fingerprint": meta.get("fingerprint", meta.get("alasan", "Kombinasi Standar")),
+                                "win_rate": 0.0,
+                                "total_trades": 0,
+                                "wins": 0,
+                                "losses": 0,
+                                "alasan_masuk": f"{meta.get('alasan', 'Sinyal AI')} | Trigger: {time_close_reason}",
+                                "ai_eval_summary": meta.get("ai_eval_summary", ""),
+                            }
+                            await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
                         continue
 
                     if amount != 0 and entry_price > 0:
@@ -1472,8 +1571,9 @@ async def profitable_position_monitor_loop():
                                 f"[PROTECTION RECOVERY] {symbol}: "
                                 f"TP/SL status={protection.get('status')}"
                             )
-                            if protection.get("status") == "existing":
+                            if protection.get("status") in {"existing", "success", "error"}:
                                 suppressed_symbols.add(symbol)
+
 
                     # Auto close jika profit telah tercapai sesuai durasi
                     update_time_ms = int(position.get("updateTime", 0))
@@ -1491,12 +1591,34 @@ async def profitable_position_monitor_loop():
                         f"[AUTO CLOSE] {symbol} profit={profit:.4f} USDT "
                         f"age={age_ms / 3600000:.2f}h status={status}"
                     )
-                    await send_error_log(
-                        bot,
-                        TELEGRAM_ADMIN_CHAT_ID,
-                        f"AUTO CLOSE {symbol}: posisi profit {profit:.4f} USDT "
-                        f"dan umur {age_ms / 3600000:.2f} jam. Status: {status}",
-                    )
+                    if status == "success":
+                        meta = bot_state.get("active_trade_meta", {}).pop(symbol, {})
+                        duration_minutes = round(age_ms / 60000, 1)
+                        exit_price = float(close_result.get("price") or (entry_price + (profit / amount) if amount != 0 else entry_price))
+                        order_data = {
+                            "symbol": symbol,
+                            "order_type": "PROFIT_HOLDING_AUTO_CLOSE",
+                            "price": f"{exit_price:.6f}",
+                            "entry_price": meta.get("entry_price", entry_price),
+                            "quantity": abs(amount),
+                            "realized_pnl": profit,
+                            "commission": 0.0,
+                            "funding_fee": 0.0,
+                            "net_pnl": profit,
+                            "mfe": f"{profit:+.4f}",
+                            "mae": "0.00%",
+                            "duration": f"{duration_minutes:.1f} menit",
+                            "duration_minutes": duration_minutes,
+                            "fingerprint": meta.get("fingerprint", meta.get("alasan", "Kombinasi Standar")),
+                            "win_rate": 0.0,
+                            "total_trades": 0,
+                            "wins": 0,
+                            "losses": 0,
+                            "alasan_masuk": f"{meta.get('alasan', 'Sinyal AI')} | Auto-close holding profit",
+                            "ai_eval_summary": meta.get("ai_eval_summary", ""),
+                        }
+                        await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+
             except Exception as monitor_error:
                 err_str = str(monitor_error)
                 print(f"[POSITION MONITOR] {monitor_error}")

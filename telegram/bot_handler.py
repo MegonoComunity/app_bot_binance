@@ -6,8 +6,10 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from config.settings import (
     TELEGRAM_ADMIN_CHAT_ID,
+    TELEGRAM_ERROR_CHAT_ID,
     TELEGRAM_ADMIN_USER_IDS,
     TELEGRAM_BOT_TOKEN,
+
     AUTO_CLOSE_PROFIT_HOURS_ENV,
     POSITION_MONITOR_INTERVAL_ENV,
     RSI_LENGTH_ENV,
@@ -29,14 +31,23 @@ dp = Dispatcher()
 
 class AdminOnlyMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
-        user = getattr(event, "from_user", None)
-        chat = getattr(event, "chat", None)
+        user = data.get("event_from_user") or getattr(event, "from_user", None)
+        chat = data.get("event_chat") or getattr(event, "chat", None) or getattr(getattr(event, "message", None), "chat", None)
+
+        if not user:
+            return await handler(event, data)
+
+        admin_chat_str = str(TELEGRAM_ADMIN_CHAT_ID or "").strip()
+        admin_err_str = str(TELEGRAM_ERROR_CHAT_ID or "").strip()
+        user_id_str = str(getattr(user, "id", ""))
+        chat_id_str = str(getattr(chat, "id", "")) if chat else ""
 
         is_authorized = (
-            user is not None
-            and chat is not None
-            and user.id in TELEGRAM_ADMIN_USER_IDS
-            and chat.id == TELEGRAM_ADMIN_CHAT_ID
+            chat_id_str == admin_chat_str
+            or chat_id_str == admin_err_str
+            or user_id_str == admin_chat_str
+            or (user.id in TELEGRAM_ADMIN_USER_IDS if TELEGRAM_ADMIN_USER_IDS else False)
+            or not admin_chat_str  # Jika belum diatur di env
         )
         if not is_authorized:
             return None
@@ -45,6 +56,8 @@ class AdminOnlyMiddleware(BaseMiddleware):
 
 
 dp.message.middleware(AdminOnlyMiddleware())
+dp.callback_query.middleware(AdminOnlyMiddleware())
+
 
 # Setup Folder Dataset
 os.makedirs("dataset/BULLISH", exist_ok=True)
@@ -66,12 +79,14 @@ bot_state = {
     "is_running": False,
     "state": "PAUSED",
     "websocket_connected": False,
+    "pre_pump_alerts": [],
 }
 
 async def setup_bot_commands(bot_instance: Bot) -> None:
     """Reset dan daftarkan perintah resmi bot ke Telegram."""
     commands = [
         BotCommand(command="start", description="Buka Menu Utama & Keyboard"),
+        BotCommand(command="help", description="Panduan & Daftar Perintah Lengkap"),
         BotCommand(command="scan_order_paper", description="🔵 Mulai Scan & Simulasi Paper Trade"),
         BotCommand(command="scan_order_real", description="🟢 Mulai Scan & Order REAL Account"),
         BotCommand(command="status", description="Cek Saldo & Posisi Terbuka"),
@@ -117,10 +132,86 @@ async def start_handler(message: types.Message):
         f"🏛️ **Exchange:** `{active_ex}` | 🎯 **Mode:** `{curr_mode}`\n\n"
         f"• Gunakan tombol **🔵 Scan Order Paper** untuk simulasi tanpa resiko.\n"
         f"• Gunakan tombol **🟢 Scan Order Real** untuk eksekusi order dengan akun nyata.\n"
+        f"• Ketik `/help` atau klik **📞 Bantuan** untuk melihat panduan lengkap.\n\n"
         f"Silakan pilih menu di bawah ini:",
         reply_markup=get_main_keyboard(),
         parse_mode="Markdown",
     )
+
+@dp.message(Command("help"))
+@dp.message(Command("bantuan"))
+@dp.message(F.text == "📞 Bantuan")
+async def help_handler(message: types.Message):
+    active_ex = getattr(bot_config, "active_exchange", "BINANCE")
+    curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
+    help_text = (
+        f"📖 **PANDUAN & DAFTAR PERINTAH BOT** 🤖\n"
+        f"────────────────────────\n"
+        f"🏛️ **Exchange Aktif:** `{active_ex}`\n"
+        f"🎯 **Mode Trading:** `{curr_mode}`\n"
+        f"⚡ **Status Scan:** `{bot_state.get('state', 'PAUSED')}`\n\n"
+        f"🔹 **KONTROL SCANNER & TRADING:**\n"
+        f"• `/scan_order_paper` — Mulai Scan + Paper Trading (Simulasi Aman)\n"
+        f"• `/scan_order_real` — Mulai Scan + Eksekusi Order Nyata (Akun Real)\n"
+        f"• `/pause` — Jeda sementara scanning koin\n"
+        f"• `/resume` — Lanjutkan kembali scanning\n"
+        f"• `/close_all` — Tutup darurat semua posisi aktif di exchange\n\n"
+        f"🔹 **MONITORING & KEUANGAN:**\n"
+        f"• `/status` — Cek Saldo Wallet, Floating PnL, & Posisi Terbuka\n"
+        f"• `/hitung_margin` — Kalkulator perhitungan margin aman sesuai modal\n"
+        f"• `/reset_demo` — Reset saldo simulasi ($100) & riwayat winrate\n"
+        f"• `/analisa <koin>` — Analisa teknikal & AI instan (contoh: `/analisa BTCUSDT`)\n"
+        f"• `/backup_db` — Export dan kirim backup database ke Telegram\n\n"
+        f"🔹 **PENGATURAN PARAMETER:**\n"
+        f"• `/set_exchange <binance|bitunix>` — Ganti exchange aktif (Binance / Bitunix)\n"
+        f"• `/set_modal <nominal>` — Set modal awal simulasi (contoh: `/set_modal 500`)\n"
+        f"• `/set_margin <auto|nominal>` — Set mode margin (contoh: `/set_margin 50`)\n"
+        f"• `/set_risk <persen>` — Risk per trade dalam % saldo (contoh: `/set_risk 2.0`)\n"
+        f"• `/set_leverage <angka>` — Ubah leverage (contoh: `/set_leverage 20`)\n"
+        f"• `/set_tp <persen>` — Ubah target Take Profit ROI % (contoh: `/set_tp 40`)\n"
+        f"• `/set_sl <persen>` — Ubah batasan Stop Loss ROI % (contoh: `/set_sl 25`)\n"
+        f"• `/pengaturan` — Buka dasbor tombol interaktif pengaturan\n"
+        f"────────────────────────\n"
+        f"💡 *Tip:* Gunakan menu keyboard di bawah untuk akses cepat sekali klik."
+    )
+    await message.answer(help_text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+
+@dp.message(Command("set_exchange"))
+async def set_exchange_handler(message: types.Message, command: CommandObject):
+    """
+    Mengubah exchange aktif secara dinamis: /set_exchange binance atau /set_exchange bitunix
+    """
+    args = (command.args or "").strip().upper()
+    if args not in {"BINANCE", "BITUNIX"}:
+        current_ex = getattr(bot_config, "active_exchange", "BINANCE")
+        text = (
+            f"🏛️ **PILIH EXCHANGE AKTIF**\n"
+            f"────────────────────────\n"
+            f"Exchange saat ini: **{current_ex}**\n\n"
+            f"Ketik perintah dengan nama exchange:\n"
+            f"• `/set_exchange binance` — Aktifkan Binance Futures\n"
+            f"• `/set_exchange bitunix` — Aktifkan Bitunix Futures\n"
+        )
+        await message.answer(text, parse_mode="Markdown")
+        return
+
+    try:
+        old_ex = getattr(bot_config, "active_exchange", "BINANCE")
+        bot_config.update_active_exchange(args)
+        new_adapter = get_exchange_adapter(args)
+        await new_adapter.init()
+        bot_state["client"] = new_adapter
+        
+        await message.answer(
+            f"✅ **Exchange Berhasil Diubah!**\n"
+            f"Sebelumnya: `{old_ex}` ➔ Sekarang: **`{args}`**\n\n"
+            f"Scanner dan eksekutor order sekarang terhubung ke **{args}**.",
+            reply_markup=get_main_keyboard(),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await message.answer(f"❌ Gagal switch exchange: {e}")
+
 
 import time
 from datetime import datetime
@@ -249,24 +340,46 @@ async def status_handler(message: types.Message):
             elif mark <= 0:
                 mark = entry
                 
-            meta = bot_state.setdefault("active_trade_meta", {}).get(symbol)
-            if meta is not None:
+            meta = bot_state.setdefault("active_trade_meta", {}).get(symbol, {})
+            if meta:
                 meta["mfe"] = max(float(meta.get("mfe", 0.0)), pnl)
                 meta["mae"] = min(float(meta.get("mae", 0.0)), pnl)
                 mfe_val = float(meta.get("mfe", 0.0))
             else:
                 mfe_val = max(0.0, pnl)
 
-            leverage = float(p.get('leverage', 0) or bot_config.leverage)
-            margin_target = abs(amt) * entry / leverage if leverage > 0 else 0
-            price_tp_move = (bot_config.tp_percent / 100) / leverage if leverage > 0 else 0
-            price_sl_move = (bot_config.sl_percent / 100) / leverage if leverage > 0 else 0
-            if amt > 0:
-                tp_price = entry * (1 + price_tp_move)
-                sl_price = entry * (1 - price_sl_move)
+            # 1. Ambil leverage yang benar (prioritas: meta -> position -> config)
+            raw_pos_lev = p.get('leverage')
+            pos_lev = int(raw_pos_lev) if raw_pos_lev and int(raw_pos_lev) > 1 else None
+            leverage = int(meta.get("leverage") or pos_lev or bot_config.leverage or 20)
+            if leverage <= 0:
+                leverage = int(bot_config.leverage or 20)
+
+            # 2. Ambil margin modal yang sebenarnya digunakan (bukan notional)
+            if meta.get("margin_usdt") and float(meta["margin_usdt"]) > 0:
+                margin_target = float(meta["margin_usdt"])
+            elif p.get("positionInitialMargin") and float(p.get("positionInitialMargin")) > 0:
+                margin_target = float(p.get("positionInitialMargin"))
+            elif p.get("initialMargin") and float(p.get("initialMargin")) > 0:
+                margin_target = float(p.get("initialMargin"))
             else:
-                tp_price = entry * (1 - price_tp_move)
-                sl_price = entry * (1 + price_sl_move)
+                margin_target = (abs(amt) * entry / leverage) if leverage > 0 else (abs(amt) * entry)
+
+            pnl_percent = (pnl / margin_target * 100) if margin_target > 0 else 0.0
+
+            # 3. Ambil target TP & SL yang persis sesuai trade setup order
+            if meta.get("tp_price") and meta.get("sl_price"):
+                tp_price = float(meta["tp_price"])
+                sl_price = float(meta["sl_price"])
+            else:
+                price_tp_move = (bot_config.tp_percent / 100) / leverage if leverage > 0 else 0
+                price_sl_move = (bot_config.sl_percent / 100) / leverage if leverage > 0 else 0
+                if amt > 0:
+                    tp_price = entry * (1 + price_tp_move)
+                    sl_price = entry * (1 - price_sl_move)
+                else:
+                    tp_price = entry * (1 - price_tp_move)
+                    sl_price = entry * (1 + price_sl_move)
             
             update_time_ms = int(p.get('updateTime', 0))
             if update_time_ms > 0:
@@ -276,7 +389,14 @@ async def status_handler(message: types.Message):
                 minutes, _ = divmod(remainder, 60)
                 hold_time = f"{int(hours)}j {int(minutes)}m"
             else:
-                hold_time = "N/A"
+                entry_time = meta.get("entry_time") if meta else None
+                if entry_time:
+                    diff = datetime.now() - entry_time
+                    hours, remainder = divmod(diff.total_seconds(), 3600)
+                    minutes, _ = divmod(remainder, 60)
+                    hold_time = f"{int(hours)}j {int(minutes)}m"
+                else:
+                    hold_time = "N/A"
                 
             entry_str = f"{entry:.8f}".rstrip('0').rstrip('.')
             mark_str = f"{mark:.8f}".rstrip('0').rstrip('.')
@@ -286,7 +406,7 @@ async def status_handler(message: types.Message):
 
             p_info = (
                 f"🔸 **{symbol}**\n"
-                f"   Margin target: `{margin_target:.4f} USDT`\n"
+                f"   Margin: `{margin_target:.2f} USDT` | Lev: `{leverage}x`\n"
                 f"   PNL berjalan: `{pnl:+.2f} USDT ({pnl_percent:+.2f}%)` | MFE: `{mfe_str}`\n"
                 f"   Harga entry: `{entry_str}`\n"
                 f"   Harga sekarang: `{mark_str}`\n"
@@ -294,6 +414,7 @@ async def status_handler(message: types.Message):
                 f"   Harga target SL: `{sl_str}`\n"
                 f"   Hold: `{hold_time}`\n"
             )
+
                       
             if amt > 0:
                 longs.append(p_info)

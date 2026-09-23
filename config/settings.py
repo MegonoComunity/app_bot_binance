@@ -26,6 +26,9 @@ TELEGRAM_ADMIN_USER_IDS = {
     for value in os.getenv("TELEGRAM_ADMIN_USER_IDS", "").split(",")
     if value.strip().lstrip("-").isdigit()
 }
+if not TELEGRAM_ADMIN_USER_IDS and TELEGRAM_ADMIN_CHAT_ID and TELEGRAM_ADMIN_CHAT_ID.lstrip("-").isdigit():
+    TELEGRAM_ADMIN_USER_IDS.add(int(TELEGRAM_ADMIN_CHAT_ID))
+
 
 TRADING_MODE = os.getenv("TRADING_MODE", "PAPER_TRADING").upper()
 LEVERAGE_ENV = int(os.getenv("LEVERAGE", "20"))

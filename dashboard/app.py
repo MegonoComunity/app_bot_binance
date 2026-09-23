@@ -153,10 +153,10 @@ async def api_overview(request: web.Request) -> web.Response:
                     mark = entry + (pnl / amt) if amt != 0 and entry > 0 else entry
                     meta = active_meta.get(sym, {})
                     entry_time = meta.get("entry_time")
-                    duration_min = round((datetime.now() - entry_time).total_seconds() / 60, 1) if entry_time else 0
-                    leverage = float(p.get("leverage", 0) or meta.get("leverage", 10))
-                    init_margin = abs(amt) * entry / leverage if leverage > 0 else 0
+                    leverage = int(meta.get("leverage") or p.get("leverage") or 20)
+                    init_margin = float(meta.get("margin_usdt") or (abs(amt) * entry / leverage if leverage > 0 else 0))
                     pnl_pct = (pnl / init_margin * 100) if init_margin > 0 else 0
+
 
                     mfe_val = max(float(meta.get("mfe", 0) or 0), pnl)
                     mae_val = min(float(meta.get("mae", 0) or 0), pnl)
@@ -258,6 +258,7 @@ async def api_overview(request: web.Request) -> web.Response:
         "monthly_stats": monthly_stats,
         "daily_stats": daily_stats,
         "market_intel": market_intel,
+        "pre_pump_alerts": bot_state.get("pre_pump_alerts", []),
     }
     return web.json_response(data)
 

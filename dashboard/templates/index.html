@@ -431,6 +431,205 @@
       color: var(--accent-cyan);
     }
 
+    /* Pre-Pump & ATH Breakout Explosion Radar */
+    .pump-radar-card {
+      background: linear-gradient(135deg, rgba(26, 12, 36, 0.85) 0%, rgba(15, 22, 36, 0.85) 100%);
+      border: 1px solid rgba(255, 51, 102, 0.3);
+      border-radius: 16px;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(255, 51, 102, 0.1);
+      backdrop-filter: blur(16px);
+    }
+    .pump-radar-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #ff3366, #ff007f, #f3ba2f, #00f2fe);
+    }
+    .pump-radar-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .pump-radar-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .radar-live-beacon {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ff3366;
+      box-shadow: 0 0 12px #ff3366;
+      animation: beacon-pulse 1.4s infinite ease-in-out;
+    }
+    @keyframes beacon-pulse {
+      0% { transform: scale(0.9); opacity: 0.6; }
+      50% { transform: scale(1.4); opacity: 1; box-shadow: 0 0 16px #ff3366; }
+      100% { transform: scale(0.9); opacity: 0.6; }
+    }
+    .leverage-tag {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #ff99bb;
+      background: rgba(255, 51, 102, 0.15);
+      border: 1px solid rgba(255, 51, 102, 0.3);
+      padding: 3px 8px;
+      border-radius: 6px;
+      letter-spacing: 0.3px;
+    }
+    .badge-radar-status {
+      background: rgba(0, 242, 254, 0.15);
+      color: var(--accent-cyan);
+      border: 1px solid rgba(0, 242, 254, 0.3);
+    }
+    .badge-pump-count {
+      background: rgba(255, 51, 102, 0.2);
+      color: #ff3366;
+      border: 1px solid rgba(255, 51, 102, 0.4);
+      font-weight: 700;
+    }
+    .pump-alerts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 16px;
+    }
+    .pump-alert-card {
+      background: rgba(12, 16, 28, 0.7);
+      border: 1px solid rgba(255, 51, 102, 0.25);
+      border-radius: 12px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: all 0.25s ease;
+      position: relative;
+    }
+    .pump-alert-card:hover {
+      border-color: rgba(255, 51, 102, 0.6);
+      box-shadow: 0 8px 24px rgba(255, 51, 102, 0.15);
+      transform: translateY(-2px);
+    }
+    .pump-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .pump-card-symbol {
+      font-size: 1.25rem;
+      font-weight: 800;
+      font-family: 'Outfit', sans-serif;
+      color: #fff;
+    }
+    .pump-badge-tier {
+      font-size: 0.72rem;
+      font-weight: 800;
+      padding: 4px 10px;
+      border-radius: 6px;
+      letter-spacing: 0.5px;
+    }
+    .tier-ignition {
+      background: rgba(255, 51, 102, 0.25);
+      color: #ff3366;
+      border: 1px solid #ff3366;
+      animation: beacon-pulse 1.8s infinite;
+    }
+    .tier-accumulation {
+      background: rgba(243, 186, 47, 0.2);
+      color: #f3ba2f;
+      border: 1px solid #f3ba2f;
+    }
+    .pump-card-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.25);
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .pump-metric-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 2px;
+    }
+    .pump-metric-label {
+      font-size: 0.68rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+    .pump-metric-val {
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .pump-targets-roadmap {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      padding: 10px;
+      background: rgba(0, 230, 118, 0.04);
+      border: 1px solid rgba(0, 230, 118, 0.15);
+      border-radius: 8px;
+    }
+    .pump-target-step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 2px;
+    }
+    .pump-target-title {
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: var(--accent-emerald);
+    }
+    .pump-target-price {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .pump-target-roi {
+      font-size: 0.75rem;
+      font-weight: 800;
+      color: #69f0ae;
+    }
+    .pump-card-reason {
+      font-size: 0.8rem;
+      color: #cbd5e1;
+      line-height: 1.4;
+      background: rgba(255, 255, 255, 0.02);
+      padding: 8px 10px;
+      border-radius: 6px;
+      border-left: 3px solid #ff3366;
+    }
+    .pump-radar-idle {
+      text-align: center;
+      padding: 24px 20px;
+      color: var(--text-dim);
+      font-size: 0.9rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
     /* Active Positions Section */
     .active-positions-section {
       background: var(--bg-card);
@@ -787,6 +986,26 @@
         <div class="intel-advice-text" id="intel-advice-text">
           <strong>Saran & Rekomendasi Eksekusi AI:</strong> Mayoritas altcoin (77%) menempel di Upper Bollinger Band dengan RSI > 65. Bot saat ini bersiaga menunggu konfirmasi koreksi/pullback ke Support & Lower BB agar tidak terkena Bull Trap di pucuk.
         </div>
+      </div>
+    </section>
+
+    <!-- 🚀 PRE-PUMP & ATH BREAKOUT EXPLOSION RADAR -->
+    <section class="pump-radar-card" id="pump-radar-section">
+      <div class="pump-radar-header">
+        <div class="pump-radar-title">
+          <div class="radar-live-beacon"></div>
+          <i data-lucide="flame" style="color: #ff3366; width: 22px;"></i>
+          <span>PRE-PUMP & ATH BREAKOUT RADAR</span>
+          <span class="leverage-tag">🔥 POTENSI +10% s.d +50% (+200% s.d +1000% ROI ON 20x)</span>
+        </div>
+        <div class="radar-badges">
+          <span class="badge badge-radar-status" id="pump-radar-status-badge">📡 LIVE SCANNING 80+ COINS</span>
+          <span class="badge badge-pump-count" id="pump-radar-count-badge">0 SINYAL</span>
+        </div>
+      </div>
+
+      <div id="pump-radar-cards-container">
+        <!-- Live Alert Cards populated by JS -->
       </div>
     </section>
 
@@ -1307,6 +1526,9 @@
         // Render Market Intelligence & Advice Banner
         renderMarketIntel(data.market_intel);
 
+        // Render Pre-Pump & ATH Breakout Radar
+        renderPumpRadar(data.pre_pump_alerts || []);
+
         // Render Daily & Monthly Performance Tables
         renderPerformanceTables(data.monthly_stats || [], data.daily_stats || []);
 
@@ -1378,6 +1600,104 @@
         const elAdv = document.getElementById('intel-advice-text');
         if (elAdv) elAdv.innerHTML = `<strong>Saran & Rekomendasi Eksekusi AI:</strong> ${intel.recommendation}`;
       }
+    }
+
+    // Render Pre-Pump & ATH Breakout Radar Alerts
+    function renderPumpRadar(alerts) {
+      const container = document.getElementById('pump-radar-cards-container');
+      const countBadge = document.getElementById('pump-radar-count-badge');
+      if (!container) return;
+
+      const alertList = alerts || [];
+      if (countBadge) {
+        countBadge.innerText = `${alertList.length} SINYAL TERDETEKSI`;
+        countBadge.style.color = alertList.length > 0 ? '#ff3366' : 'var(--text-dim)';
+        countBadge.style.borderColor = alertList.length > 0 ? '#ff3366' : 'rgba(255,255,255,0.1)';
+      }
+
+      if (alertList.length === 0) {
+        container.innerHTML = `
+          <div class="pump-radar-idle">
+            <i data-lucide="radar" style="width: 32px; height: 32px; color: var(--accent-cyan);"></i>
+            <div>
+              <strong style="color: #fff; font-size: 0.95rem;">Radar Siaga Memindai 80+ Koin Futures 24/7</strong>
+              <div style="font-size: 0.78rem; color: var(--text-dim); margin-top: 3px;">
+                Mendeteksi Kompresi Bollinger Squeeze (BBW &lt; 3.5%) + Sideway Lama + Lonjakan Volume 5M &gt; 3x - 8x untuk Menangkap Full Pump +10% s.d +50% (+200% s.d +1000% ROI pada Leverage 20x).
+              </div>
+            </div>
+          </div>
+        `;
+        if (window.lucide) lucide.createIcons();
+        return;
+      }
+
+      let html = '<div class="pump-alerts-grid">';
+      alertList.forEach(a => {
+        const isIgnition = a.tier === 'PUMP_IGNITION_ATH';
+        const tierBadgeClass = isIgnition ? 'tier-ignition' : 'tier-accumulation';
+        const tierTitle = isIgnition ? '🚀 PUMP IGNITION (BREAKOUT ATH)' : '⏳ PRE-PUMP ACCUMULATION';
+        const price = a.entry_price ? (a.entry_price < 1 ? a.entry_price.toFixed(6) : a.entry_price.toFixed(4)) : '-';
+        const slPrice = a.stop_loss ? (a.stop_loss < 1 ? a.stop_loss.toFixed(6) : a.stop_loss.toFixed(4)) : '-';
+        const tp1Price = a.tp1_price ? (a.tp1_price < 1 ? a.tp1_price.toFixed(6) : a.tp1_price.toFixed(4)) : '-';
+        const tp2Price = a.tp2_price ? (a.tp2_price < 1 ? a.tp2_price.toFixed(6) : a.tp2_price.toFixed(4)) : '-';
+        const tp3Price = a.tp3_price ? (a.tp3_price < 1 ? a.tp3_price.toFixed(6) : a.tp3_price.toFixed(4)) : '-';
+
+        html += `
+          <div class="pump-alert-card">
+            <div class="pump-card-header">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="pump-card-symbol">${a.symbol}</span>
+                <span class="badge" style="background: rgba(0, 242, 254, 0.1); color: var(--accent-cyan);">$${price}</span>
+              </div>
+              <span class="pump-badge-tier ${tierBadgeClass}">${tierTitle}</span>
+            </div>
+
+            <div class="pump-card-metrics">
+              <div class="pump-metric-item">
+                <span class="pump-metric-label">Skor Ledakan</span>
+                <span class="pump-metric-val" style="color: ${a.score >= 80 ? '#ff3366' : '#f3ba2f'};">${a.score}/100</span>
+              </div>
+              <div class="pump-metric-item">
+                <span class="pump-metric-label">Volume Spike</span>
+                <span class="pump-metric-val" style="color: var(--accent-cyan);">${a.rvol}x</span>
+              </div>
+              <div class="pump-metric-item">
+                <span class="pump-metric-label">BB Squeeze</span>
+                <span class="pump-metric-val" style="color: #69f0ae;">${a.bandwidth}%</span>
+              </div>
+              <div class="pump-metric-item">
+                <span class="pump-metric-label">Risk (SL)</span>
+                <span class="pump-metric-val" style="color: var(--accent-rose);">${slPrice} (-${a.risk_pct}%)</span>
+              </div>
+            </div>
+
+            <div class="pump-targets-roadmap">
+              <div class="pump-target-step">
+                <span class="pump-target-title">Target TP 1 (+10%)</span>
+                <span class="pump-target-price">$${tp1Price}</span>
+                <span class="pump-target-roi">+200% ROI (20x)</span>
+              </div>
+              <div class="pump-target-step">
+                <span class="pump-target-title">Target TP 2 (+25%)</span>
+                <span class="pump-target-price">$${tp2Price}</span>
+                <span class="pump-target-roi">+500% ROI (20x)</span>
+              </div>
+              <div class="pump-target-step" style="background: rgba(255, 51, 102, 0.12); border-radius: 6px; padding: 4px;">
+                <span class="pump-target-title" style="color: #ff3366;">🚀 ATH PUMP (+50%)</span>
+                <span class="pump-target-price">$${tp3Price}</span>
+                <span class="pump-target-roi" style="color: #ff3366;">+1,000% ROI (20x)</span>
+              </div>
+            </div>
+
+            <div class="pump-card-reason">
+              ${a.reason}
+            </div>
+          </div>
+        `;
+      });
+      html += '</div>';
+      container.innerHTML = html;
+      if (window.lucide) lucide.createIcons();
     }
 
     // Render Daily & Monthly Performance Tables
