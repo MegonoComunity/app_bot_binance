@@ -354,6 +354,102 @@ async def api_pnl_chart(request: web.Request) -> web.Response:
     })
 
 
+from core.scanner_logger import get_scanner_snapshot, clear_scanner_logs, add_scanner_log
+
+
+async def api_scanner_logs(request: web.Request) -> web.Response:
+    """Mengembalikan live stream log scanner, status progress, dan config scanner terkini."""
+    snapshot = get_scanner_snapshot()
+    snapshot["trading_mode"] = getattr(bot_config, "trading_mode", "PAPER_TRADING")
+    snapshot["active_exchange"] = getattr(bot_config, "active_exchange", "BITUNIX")
+    snapshot["min_confluence_score"] = getattr(bot_config, "min_confluence_score", 60.0)
+    snapshot["scan_target"] = getattr(bot_config, "scan_target_coins", "ALL")
+    snapshot["scan_sort"] = getattr(bot_config, "scan_sort_order", "VOLUME_DESC")
+    snapshot["timeframe"] = getattr(bot_config, "timeframe", "5m")
+    snapshot["htf_timeframe"] = getattr(bot_config, "htf_timeframe", "1h")
+    return web.json_response(snapshot)
+
+
+async def api_scanner_control(request: web.Request) -> web.Response:
+    """
+    Endpoint remote control VPS untuk mengontrol bot scanner langsung dari Webbase Dashboard.
+    Actions:
+    - resume: Mulai / lanjutkan scanning
+    - pause: Jeda scanning
+    - set_mode: Ganti mode trading (REAL / PAPER_TRADING)
+    - set_confluence: Ubah skor minimum konfluensi (misal: 60)
+    - set_target: Ubah target universe (ALL, 50, 100, 200)
+    - set_sort: Ubah urutan sorting scanner (VOLUME_DESC, CHANGE_DESC, GAINERS, LOSERS)
+    - clear_logs: Bersihkan tampilan log console
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    action = data.get("action", "").lower().strip()
+    msg = ""
+    success = True
+
+    if action == "resume":
+        bot_state["is_running"] = True
+        bot_state["state"] = "RUNNING"
+        msg = "Bot Scanner DILANJUTKAN (RUNNING). Scanning koin aktif."
+        add_scanner_log("INFO", "SYSTEM", "🟢 [WEB CONTROL] Scanner di-RESUME via Web Dashboard.")
+    elif action == "pause":
+        bot_state["is_running"] = False
+        bot_state["state"] = "PAUSED"
+        msg = "Bot Scanner DIJEDA (PAUSED)."
+        add_scanner_log("WARN", "SYSTEM", "⏸️ [WEB CONTROL] Scanner di-PAUSE via Web Dashboard.")
+    elif action == "set_mode":
+        new_mode = str(data.get("mode", "PAPER_TRADING")).upper().strip()
+        if new_mode in ("REAL", "PAPER_TRADING", "SIMULATION", "TESTNET"):
+            bot_config.trading_mode = new_mode
+            msg = f"Trading Mode diubah menjadi: {new_mode}"
+            add_scanner_log("INFO", "CONFIG", f"🔧 [WEB CONTROL] Mode Trading diubah ke {new_mode}.")
+        else:
+            success = False
+            msg = f"Mode '{new_mode}' tidak valid."
+    elif action == "set_confluence":
+        try:
+            new_score = float(data.get("score", 60.0))
+            if 30.0 <= new_score <= 100.0:
+                bot_config.min_confluence_score = new_score
+                msg = f"Min Confluence Score diubah menjadi: {new_score}"
+                add_scanner_log("INFO", "CONFIG", f"🔧 [WEB CONTROL] Min Confluence Score diset ke {new_score}/100.")
+            else:
+                success = False
+                msg = "Score harus antara 30 dan 100."
+        except ValueError:
+            success = False
+            msg = "Nilai score tidak valid."
+    elif action == "set_target":
+        new_target = str(data.get("target", "ALL")).strip()
+        bot_config.scan_target_coins = new_target
+        msg = f"Scan Target diubah menjadi: {new_target}"
+        add_scanner_log("INFO", "CONFIG", f"🌐 [WEB CONTROL] Scan Target diset ke {new_target}.")
+    elif action == "set_sort":
+        new_sort = str(data.get("sort", "VOLUME_DESC")).upper().strip()
+        bot_config.scan_sort_order = new_sort
+        msg = f"Scan Sort Order diubah menjadi: {new_sort}"
+        add_scanner_log("INFO", "CONFIG", f"🌐 [WEB CONTROL] Scan Sort diset ke {new_sort}.")
+    elif action == "clear_logs":
+        clear_scanner_logs()
+        msg = "Log scanner berhasil dibersihkan."
+    else:
+        success = False
+        msg = f"Aksi '{action}' tidak dikenal."
+
+    return web.json_response({
+        "success": success,
+        "message": msg,
+        "bot_state": bot_state.get("state", "RUNNING"),
+        "is_running": bot_state.get("is_running", False),
+        "trading_mode": getattr(bot_config, "trading_mode", "PAPER_TRADING"),
+        "min_confluence_score": getattr(bot_config, "min_confluence_score", 60.0),
+    })
+
+
 # ─── HTML Page ───────────────────────────────────────────────────────────────
 
 async def index_handler(request: web.Request) -> web.Response:
@@ -376,6 +472,8 @@ def create_dashboard_app() -> web.Application:
     app.router.add_get("/api/candles/{symbol}", api_candles)
     app.router.add_get("/api/trades", api_trades)
     app.router.add_get("/api/pnl-chart", api_pnl_chart)
+    app.router.add_get("/api/scanner/logs", api_scanner_logs)
+    app.router.add_post("/api/scanner/control", api_scanner_control)
     return app
 
 

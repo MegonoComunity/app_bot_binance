@@ -77,7 +77,7 @@ HTF_TIMEFRAME = os.getenv("HTF_TIMEFRAME", "1h")
 SIMULATED_MODAL_ENV = float(os.getenv("SIMULATED_MODAL", "0.0"))
 
 # Fitur Pro: Confluence Matrix & Auto Break-Even (Risk-Free)
-MIN_CONFLUENCE_SCORE_ENV = float(os.getenv("MIN_CONFLUENCE_SCORE", "80.0"))
+MIN_CONFLUENCE_SCORE_ENV = float(os.getenv("MIN_CONFLUENCE_SCORE", "60.0"))
 USE_AUTO_BREAKEVEN_ENV = os.getenv("USE_AUTO_BREAKEVEN", "True").lower() == "true"
 AUTO_BREAKEVEN_ROI_PERCENT_ENV = float(os.getenv("AUTO_BREAKEVEN_ROI_PERCENT", "8.0"))
 

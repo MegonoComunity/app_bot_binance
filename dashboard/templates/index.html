@@ -810,6 +810,252 @@
       color: var(--accent-cyan);
     }
 
+    /* Scanner Live Console & Controller Styling */
+    .scanner-control-bar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      background: rgba(13, 19, 33, 0.95);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 16px 20px;
+      margin-bottom: 18px;
+    }
+    .scanner-btn-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .btn-ctrl {
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
+    }
+    .btn-ctrl-resume {
+      background: rgba(0, 230, 118, 0.15);
+      border-color: rgba(0, 230, 118, 0.5);
+      color: var(--accent-emerald);
+    }
+    .btn-ctrl-resume:hover {
+      background: rgba(0, 230, 118, 0.3);
+      box-shadow: 0 0 16px rgba(0, 230, 118, 0.4);
+    }
+    .btn-ctrl-pause {
+      background: rgba(243, 186, 47, 0.15);
+      border-color: rgba(243, 186, 47, 0.5);
+      color: var(--accent-amber);
+    }
+    .btn-ctrl-pause:hover {
+      background: rgba(243, 186, 47, 0.3);
+      box-shadow: 0 0 16px rgba(243, 186, 47, 0.4);
+    }
+    .btn-ctrl-mode {
+      background: rgba(0, 242, 254, 0.12);
+      border-color: rgba(0, 242, 254, 0.4);
+      color: var(--accent-cyan);
+    }
+    .btn-ctrl-mode:hover {
+      background: rgba(0, 242, 254, 0.25);
+      box-shadow: 0 0 16px rgba(0, 242, 254, 0.35);
+    }
+    .ctrl-slider-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }
+    .ctrl-slider-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .ctrl-slider-val {
+      font-weight: 800;
+      color: var(--accent-cyan);
+      font-size: 0.9rem;
+      min-width: 32px;
+    }
+    
+    /* Progress Card */
+    .scan-progress-box {
+      background: rgba(10, 15, 26, 0.6);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 14px 18px;
+      margin-bottom: 18px;
+    }
+    .scan-progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 0.85rem;
+    }
+    .scan-progress-track {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+    .scan-progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan), var(--accent-emerald));
+      border-radius: 4px;
+      width: 0%;
+      transition: width 0.3s ease;
+      box-shadow: 0 0 10px var(--accent-cyan);
+    }
+
+    /* Terminal Console */
+    .terminal-window {
+      background: #040711;
+      border: 1px solid rgba(0, 242, 254, 0.25);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7), 0 0 20px rgba(0, 242, 254, 0.1);
+    }
+    .terminal-header {
+      background: #090e1d;
+      padding: 10px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .terminal-dots {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .t-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .t-dot-red { background: #ff5f56; }
+    .t-dot-yellow { background: #ffbd2e; }
+    .t-dot-green { background: #27c93f; }
+    .terminal-title {
+      font-family: 'Fira Code', monospace, sans-serif;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .terminal-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .terminal-search {
+      background: #040711;
+      border: 1px solid var(--border-color);
+      color: #fff;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      outline: none;
+    }
+    .terminal-search:focus {
+      border-color: var(--accent-cyan);
+    }
+    .terminal-select {
+      background: #040711;
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      outline: none;
+      cursor: pointer;
+    }
+    .terminal-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+    .terminal-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: var(--accent-cyan);
+    }
+    .terminal-body {
+      height: 480px;
+      overflow-y: auto;
+      padding: 14px 18px;
+      font-family: 'Fira Code', 'Courier New', monospace;
+      font-size: 0.82rem;
+      line-height: 1.6;
+      background: #040711;
+      color: #e2e8f0;
+    }
+    .log-line {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 4px 6px;
+      border-radius: 4px;
+      transition: background 0.15s;
+    }
+    .log-line:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .log-time {
+      color: #64748b;
+      font-size: 0.75rem;
+      min-width: 65px;
+      user-select: none;
+    }
+    .log-badge {
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 4px;
+      min-width: 62px;
+      text-align: center;
+      user-select: none;
+    }
+    .log-badge-ORDER { background: rgba(0, 230, 118, 0.25); color: #00e676; border: 1px solid #00e676; }
+    .log-badge-CONFLUENCE { background: rgba(0, 242, 254, 0.2); color: #00f2fe; border: 1px solid #00f2fe; }
+    .log-badge-PUMP { background: rgba(255, 51, 102, 0.25); color: #ff3366; border: 1px solid #ff3366; }
+    .log-badge-FILTERED { background: rgba(243, 186, 47, 0.2); color: #f3ba2f; border: 1px solid rgba(243, 186, 47, 0.4); }
+    .log-badge-CYCLE { background: rgba(157, 78, 221, 0.2); color: #c77dff; border: 1px solid rgba(157, 78, 221, 0.4); }
+    .log-badge-INFO { background: rgba(255, 255, 255, 0.08); color: #94a3b8; }
+    .log-badge-WARN { background: rgba(255, 170, 0, 0.2); color: #ffaa00; }
+    .log-badge-ERROR { background: rgba(255, 50, 50, 0.3); color: #ff3333; }
+    .log-sym {
+      color: #7dd3fc;
+      font-weight: 700;
+      min-width: 90px;
+    }
+    .log-text {
+      flex: 1;
+      word-break: break-word;
+    }
+
     /* Tables */
     .table-responsive {
       overflow-x: auto;
@@ -1137,6 +1383,10 @@
     <!-- Multi-Tab Section: History, AI Brain Patterns & Strategies -->
     <section class="tab-section">
       <div class="nav-tabs">
+        <button class="nav-tab-btn" onclick="switchTab('tab-scanner-live', this)" style="border-color: rgba(0, 242, 254, 0.4); background: rgba(0, 242, 254, 0.08); color: var(--accent-cyan);">
+          <i data-lucide="terminal" style="width: 18px;"></i>
+          📡 Scanner Live Console
+        </button>
         <button class="nav-tab-btn active" onclick="switchTab('tab-trades', this)">
           <i data-lucide="history" style="width: 18px;"></i>
           Riwayat Trade Real
@@ -1303,6 +1553,125 @@
           </div>
 
         </div>
+      </div>
+
+      <!-- Tab 6: Scanner Live Console & VPS Controller -->
+      <div id="tab-scanner-live" class="tab-content" style="display: none;">
+        
+        <!-- Remote VPS Controller Bar -->
+        <div class="scanner-control-bar">
+          <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span id="scan-ctrl-badge" class="badge badge-approved" style="font-size: 0.82rem; padding: 6px 12px;">🟢 SCANNER AKTIF</span>
+              <span id="scan-mode-badge" class="badge" style="background: rgba(0,242,254,0.15); color: #00f2fe; border: 1px solid #00f2fe; font-size: 0.82rem; padding: 6px 12px;">MODE: REAL</span>
+              <span id="scan-ex-badge" class="badge" style="background: rgba(0,230,118,0.15); color: #00e676; border: 1px solid #00e676; font-size: 0.82rem; padding: 6px 12px;">EXCHANGE: BITUNIX</span>
+            </div>
+            
+            <div class="scanner-btn-group">
+              <button class="btn-ctrl btn-ctrl-resume" onclick="sendScannerAction('resume')" title="Lanjutkan proses scanner di background VPS">
+                <i data-lucide="play" style="width: 16px;"></i> Resume Scanner
+              </button>
+              <button class="btn-ctrl btn-ctrl-pause" onclick="sendScannerAction('pause')" title="Jeda proses scanner di background VPS">
+                <i data-lucide="pause" style="width: 16px;"></i> Pause Scanner
+              </button>
+              <button class="btn-ctrl btn-ctrl-mode" onclick="toggleTradingMode()" title="Ganti Mode Real ⇋ Paper Trading">
+                <i data-lucide="refresh-cw" style="width: 16px;"></i> Ganti Mode Trading
+              </button>
+            </div>
+          </div>
+
+          <!-- Parameter Controls (Confluence, Target Universe, Sorting) -->
+          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <div class="ctrl-slider-group">
+              <span class="ctrl-slider-label">Min Confluence:</span>
+              <input type="range" id="input-confluence-slider" min="40" max="95" step="1" value="60" oninput="document.getElementById('val-confluence-disp').textContent = this.value" onchange="sendScannerAction('set_confluence', {score: parseFloat(this.value)})" style="width: 110px; cursor: pointer; accent-color: var(--accent-cyan);">
+              <span id="val-confluence-disp" class="ctrl-slider-val">60</span>
+            </div>
+
+            <div class="ctrl-slider-group">
+              <span class="ctrl-slider-label">Target:</span>
+              <select id="select-scan-target" onchange="sendScannerAction('set_target', {target: this.value})" style="background: transparent; border: none; color: #fff; font-weight: 700; outline: none; cursor: pointer;">
+                <option value="ALL" style="background: #111827;">ALL Koin</option>
+                <option value="50" style="background: #111827;">Top 50</option>
+                <option value="80" style="background: #111827;">Top 80</option>
+                <option value="100" style="background: #111827;">Top 100</option>
+                <option value="200" style="background: #111827;">Top 200</option>
+              </select>
+            </div>
+
+            <div class="ctrl-slider-group">
+              <span class="ctrl-slider-label">Sort:</span>
+              <select id="select-scan-sort" onchange="sendScannerAction('set_sort', {sort: this.value})" style="background: transparent; border: none; color: #fff; font-weight: 700; outline: none; cursor: pointer;">
+                <option value="VOLUME_DESC" style="background: #111827;">Volume 📊</option>
+                <option value="CHANGE_DESC" style="background: #111827;">Change % 🔥</option>
+                <option value="GAINERS" style="background: #111827;">Gainers 🚀</option>
+                <option value="LOSERS" style="background: #111827;">Losers 🔻</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Progress Tracking Card -->
+        <div class="scan-progress-box">
+          <div class="scan-progress-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="pulse-dot" style="background: var(--accent-cyan); box-shadow: 0 0 10px var(--accent-cyan);"></span>
+              <strong id="scan-status-text" style="color: #fff;">Scanning Koin di VPS...</strong>
+              <span id="scan-current-coin-badge" class="badge" style="background: rgba(0, 242, 254, 0.2); color: var(--accent-cyan); border: 1px solid var(--accent-cyan); font-family: 'Fira Code', monospace;">-</span>
+            </div>
+            <div style="color: var(--text-muted); font-size: 0.8rem;">
+              Progress: <strong id="scan-progress-text" style="color: #fff;">0 / 80</strong> (<span id="scan-progress-pct" style="color: var(--accent-emerald);">0%</span>) | Siklus ke-<strong id="scan-cycle-count">1</strong>
+            </div>
+          </div>
+          <div class="scan-progress-track">
+            <div id="scan-progress-fill" class="scan-progress-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Terminal Console Window -->
+        <div class="terminal-window">
+          <div class="terminal-header">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div class="terminal-dots">
+                <div class="t-dot t-dot-red"></div>
+                <div class="t-dot t-dot-yellow"></div>
+                <div class="t-dot t-dot-green"></div>
+              </div>
+              <span class="terminal-title">user@vps:~/app_bot_binance (Live Scanner Stream)</span>
+            </div>
+
+            <div class="terminal-actions">
+              <select id="select-log-level" class="terminal-select" onchange="renderScannerLogs()">
+                <option value="ALL">Semua Log</option>
+                <option value="ORDER">🚀 Order Execution Saja</option>
+                <option value="PUMP">🔥 Pre-Pump Radar Saja</option>
+                <option value="CONFLUENCE">✅ Setup Confluence Saja</option>
+                <option value="FILTERED">🛡️ Filter & Ditolak</option>
+                <option value="CYCLE">⏳ Siklus Scan</option>
+              </select>
+
+              <input type="text" id="input-log-search" class="terminal-search" placeholder="Cari Symbol (misal: CRV)..." oninput="renderScannerLogs()">
+
+              <label style="display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text-muted); cursor: pointer;">
+                <input type="checkbox" id="check-autoscroll" checked style="accent-color: var(--accent-cyan);"> Auto-Scroll
+              </label>
+
+              <button class="terminal-btn" onclick="sendScannerAction('clear_logs')" title="Bersihkan log di layar">
+                <i data-lucide="trash-2" style="width: 14px;"></i> Clear
+              </button>
+              <button class="terminal-btn" onclick="loadScannerLogs()" title="Refresh log sekarang">
+                <i data-lucide="refresh-cw" style="width: 14px;"></i> Refresh
+              </button>
+            </div>
+          </div>
+
+          <div id="scanner-terminal-body" class="terminal-body">
+            <div style="text-align: center; color: #64748b; padding-top: 40px;">
+              Memuat stream log scanner dari VPS...
+            </div>
+          </div>
+        </div>
+
       </div>
     </section>
 
@@ -1984,6 +2353,9 @@
       document.querySelectorAll('.nav-tab-btn').forEach(b => b.classList.remove('active'));
       document.getElementById(tabId).style.display = 'block';
       btn.classList.add('active');
+      if (tabId === 'tab-scanner-live') {
+        loadScannerLogs();
+      }
     }
 
     function refreshAllData() {
@@ -1991,6 +2363,200 @@
       loadPatterns();
       loadTrades();
       loadCandles();
+      loadScannerLogs();
+    }
+
+    // ─── Scanner Live Console & Controller JS ─────────────────────────
+    let rawScannerLogs = [];
+    let currentBotRunning = false;
+    let currentTradingMode = 'PAPER_TRADING';
+
+    async function loadScannerLogs() {
+      try {
+        const res = await fetch('/api/scanner/logs');
+        const data = await res.json();
+        
+        rawScannerLogs = data.logs || [];
+        currentBotRunning = data.is_running;
+        currentTradingMode = data.trading_mode;
+
+        // Update Controller Badges
+        const ctrlBadge = document.getElementById('scan-ctrl-badge');
+        if (ctrlBadge) {
+          if (data.is_running) {
+            ctrlBadge.className = 'badge badge-approved';
+            ctrlBadge.textContent = '🟢 SCANNER AKTIF (RUNNING)';
+          } else {
+            ctrlBadge.className = 'badge badge-blacklisted';
+            ctrlBadge.textContent = '⏸️ SCANNER DIJEDA (PAUSED)';
+          }
+        }
+
+        const modeBadge = document.getElementById('scan-mode-badge');
+        if (modeBadge) {
+          modeBadge.textContent = 'MODE: ' + (data.trading_mode || 'REAL');
+          modeBadge.style.color = data.trading_mode === 'REAL' ? 'var(--accent-emerald)' : 'var(--accent-cyan)';
+          modeBadge.style.borderColor = data.trading_mode === 'REAL' ? 'var(--accent-emerald)' : 'var(--accent-cyan)';
+        }
+
+        const exBadge = document.getElementById('scan-ex-badge');
+        if (exBadge) {
+          exBadge.textContent = 'EXCHANGE: ' + (data.active_exchange || 'BITUNIX');
+        }
+
+        // Update Controls Value Inputs
+        const sliderInput = document.getElementById('input-confluence-slider');
+        if (sliderInput && document.activeElement !== sliderInput) {
+          sliderInput.value = data.min_confluence_score || 60;
+          document.getElementById('val-confluence-disp').textContent = data.min_confluence_score || 60;
+        }
+
+        const targetSelect = document.getElementById('select-scan-target');
+        if (targetSelect && document.activeElement !== targetSelect) {
+          targetSelect.value = data.scan_target || 'ALL';
+        }
+
+        const sortSelect = document.getElementById('select-scan-sort');
+        if (sortSelect && document.activeElement !== sortSelect) {
+          sortSelect.value = data.scan_sort || 'VOLUME_DESC';
+        }
+
+        // Update Progress Bar
+        const status = data.status || {};
+        const pFill = document.getElementById('scan-progress-fill');
+        const pText = document.getElementById('scan-progress-text');
+        const pPct = document.getElementById('scan-progress-pct');
+        const pCoin = document.getElementById('scan-current-coin-badge');
+        const pStatus = document.getElementById('scan-status-text');
+        const pCycle = document.getElementById('scan-cycle-count');
+
+        if (pFill) pFill.style.width = (status.progress_percent || 0) + '%';
+        if (pText) pText.textContent = `${status.scanned_count || 0} / ${status.total_coins || 80}`;
+        if (pPct) pPct.textContent = `${status.progress_percent || 0}%`;
+        if (pCoin) pCoin.textContent = status.current_symbol || '-';
+        if (pStatus) pStatus.textContent = status.status_message || (data.is_running ? 'Scanning aktif di VPS...' : 'Scanner dijeda (PAUSED)');
+        if (pCycle) pCycle.textContent = status.current_cycle || 1;
+
+        renderScannerLogs();
+      } catch (e) {
+        console.error('Error load scanner logs:', e);
+      }
+    }
+
+    function renderScannerLogs() {
+      const body = document.getElementById('scanner-terminal-body');
+      if (!body) return;
+
+      const levelFilter = document.getElementById('select-log-level') ? document.getElementById('select-log-level').value : 'ALL';
+      const searchQuery = document.getElementById('input-log-search') ? document.getElementById('input-log-search').value.toUpperCase().trim() : '';
+      const autoScroll = document.getElementById('check-autoscroll') ? document.getElementById('check-autoscroll').checked : true;
+
+      let filtered = rawScannerLogs;
+
+      if (levelFilter !== 'ALL') {
+        filtered = filtered.filter(l => (l.level || '').toUpperCase() === levelFilter);
+      }
+      if (searchQuery) {
+        filtered = filtered.filter(l => (l.symbol || '').includes(searchQuery) || (l.message || '').toUpperCase().includes(searchQuery));
+      }
+
+      if (filtered.length === 0) {
+        body.innerHTML = '<div style="text-align: center; color: #64748b; padding-top: 40px;">Tidak ada baris log yang sesuai filter.</div>';
+        return;
+      }
+
+      // Render logs in chronological order (oldest to newest)
+      const chronLogs = [...filtered].reverse();
+
+      let html = '';
+      chronLogs.forEach(l => {
+        const lvl = (l.level || 'INFO').toUpperCase();
+        let badgeClass = 'log-badge-INFO';
+        if (lvl === 'ORDER') badgeClass = 'log-badge-ORDER';
+        else if (lvl === 'CONFLUENCE') badgeClass = 'log-badge-CONFLUENCE';
+        else if (lvl === 'PUMP') badgeClass = 'log-badge-PUMP';
+        else if (lvl === 'FILTERED') badgeClass = 'log-badge-FILTERED';
+        else if (lvl === 'CYCLE') badgeClass = 'log-badge-CYCLE';
+        else if (lvl === 'WARN') badgeClass = 'log-badge-WARN';
+        else if (lvl === 'ERROR') badgeClass = 'log-badge-ERROR';
+
+        const symText = l.symbol ? `<span class="log-sym">[${l.symbol}]</span>` : '<span class="log-sym" style="color: #64748b;">[SYS]</span>';
+
+        html += `
+          <div class="log-line">
+            <span class="log-time">${l.time || '--:--:--'}</span>
+            <span class="log-badge ${badgeClass}">${lvl}</span>
+            ${symText}
+            <span class="log-text">${escapeHtml(l.message || '')}</span>
+          </div>
+        `;
+      });
+
+      body.innerHTML = html;
+
+      if (autoScroll) {
+        body.scrollTop = body.scrollHeight;
+      }
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    }
+
+    async function sendScannerAction(action, payload = {}) {
+      try {
+        const res = await fetch('/api/scanner/control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, ...payload })
+        });
+        const result = await res.json();
+        
+        if (result.success) {
+          showToast(`✅ ${result.message}`);
+          loadScannerLogs();
+        } else {
+          showToast(`⚠️ ${result.message}`, true);
+        }
+      } catch (e) {
+        showToast(`❌ Gagal kirim perintah ke VPS: ${e.message}`, true);
+      }
+    }
+
+    async function toggleTradingMode() {
+      const newMode = currentTradingMode === 'REAL' ? 'PAPER_TRADING' : 'REAL';
+      if (confirm(`Ganti mode trading scanner ke: ${newMode}?`)) {
+        await sendScannerAction('set_mode', { mode: newMode });
+      }
+    }
+
+    function showToast(msg, isError = false) {
+      let toast = document.getElementById('web-toast');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'web-toast';
+        toast.style.position = 'fixed';
+        toast.style.bottom = '24px';
+        toast.style.right = '24px';
+        toast.style.padding = '12px 20px';
+        toast.style.borderRadius = '10px';
+        toast.style.fontSize = '0.9rem';
+        toast.style.fontWeight = '600';
+        toast.style.zIndex = '9999';
+        toast.style.boxShadow = '0 8px 30px rgba(0,0,0,0.6)';
+        toast.style.transition = 'all 0.3s ease';
+        document.body.appendChild(toast);
+      }
+      toast.style.background = isError ? 'rgba(255, 51, 102, 0.95)' : 'rgba(0, 242, 254, 0.95)';
+      toast.style.color = '#000';
+      toast.textContent = msg;
+      toast.style.opacity = '1';
+      toast.style.transform = 'translateY(0)';
+      
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(20px)';
+      }, 3500);
     }
 
     // Initial Startup
@@ -2001,8 +2567,17 @@
       loadOverview();
       loadPatterns();
       loadTrades();
+      loadScannerLogs();
 
-      // Auto refresh setiap 10 detik
+      // Auto refresh log scanner setiap 2 detik untuk konsol real-time
+      setInterval(() => {
+        const liveTab = document.getElementById('tab-scanner-live');
+        if (liveTab && liveTab.style.display !== 'none') {
+          loadScannerLogs();
+        }
+      }, 2000);
+
+      // Auto refresh dashboard data lainnya setiap 10 detik
       setInterval(refreshAllData, 10000);
     });
   </script>

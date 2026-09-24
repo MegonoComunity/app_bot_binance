@@ -14,7 +14,11 @@ def normalize_pattern_category(raw_pattern: str) -> str:
         
     s = raw_pattern.lower()
     
-    if "hammer" in s:
+    if "pump" in s or "pre-pump" in s:
+        return "Pola Momentum: Pre-Pump Radar"
+    elif "ema21" in s or "pullback" in s:
+        return "Pola Trend: EMA21 Dynamic Pullback"
+    elif "hammer" in s:
         return "Pola Tier-A: Bullish Hammer"
     elif "morning star" in s:
         return "Pola Tier-A: Morning Star"

@@ -52,6 +52,7 @@ from indicators.patterns import (
 from indicators.trend import get_htf_trend
 from core.confluence_engine import calculate_confluence_score
 from core.learner import is_pattern_reliable, record_trade_result
+from core.scanner_logger import add_scanner_log, update_scanner_progress
 from core.risk_manager import (
     calculate_risk_margin,
     calculate_volatility_adjusted_leverage,
@@ -306,6 +307,8 @@ async def scanner_loop():
 
                 batch_size = 1 if bot_config.scanner_mode == "per_coin" else SCAN_BATCH_SIZE_ENV
                 active_pump_alerts: List[Dict[str, Any]] = []
+                total_batches = max(1, (len(all_symbols) + batch_size - 1) // batch_size)
+
                 for i in range(0, len(all_symbols), batch_size):
                     batch_symbols = all_symbols[i:i+batch_size]
                     tahap = (i // batch_size) + 1
@@ -313,11 +316,30 @@ async def scanner_loop():
                     
                     if tahap == 1:
                         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Mulai scan {len(all_symbols)} koin [{target_label} | Urutan: {sort_label}]")
+                        add_scanner_log("CYCLE", "SYSTEM", f"🚀 Memulai siklus scan {len(all_symbols)} koin [{target_label} | Urutan: {sort_label}]")
+                        update_scanner_progress(
+                            current_symbol=batch_symbols[0] if batch_symbols else "",
+                            scanned_count=0,
+                            total_coins=len(all_symbols),
+                            current_batch=1,
+                            total_batches=total_batches,
+                            is_scanning=True,
+                            status_message=f"Scanning {len(all_symbols)} koin [{target_label}]"
+                        )
                     else:
                         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Scan tahap ke-{tahap} scan koin urutan {i+1} - {i+len(batch_symbols)}")
                         
                     for idx, symbol in enumerate(batch_symbols):
                         print(f"Koin urutan {i + idx + 1} {symbol}")
+                        update_scanner_progress(
+                            current_symbol=symbol,
+                            scanned_count=i + idx + 1,
+                            total_coins=len(all_symbols),
+                            current_batch=tahap,
+                            total_batches=total_batches,
+                            is_scanning=True,
+                            status_message=f"Menganalisis {symbol} ({i + idx + 1}/{len(all_symbols)})"
+                        )
                         
                         # Tunggu jika limit lokal hampir penuh
                         used_local = await rate_limiter.wait_if_needed()
@@ -472,6 +494,13 @@ async def scanner_loop():
                                 f"Score: {pump_intel['score']}/100 | RVOL: {pump_intel['rvol']}x | "
                                 f"TP1: {pump_intel['tp1_price']:.6f} (+10%) | TP3: {pump_intel['tp3_price']:.6f} (+50% / +1000% ROI 20x)"
                             )
+                            add_scanner_log(
+                                "PUMP",
+                                symbol,
+                                f"🔥 [PUMP RADAR] {pump_intel['tier']} | Score: {pump_intel['score']}/100 | RVOL: {pump_intel['rvol']}x | Target: TP1 +10% / TP3 +50%",
+                                score=pump_intel.get("score"),
+                                tag="PUMP_RADAR"
+                            )
 
                         last_row = df.iloc[-1]
                         current_price = last_row['close']
@@ -518,8 +547,10 @@ async def scanner_loop():
                         pump_is_active = bool(pump_intel.get("is_alert", False) or pump_intel.get("score", 0) >= 60)
                         syarat_pump_long = (
                             pump_is_active
-                            and last_row["close"] > last_row["open"]
-                            and htf_trend in ["UPTREND", "SIDEWAYS"]
+                            and (
+                                htf_trend in ["UPTREND", "SIDEWAYS"]
+                                or pump_intel.get("score", 0) >= 65.0
+                            )
                         )
                         
                         # Skenario Tier-A Reversal & Breakout untuk LONG (High Win-Rate)
@@ -562,6 +593,11 @@ async def scanner_loop():
                         # Anti-Trap Filters
                         bull_trap_detected = is_bull_trap(last_row['open'], last_row['high'], last_row['low'], last_row['close']) or (pattern_type == 'CLOSE_LONG')
                         bear_trap_detected = is_bear_trap(last_row['open'], last_row['high'], last_row['low'], last_row['close']) or (pattern_type == 'CLOSE_SHORT')
+
+                        # Setup Pre-Pump Radar dengan konfirmasi volume kuat (score >= 65 atau RVOL >= 2.0x)
+                        # dibebaskan dari veto single-candle bull trap karena ekor atas awal wajar terjadi dan dilindungi Hard Stop-Loss 1.5%.
+                        is_pump_breakout_exempt = bool(syarat_pump_long and (pump_intel.get("score", 0) >= 65.0 or pump_intel.get("rvol", 1.0) >= 2.0))
+                        effective_bull_trap = bull_trap_detected and not is_pump_breakout_exempt
                         
                         if syarat_pump_long:
                             alasan_long = (
@@ -604,7 +640,7 @@ async def scanner_loop():
                         reliable_long = is_pattern_reliable(alasan_long) if raw_long else True
                         reliable_short = is_pattern_reliable(alasan_short) if raw_short else True
                         
-                        trigger_long = raw_long and not bull_trap_detected and reliable_long
+                        trigger_long = raw_long and not effective_bull_trap and reliable_long
                         trigger_short = raw_short and not bear_trap_detected and reliable_short
                         
                         # Jika sinyal teknikal/pola terdeteksi tetapi ditolak oleh filter Learner/Trap/Blacklist,
@@ -688,6 +724,8 @@ async def scanner_loop():
                                 htf_trend=htf_trend,
                                 min_score_threshold=bot_config.min_confluence_score,
                                 pump_info=pump_intel,
+                                near_smart_buy=bool(syarat_smart_buy_long),
+                                two_consecutive_candles=bool(two_green_at_support or two_red_at_resistance),
                             )
                             confluence_score = confluence_res["score"]
                             confluence_approved = confluence_res["is_approved"]
@@ -695,6 +733,13 @@ async def scanner_loop():
 
                             if not confluence_approved:
                                 print(f"🛡️ [CONFLUENCE FILTER] {symbol} ({trade_type}) DITOLAK: Skor {confluence_score}/100 < {bot_config.min_confluence_score} (Syarat Institusional Belum Terpenuhi). Breakdown: {confluence_breakdown}")
+                                add_scanner_log(
+                                    "FILTERED",
+                                    symbol,
+                                    f"🛡️ Sinyal {trade_type} Ditolak: Skor {confluence_score}/100 < {bot_config.min_confluence_score} | {alasan}",
+                                    score=confluence_score,
+                                    tag="CONFLUENCE_REJECT"
+                                )
                                 if symbol not in virtual_trades:
                                     pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
                                     pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
@@ -727,6 +772,12 @@ async def scanner_loop():
                             # Evaluasi Pattern Memory: tolak jika pola terbukti buruk (>= 3 sample, WR < 45%)
                             if is_pattern_memory_blacklisted(conditions_snapshot):
                                 print(f"🚫 [PATTERN MEMORY] Sinyal {trade_type} pada {symbol} DITOLAK karena pola historis memiliki Win Rate rendah!")
+                                add_scanner_log(
+                                    "FILTERED",
+                                    symbol,
+                                    f"🚫 [PATTERN MEMORY] Sinyal {trade_type} Ditolak (WR rendah pada riwayat)",
+                                    tag="PATTERN_BLACKLIST"
+                                )
                                 if symbol not in virtual_trades:
                                     pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
                                     pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
@@ -758,6 +809,13 @@ async def scanner_loop():
 
                             batch_signal_found = True
                             print(f"SETUP TEKNIKAL {trade_type} DITEMUKAN PADA {symbol}! [Skor: {confluence_score}/100] Alasan: {alasan}")
+                            add_scanner_log(
+                                "CONFLUENCE",
+                                symbol,
+                                f"✅ SETUP {trade_type} VALID! [Skor: {confluence_score}/100] | Alasan: {alasan}",
+                                score=confluence_score,
+                                tag="CONFLUENCE_PASS"
+                            )
                             
                             # 5. Cek Modal & Hitung Sizing Computed
                             try:
@@ -989,6 +1047,13 @@ async def scanner_loop():
                                 entry_price = order_res['price']
                                 actual_leverage = order_res.get('actual_leverage', dynamic_leverage)
                                 
+                                add_scanner_log(
+                                    "ORDER",
+                                    symbol,
+                                    f"🚀 [ORDER] Open {trade_type} @ {entry_price:.6f} | Margin: {current_margin:.2f} USDT | Lev: {actual_leverage}x [{exchange_tag}]",
+                                    tag="ORDER_SUCCESS"
+                                )
+                                
                                 # Convert configured margin ROI into deterministic price movement.
                                 pm_tp = (bot_config.tp_percent / 100) / actual_leverage
                                 pm_sl = (bot_config.sl_percent / 100) / actual_leverage
@@ -1157,6 +1222,14 @@ async def scanner_loop():
             # Jeda acak (30 detik hingga 2 menit / 120 detik) sebelum siklus scan koin berikutnya
             random_cycle_delay = random.randint(30, 120)
             print(f"\n[{datetime.now().strftime('%H:%M:%S')}] ⏳ Siklus scan selesai. Jeda acak {random_cycle_delay} detik ({random_cycle_delay/60:.1f} menit) sebelum scan berikutnya...")
+            update_scanner_progress(
+                current_symbol="-",
+                scanned_count=len(all_symbols),
+                total_coins=len(all_symbols),
+                is_scanning=False,
+                status_message=f"Siklus selesai. Jeda {random_cycle_delay}s sebelum scan berikutnya..."
+            )
+            add_scanner_log("CYCLE", "SYSTEM", f"⏳ Siklus scan {len(all_symbols)} koin selesai. Jeda {random_cycle_delay}s...")
             await asyncio.sleep(random_cycle_delay)
             
     finally:

@@ -40,8 +40,10 @@ def calculate_confluence_score(
     vol_ratio: float = 1.0,
     breakout_info: Optional[Dict[str, Any]] = None,
     htf_trend: str = "SIDEWAYS",
-    min_score_threshold: float = 80.0,
+    min_score_threshold: float = 60.0,
     pump_info: Optional[Dict[str, Any]] = None,
+    near_smart_buy: bool = False,
+    two_consecutive_candles: bool = False,
 ) -> Dict[str, Any]:
     """
     Menghitung skor konfluensi teknikal dan memberikan rincian pilar poin.
@@ -50,12 +52,13 @@ def calculate_confluence_score(
     - Dynamic Swing Anchored VWAP (AVWAP Fair Value)
     - EMA 21 Dynamic Pullback Reversal
     - PUMP RADAR momentum wave
+    - Smart Buy Level & 2x Consecutive Candle Reversal
     """
     breakdown = {}
     total_score = 0.0
     side = side.upper()
 
-    is_pump_alert = bool(pump_info and pump_info.get("is_alert") and side == "LONG")
+    is_pump_alert = bool(pump_info and (pump_info.get("is_alert") or pump_info.get("score", 0) >= 60) and side == "LONG")
     pump_score = float(pump_info.get("score", 0.0)) if pump_info else 0.0
 
     # Evaluasi Struktur Pasar SMC (HH, HL, LH, LL) & EMA 21 Pullback
@@ -75,14 +78,14 @@ def calculate_confluence_score(
         elif htf_trend == "SIDEWAYS" or struct_info.get("is_compression"):
             htf_points = 20.0 if is_pump_alert else 15.0
         else: # DOWNTREND
-            htf_points = 10.0 if is_pump_alert and pump_score >= 80 else 0.0
+            htf_points = 15.0 if is_pump_alert and pump_score >= 65 else 5.0
     else: # SHORT
         if htf_trend == "DOWNTREND" or market_regime == "DOWNTREND_HEALTHY":
             htf_points = 25.0
         elif htf_trend == "SIDEWAYS" or struct_info.get("is_compression"):
             htf_points = 15.0
         else: # UPTREND
-            htf_points = 0.0
+            htf_points = 5.0
 
     breakdown["htf_alignment"] = {
         "points": htf_points,
@@ -94,13 +97,17 @@ def calculate_confluence_score(
     }
     total_score += htf_points
 
-    # ─── PILAR 2: Candlestick Pattern, S/R, AVWAP & EMA21 Pullback (Maks 25 Poin) ─────────
+    # ─── PILAR 2: Candlestick Pattern, S/R, AVWAP, Smart Buy & EMA21 Pullback (Maks 25 Poin) ─────────
     sr_pattern_points = 0.0
     has_valid_pattern = bool(pattern_name and pattern_name not in ("NONE", "None", ""))
     
     if side == "LONG":
         if is_pump_alert:
             sr_pattern_points = 25.0  # Pump breakout mengonfirmasi momentum kuat di atas struktur
+        elif near_smart_buy:
+            sr_pattern_points = 25.0  # Level Smart Buy institusional 20D
+        elif two_consecutive_candles:
+            sr_pattern_points = 25.0  # Reversal 2x candle hijau di area support
         elif is_ema21_pullback and ema21_type == "BULLISH_PULLBACK":
             sr_pattern_points = 25.0  # Golden Pullback EMA21 pada tren impulsif
         elif avwap_info.get("position_to_avwap") == "BULLISH_ABOVE_AVWAP" and near_support:
@@ -112,11 +119,15 @@ def calculate_confluence_score(
         elif near_support or avwap_info.get("position_to_avwap") == "BULLISH_ABOVE_AVWAP":
             sr_pattern_points = 16.0
         elif has_valid_pattern and pattern_type == "LONG":
-            sr_pattern_points = 12.0
+            sr_pattern_points = 15.0
         elif near_lower_bb:
+            sr_pattern_points = 12.0
+        else:
             sr_pattern_points = 8.0
     else: # SHORT
-        if is_ema21_pullback and ema21_type == "BEARISH_PULLBACK":
+        if two_consecutive_candles:
+            sr_pattern_points = 25.0  # Reversal 2x candle merah di area resistance
+        elif is_ema21_pullback and ema21_type == "BEARISH_PULLBACK":
             sr_pattern_points = 25.0  # Golden Pullback EMA21 pada tren impulsif turun
         elif avwap_info.get("position_to_avwap") == "BEARISH_BELOW_AVWAP" and near_resistance:
             sr_pattern_points = 25.0  # Fair Value AVWAP Resistance
@@ -127,17 +138,19 @@ def calculate_confluence_score(
         elif near_resistance or avwap_info.get("position_to_avwap") == "BEARISH_BELOW_AVWAP":
             sr_pattern_points = 16.0
         elif has_valid_pattern and pattern_type == "SHORT":
-            sr_pattern_points = 12.0
+            sr_pattern_points = 15.0
         elif near_upper_bb:
+            sr_pattern_points = 12.0
+        else:
             sr_pattern_points = 8.0
 
-    pattern_desc = pattern_name or ("PUMP_BREAKOUT" if is_pump_alert else ("EMA21_PULLBACK" if is_ema21_pullback else "NONE"))
+    pattern_desc = pattern_name or ("PUMP_BREAKOUT" if is_pump_alert else ("SMART_BUY" if near_smart_buy else ("2X_CANDLE_REVERSAL" if two_consecutive_candles else ("EMA21_PULLBACK" if is_ema21_pullback else "NONE"))))
     breakdown["sr_and_pattern"] = {
         "points": sr_pattern_points,
         "max": 25.0,
         "pattern": pattern_desc,
         "avwap_bias": avwap_info.get("position_to_avwap"),
-        "detail": f"Pattern: {pattern_desc}, S/R/AVWAP: {'YES' if (near_support or near_resistance or is_pump_alert or is_ema21_pullback) else 'NO'}"
+        "detail": f"Pattern: {pattern_desc}, S/R/AVWAP/SmartBuy: {'YES' if (near_support or near_resistance or is_pump_alert or is_ema21_pullback or near_smart_buy or two_consecutive_candles) else 'NO'}"
     }
     total_score += sr_pattern_points
 
