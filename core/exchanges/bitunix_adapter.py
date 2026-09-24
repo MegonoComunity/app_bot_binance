@@ -131,9 +131,9 @@ class BitunixAdapter(BaseExchange):
             log_error(f"BITUNIX_REQ_{endpoint}", str(e))
             raise
 
-    async def get_top_futures_by_volume(self, n: Optional[int] = None) -> List[str]:
+    async def get_top_futures_by_volume(self, n: Optional[int] = None, sort_by: str = "VOLUME_DESC") -> List[str]:
         """
-        Mengambil Top N ticker Futures berpasangan USDT berdasarkan volume 24 jam yang valid & OPEN untuk trading.
+        Mengambil Top N / Seluruh ticker Futures berpasangan USDT berdasarkan volume atau change 24 jam yang valid & OPEN.
         """
         try:
             # 1. Ambil daftar instrumen yang berstatus OPEN dan didukung API
@@ -148,32 +148,54 @@ class BitunixAdapter(BaseExchange):
             except Exception as e_pairs:
                 logger.debug(f"[BITUNIX] Gagal fetch trading_pairs status: {e_pairs}")
 
-            # 2. Ambil tickers untuk sorting volume
+            # 2. Ambil tickers untuk sorting
             res = await self._request("GET", "/api/v1/futures/market/tickers")
             ticker_list = res.get("data", []) if isinstance(res, dict) else res
             if not isinstance(ticker_list, list):
                 ticker_list = []
 
             # Filter hanya pair USDT yang aktif
-            usdt_pairs = [
-                t for t in ticker_list
-                if str(t.get("symbol", "")).upper().endswith("USDT")
-                and (not valid_symbols or str(t.get("symbol", "")).upper() in valid_symbols)
-            ]
+            usdt_pairs = []
+            for t in ticker_list:
+                sym = str(t.get("symbol", "")).upper()
+                if not sym.endswith("USDT"):
+                    continue
+                if valid_symbols and sym not in valid_symbols:
+                    continue
 
-            # Urutkan berdasarkan quote volume (volume dalam USDT)
-            usdt_pairs.sort(
-                key=lambda x: float(x.get("quoteVol", x.get("quoteVolume", x.get("amount", x.get("volume", 0))))),
-                reverse=True,
-            )
+                quote_vol = float(t.get("quoteVol", t.get("quoteVolume", t.get("amount", t.get("volume", 0)))) or 0)
+                open_p = float(t.get("open", 0) or 0)
+                last_p = float(t.get("lastPrice", t.get("last", 0)) or 0)
+                change_pct = ((last_p - open_p) / open_p * 100) if open_p > 0 else 0.0
 
-            symbols = [p["symbol"].upper() for p in usdt_pairs]
-            if n is not None:
+                usdt_pairs.append({
+                    "symbol": sym,
+                    "quote_vol": quote_vol,
+                    "change_pct": change_pct,
+                    "abs_change": abs(change_pct),
+                })
+
+            sort_mode = str(sort_by).upper().strip()
+            if sort_mode in ("CHANGE_DESC", "CHANGE", "VOLATILITY"):
+                # Urutkan berdasarkan persentase perubahan harga terbesar (volatilitas)
+                usdt_pairs.sort(key=lambda x: (x["abs_change"], x["quote_vol"]), reverse=True)
+            elif sort_mode in ("GAINERS", "TOP_GAINERS"):
+                # Urutkan dari koin naik terbanyak
+                usdt_pairs.sort(key=lambda x: x["change_pct"], reverse=True)
+            elif sort_mode in ("LOSERS", "TOP_LOSERS"):
+                # Urutkan dari koin turun terdalam
+                usdt_pairs.sort(key=lambda x: x["change_pct"], reverse=False)
+            else:
+                # Default: Urutkan berdasarkan volume USDT 24h tertinggi
+                usdt_pairs.sort(key=lambda x: x["quote_vol"], reverse=True)
+
+            symbols = [p["symbol"] for p in usdt_pairs]
+            if n is not None and isinstance(n, int) and n > 0:
                 return symbols[:n]
             return symbols
         except Exception as e:
             log_error("BITUNIX_TOP_COINS", str(e))
-            print(f"[BITUNIX] Error fetching top coins: {e}")
+            print(f"[BITUNIX] Error fetching scan coins: {e}")
             return []
 
     async def fetch_ohlcv(self, symbol: str, interval: str, limit: int = 100) -> pd.DataFrame:

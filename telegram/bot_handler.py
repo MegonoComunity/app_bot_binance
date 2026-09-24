@@ -56,7 +56,15 @@ class DatasetForm(StatesGroup):
     waiting_for_image = State()
     waiting_for_label = State()
 
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, FSInputFile, BotCommand
+from aiogram.types import (
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove,
+    FSInputFile,
+    BotCommand,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 import os
 
 from core.exchanges.base import BaseExchange
@@ -78,6 +86,9 @@ async def setup_bot_commands(bot_instance: Bot) -> None:
         BotCommand(command="mode", description="Cek / Ganti Mode Trading (REAL/SIMULASI)"),
         BotCommand(command="status", description="Cek Saldo & Posisi Terbuka"),
         BotCommand(command="set_exchange", description="Pilih Exchange (binance/bitunix)"),
+        BotCommand(command="set_scan", description="🌐 Atur Target Scan & Urutan (ALL/Volume/Change)"),
+        BotCommand(command="set_scan_target", description="Target Scan (all/50/100/200/500)"),
+        BotCommand(command="set_scan_sort", description="Urutan Scan (volume/change/gainers/losers)"),
         BotCommand(command="pengaturan", description="Menu Pengaturan Lengkap"),
         BotCommand(command="reset_demo", description="Reset Modal ($100) & Statistik"),
         BotCommand(command="hitung_margin", description="Kalkulator Margin Aman"),
@@ -894,6 +905,154 @@ async def set_scanner_mode_handler(message: types.Message, command: CommandObjec
         await message.answer(f"❌ {error}")
 
 
+def get_scan_settings_keyboard() -> InlineKeyboardMarkup:
+    curr_target = str(getattr(bot_config, "scan_target", "ALL")).upper()
+    curr_sort = str(getattr(bot_config, "scan_sort", "VOLUME_DESC")).upper()
+
+    t_all = f"{'✅ ' if curr_target == 'ALL' else ''}🌐 ALL Altcoins"
+    t_500 = f"{'✅ ' if curr_target == '500' else ''}Top 500"
+    t_200 = f"{'✅ ' if curr_target == '200' else ''}Top 200"
+    t_100 = f"{'✅ ' if curr_target == '100' else ''}Top 100"
+    t_50 = f"{'✅ ' if curr_target == '50' else ''}Top 50"
+
+    s_vol = f"{'✅ ' if curr_sort == 'VOLUME_DESC' else ''}📊 Volume Terbesar"
+    s_chg = f"{'✅ ' if curr_sort == 'CHANGE_DESC' else ''}🔥 Change Terbanyak"
+    s_gain = f"{'✅ ' if curr_sort == 'GAINERS' else ''}🚀 Top Gainers"
+    s_lose = f"{'✅ ' if curr_sort == 'LOSERS' else ''}🔻 Top Losers"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=t_all, callback_data="scan_target:ALL"),
+            InlineKeyboardButton(text=t_500, callback_data="scan_target:500"),
+            InlineKeyboardButton(text=t_200, callback_data="scan_target:200"),
+        ],
+        [
+            InlineKeyboardButton(text=t_100, callback_data="scan_target:100"),
+            InlineKeyboardButton(text=t_50, callback_data="scan_target:50"),
+        ],
+        [
+            InlineKeyboardButton(text=s_vol, callback_data="scan_sort:VOLUME_DESC"),
+            InlineKeyboardButton(text=s_chg, callback_data="scan_sort:CHANGE_DESC"),
+        ],
+        [
+            InlineKeyboardButton(text=s_gain, callback_data="scan_sort:GAINERS"),
+            InlineKeyboardButton(text=s_lose, callback_data="scan_sort:LOSERS"),
+        ]
+    ])
+    return kb
+
+
+def get_scan_settings_text() -> str:
+    curr_target = str(getattr(bot_config, "scan_target", "ALL")).upper()
+    curr_sort = str(getattr(bot_config, "scan_sort", "VOLUME_DESC")).upper()
+    active_ex = getattr(bot_config, "active_exchange", "BINANCE")
+    
+    target_desc = "Semua Altcoin Futures (ALL)" if curr_target == "ALL" else f"Top {curr_target} Koin"
+    if curr_sort == "VOLUME_DESC":
+        sort_desc = "Volume Terbesar 24 Jam (Quote Volume USDT 📊)"
+    elif curr_sort == "CHANGE_DESC":
+        sort_desc = "Change Terbanyak / Volatilitas Tertinggi (% Perubahan Harga 🔥)"
+    elif curr_sort == "GAINERS":
+        sort_desc = "Top Gainers (% Kenaikan Tertinggi 🚀)"
+    else:
+        sort_desc = "Top Losers (% Penurunan Terdalam 🔻)"
+
+    text = (
+        f"⚙️ **PENGATURAN SCANNER ALTCOIN**\n\n"
+        f"🏛️ **Exchange:** `{active_ex}`\n"
+        f"🎯 **Target Koin:** `{target_desc}`\n"
+        f"🔄 **Urutan Sortir:** `{sort_desc}`\n\n"
+        f"Klik tombol di bawah ini untuk langsung mengubah target dan urutan scanning:\n"
+        f"• **Target Koin:** Pilih `ALL Altcoins` atau batasi (Top 500, 200, 100, 50).\n"
+        f"• **Urutan Koin:** Pilih `Volume Terbesar`, `Change Terbanyak`, `Gainers`, atau `Losers`.\n\n"
+        f"_Bisa juga via teks: `/set_scan_target all` atau `/set_scan_sort change`_"
+    )
+    return text
+
+
+@dp.message(Command("set_scan"))
+@dp.message(Command("scan_settings"))
+async def set_scan_menu_handler(message: types.Message):
+    await message.answer(get_scan_settings_text(), reply_markup=get_scan_settings_keyboard(), parse_mode="Markdown")
+
+
+@dp.message(Command("set_scan_target"))
+async def set_scan_target_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg:
+        await message.answer(
+            f"ℹ️ Target scan saat ini: `{bot_config.scan_target}`\n"
+            f"Gunakan: `/set_scan_target all` atau `/set_scan_target 200`\n"
+            f"Atau buka panel tombol interaktif: `/set_scan`",
+            parse_mode="Markdown"
+        )
+        return
+    try:
+        bot_config.update_scan_target(arg)
+        target_info = "Semua Altcoin Futures (ALL)" if bot_config.scan_target == "ALL" else f"Top {bot_config.scan_target} koin"
+        await message.answer(
+            f"✅ **Target scan diperbarui:** `{bot_config.scan_target}` ({target_info})",
+            parse_mode="Markdown"
+        )
+    except ValueError as e:
+        await message.answer(f"❌ {e}")
+
+
+@dp.message(Command("set_scan_sort"))
+async def set_scan_sort_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip().lower()
+    if not arg:
+        await message.answer(
+            f"ℹ️ Urutan scan saat ini: `{bot_config.scan_sort}`\n"
+            f"Pilihan yang tersedia:\n"
+            f"• `/set_scan_sort volume` (Urutan dari volume USDT terbesar)\n"
+            f"• `/set_scan_sort change` (Urutan dari % change terbanyak/volatil)\n"
+            f"• `/set_scan_sort gainers` (Urutan koin naik tertinggi)\n"
+            f"• `/set_scan_sort losers` (Urutan koin turun terdalam)\n"
+            f"Atau buka panel tombol interaktif: `/set_scan`",
+            parse_mode="Markdown"
+        )
+        return
+    try:
+        bot_config.update_scan_sort(arg)
+        await message.answer(
+            f"✅ **Urutan scan diperbarui:** `{bot_config.scan_sort}`",
+            parse_mode="Markdown"
+        )
+    except ValueError as e:
+        await message.answer(f"❌ {e}")
+
+
+@dp.callback_query(F.data.startswith("scan_target:"))
+async def callback_scan_target(query: types.CallbackQuery):
+    target = query.data.split(":")[1]
+    try:
+        bot_config.update_scan_target(target)
+        await query.answer(f"Target Scan: {bot_config.scan_target}")
+        await query.message.edit_text(
+            get_scan_settings_text(),
+            reply_markup=get_scan_settings_keyboard(),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await query.answer(f"Error: {e}", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("scan_sort:"))
+async def callback_scan_sort(query: types.CallbackQuery):
+    sort_mode = query.data.split(":")[1]
+    try:
+        bot_config.update_scan_sort(sort_mode)
+        await query.answer(f"Urutan Scan: {bot_config.scan_sort}")
+        await query.message.edit_text(
+            get_scan_settings_text(),
+            reply_markup=get_scan_settings_keyboard(),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await query.answer(f"Error: {e}", show_alert=True)
+
+
 @dp.message(Command("set_analysis_days"))
 async def set_analysis_days_handler(message: types.Message, command: CommandObject):
     try:
@@ -1236,6 +1395,9 @@ async def btn_pengaturan_handler(message: types.Message):
     margin_desc = "DYNAMIC (Auto Computed)" if bot_config.margin_mode == "DYNAMIC" else f"FIXED ({bot_config.margin_usdt:.2f} USDT)"
     modal_desc = f"{bot_config.simulated_modal:.2f} USDT (Custom Demo)" if bot_config.simulated_modal else "AUTO (Saldo Real Exchange)"
     
+    scan_target_desc = "Semua Altcoin Futures (ALL)" if bot_config.scan_target == "ALL" else f"Top {bot_config.scan_target}"
+    scan_sort_desc = "Volume Terbesar 📊" if bot_config.scan_sort == "VOLUME_DESC" else ("Change % 🔥" if bot_config.scan_sort == "CHANGE_DESC" else ("Gainers 🚀" if bot_config.scan_sort == "GAINERS" else "Losers 🔻"))
+
     text = (
         "⚙️ **PENGATURAN BOT LENGKAP** ⚙️\n\n"
         "💰 **1. MODAL & MARGIN SIZING**\n"
@@ -1248,12 +1410,22 @@ async def btn_pengaturan_handler(message: types.Message):
         f"• Stop Loss   : `{bot_config.sl_percent}%` ROI\n"
         f"• Trailing Stop : `{ts_status}` (Act: `{bot_config.ts_activation_percent}%`, Call: `{bot_config.ts_callback_rate}%`)\n\n"
         "⚡ **3. EKSEKUSI & SCANNER**\n"
+        f"• Exchange    : `{bot_config.active_exchange}` | Mode: `{bot_config.trading_mode}`\n"
+        f"• Target Scan : `{scan_target_desc}`\n"
+        f"• Urutan Scan : `{scan_sort_desc}`\n"
         f"• Leverage    : `{bot_config.leverage}x`\n"
         f"• Max Posisi  : `{bot_config.max_open_positions} koin bersamaan`\n"
         f"• RSI Filter  : `{bot_config.rsi_length}` (Oversold: `{bot_config.rsi_oversold:g}` / Overbought: `{bot_config.rsi_overbought:g}`)\n"
         f"• Scanner Mode: `{bot_config.scanner_mode}`\n"
         "──────────────\n"
         "📝 **DAFTAR PERINTAH PENGATURAN:**\n"
+        "🌐 **Scanner & Target Koin:**\n"
+        "• `/set_scan` (Buka Panel Tombol Target & Urutan Scan)\n"
+        "• `/set_scan_target all` (Scan seluruh altcoin futures)\n"
+        "• `/set_scan_target 200` (Batasi top 200 koin)\n"
+        "• `/set_scan_sort volume` (Urutan volume USDT terbesar)\n"
+        "• `/set_scan_sort change` (Urutan % change tertinggi/volatil)\n"
+        "• `/set_scan_sort gainers` | `/set_scan_sort losers`\n\n"
         "💵 **Modal & Sizing:**\n"
         "• `/set_modal 100` (Atur modal uji coba $100)\n"
         "• `/set_modal auto` (Gunakan saldo real)\n"

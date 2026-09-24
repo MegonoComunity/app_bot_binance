@@ -55,6 +55,7 @@ from core.risk_manager import (
     count_open_positions,
     daily_loss_limit_reached,
     total_position_notional,
+    total_position_margin,
     evaluate_time_based_exit,
 )
 from core.trade_stats import trade_summary, record_closed_trade
@@ -204,8 +205,10 @@ async def scanner_loop():
                     await asyncio.sleep(SCAN_INTERVAL_SECONDS)
                     continue
 
-                # 1. Dapatkan semua koin
-                all_symbols = await get_top_futures_by_volume(client, TOP_N_COINS_ENV)
+                # 1. Dapatkan koin sesuai target (ALL / Top N) dan sorting setting
+                scan_limit = bot_config.get_scan_limit_int()
+                scan_sort = getattr(bot_config, "scan_sort", "VOLUME_DESC")
+                all_symbols = await get_top_futures_by_volume(client, n=scan_limit, sort_by=scan_sort)
                 
                 # Update Market Intelligence (BTC Anchor & Market Breadth)
                 try:
@@ -250,6 +253,9 @@ async def scanner_loop():
                 except Exception as e_intel:
                     logger.debug(f"[INTEL] Update market intel skipped: {e_intel}")
 
+                target_label = f"ALL ({len(all_symbols)} Altcoins)" if scan_limit is None else f"Top {scan_limit}"
+                sort_label = "Volume 📊" if scan_sort == "VOLUME_DESC" else ("Change % 🔥" if scan_sort == "CHANGE_DESC" else ("Gainers 🚀" if scan_sort == "GAINERS" else "Losers 🔻"))
+
                 batch_size = 1 if bot_config.scanner_mode == "per_coin" else SCAN_BATCH_SIZE_ENV
                 for i in range(0, len(all_symbols), batch_size):
                     batch_symbols = all_symbols[i:i+batch_size]
@@ -257,12 +263,12 @@ async def scanner_loop():
                     batch_signal_found = False
                     
                     if tahap == 1:
-                        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Scan koin top {i+1} - {i+len(batch_symbols)}")
+                        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Mulai scan {len(all_symbols)} koin [{target_label} | Urutan: {sort_label}]")
                     else:
-                        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Scan tahap ke-{tahap} scan koin top {i+1} - {i+len(batch_symbols)}")
+                        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Scan tahap ke-{tahap} scan koin urutan {i+1} - {i+len(batch_symbols)}")
                         
                     for idx, symbol in enumerate(batch_symbols):
-                        print(f"Koin top {i + idx + 1} {symbol}")
+                        print(f"Koin urutan {i + idx + 1} {symbol}")
                         
                         # Tunggu jika limit lokal hampir penuh
                         used_local = await rate_limiter.wait_if_needed()
@@ -507,12 +513,60 @@ async def scanner_loop():
                             alasan_short = f"RSI Overbought ({rsi_value:.2f}) di Upper BB (HTF: {htf_trend})"
                         
                         # Evaluasi Keandalan dari Learner
-                        reliable_long = is_pattern_reliable(alasan_long) if (syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or syarat_breakout_long) else True
-                        reliable_short = is_pattern_reliable(alasan_short) if (syarat_teknikal_short or syarat_pola_short or syarat_breakout_short) else True
+                        raw_long = (syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or syarat_breakout_long)
+                        raw_short = (syarat_teknikal_short or syarat_pola_short or syarat_breakout_short)
+
+                        reliable_long = is_pattern_reliable(alasan_long) if raw_long else True
+                        reliable_short = is_pattern_reliable(alasan_short) if raw_short else True
                         
-                        trigger_long = (syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or syarat_breakout_long) and not bull_trap_detected and reliable_long
-                        trigger_short = (syarat_teknikal_short or syarat_pola_short or syarat_breakout_short) and not bear_trap_detected and reliable_short
+                        trigger_long = raw_long and not bull_trap_detected and reliable_long
+                        trigger_short = raw_short and not bear_trap_detected and reliable_short
                         
+                        # Jika sinyal teknikal/pola terdeteksi tetapi ditolak oleh filter Learner/Trap/Blacklist,
+                        # simpan sebagai LATIHAN SIMULASI di background memory agar AI tetap belajar dan menguji win rate pola!
+                        if (raw_long or raw_short) and not (trigger_long or trigger_short):
+                            sim_side = "LONG" if raw_long else "SHORT"
+                            sim_alasan = alasan_long if sim_side == "LONG" else alasan_short
+                            if symbol not in virtual_trades:
+                                pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
+                                pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
+                                v_tp = current_price * (1 + pm_tp_v) if sim_side == "LONG" else current_price * (1 - pm_tp_v)
+                                v_sl = current_price * (1 - pm_sl_v) if sim_side == "LONG" else current_price * (1 + pm_sl_v)
+                                ex_name = getattr(client, "exchange_name", "BITUNIX")
+                                cond_sim = {
+                                    "side": sim_side,
+                                    "htf_trend": htf_trend,
+                                    "bb_zone": "LOWER" if near_lower_bb else ("UPPER" if near_upper_bb else "MID"),
+                                    "rsi_zone": "OVERSOLD" if is_oversold else ("OVERBOUGHT" if is_overbought else "NEUTRAL"),
+                                    "pattern": pattern_name if pattern_detected else "NONE",
+                                    "is_breakout": bool(syarat_breakout_long or syarat_breakout_short),
+                                    "squeeze_score": float(breakout.get("score", 0)),
+                                    "volume_ratio": round(vol_ratio, 2),
+                                    "atr_percent": round((atr_val / current_price * 100), 2) if current_price > 0 else 0.0,
+                                }
+                                p_entry_id_v = record_pattern_entry(
+                                    symbol=symbol,
+                                    side=sim_side,
+                                    entry_price=current_price,
+                                    conditions=cond_sim,
+                                    alasan=f"[LATIHAN] {sim_alasan}",
+                                    margin_usdt=0.0,
+                                    leverage=dynamic_leverage,
+                                    exchange=f"{ex_name}_SIM_TRAIN",
+                                )
+                                virtual_trades[symbol] = {
+                                    "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "tipe": sim_side,
+                                    "entry_price": current_price,
+                                    "tp_price": v_tp,
+                                    "sl_price": v_sl,
+                                    "alasan": sim_alasan,
+                                    "leverage": dynamic_leverage,
+                                    "pattern_entry_id": p_entry_id_v,
+                                }
+                                print(f"📚 [LATIHAN SIMULASI] Sinyal {sim_side} {symbol} dicatat ke Background Memory untuk melatih Win Rate pola (ID: {p_entry_id_v}).")
+                            continue
+
                         if trigger_long or trigger_short:
                             trade_type = "LONG" if trigger_long else "SHORT"
                             alasan = alasan_long if trade_type == "LONG" else alasan_short
@@ -533,6 +587,33 @@ async def scanner_loop():
                             # Evaluasi Pattern Memory: tolak jika pola terbukti buruk (>= 3 sample, WR < 45%)
                             if is_pattern_memory_blacklisted(conditions_snapshot):
                                 print(f"🚫 [PATTERN MEMORY] Sinyal {trade_type} pada {symbol} DITOLAK karena pola historis memiliki Win Rate rendah!")
+                                if symbol not in virtual_trades:
+                                    pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
+                                    pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
+                                    v_tp = current_price * (1 + pm_tp_v) if trade_type == "LONG" else current_price * (1 - pm_tp_v)
+                                    v_sl = current_price * (1 - pm_sl_v) if trade_type == "LONG" else current_price * (1 + pm_sl_v)
+                                    ex_name = getattr(client, "exchange_name", "BITUNIX")
+                                    p_entry_id_v = record_pattern_entry(
+                                        symbol=symbol,
+                                        side=trade_type,
+                                        entry_price=current_price,
+                                        conditions=conditions_snapshot,
+                                        alasan=f"[LATIHAN] {alasan}",
+                                        margin_usdt=0.0,
+                                        leverage=dynamic_leverage,
+                                        exchange=f"{ex_name}_SIM_TRAIN",
+                                    )
+                                    virtual_trades[symbol] = {
+                                        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        "tipe": trade_type,
+                                        "entry_price": current_price,
+                                        "tp_price": v_tp,
+                                        "sl_price": v_sl,
+                                        "alasan": alasan,
+                                        "leverage": dynamic_leverage,
+                                        "pattern_entry_id": p_entry_id_v,
+                                    }
+                                    print(f"📚 [LATIHAN SIMULASI] Sinyal {trade_type} {symbol} dicatat untuk evaluasi memory.")
                                 continue
 
                             batch_signal_found = True
@@ -576,10 +657,37 @@ async def scanner_loop():
                                     print(f"⏩ Lewati {symbol}: Sudah ada posisi terbuka.")
                                     continue
 
-                                total_exposure = total_position_notional(positions)
+                                total_margin_used = total_position_margin(positions, bot_config.leverage)
                                 exposure_limit = modal * bot_config.max_total_exposure_percent / 100
-                                if total_exposure >= exposure_limit:
-                                    print(f"[RISK] Lewati {symbol}: exposure {total_exposure:.2f} >= limit {exposure_limit:.2f}")
+                                if total_margin_used >= exposure_limit:
+                                    print(f"[RISK] Lewati {symbol}: margin terpakai {total_margin_used:.2f} >= limit {exposure_limit:.2f}")
+                                    if symbol not in virtual_trades:
+                                        pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
+                                        pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
+                                        v_tp = current_price * (1 + pm_tp_v) if trade_type == "LONG" else current_price * (1 - pm_tp_v)
+                                        v_sl = current_price * (1 - pm_sl_v) if trade_type == "LONG" else current_price * (1 + pm_sl_v)
+                                        ex_name = getattr(client, "exchange_name", "BITUNIX")
+                                        p_entry_id_v = record_pattern_entry(
+                                            symbol=symbol,
+                                            side=trade_type,
+                                            entry_price=current_price,
+                                            conditions=conditions_snapshot,
+                                            alasan=f"[LATIHAN] {alasan}",
+                                            margin_usdt=0.0,
+                                            leverage=dynamic_leverage,
+                                            exchange=f"{ex_name}_SIM_TRAIN",
+                                        )
+                                        virtual_trades[symbol] = {
+                                            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                            "tipe": trade_type,
+                                            "entry_price": current_price,
+                                            "tp_price": v_tp,
+                                            "sl_price": v_sl,
+                                            "alasan": alasan,
+                                            "leverage": dynamic_leverage,
+                                            "pattern_entry_id": p_entry_id_v,
+                                        }
+                                        print(f"📚 [LATIHAN SIMULASI] {symbol} ({trade_type}) dicatat untuk latihan memory karena batas margin real penuh.")
                                     continue
 
                                 # Market guard opsional jika Binance

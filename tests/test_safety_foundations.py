@@ -54,6 +54,21 @@ class SafetyFoundationTests(unittest.TestCase):
             settings.update_scanner_mode("unknown")
         with self.assertRaises(ValueError):
             settings.update_analysis_lookback_days(19)
+        with self.assertRaises(ValueError):
+            settings.update_scan_sort("invalid_sort")
+        
+        settings.update_scan_target("ALL")
+        self.assertEqual(settings.scan_target, "ALL")
+        self.assertIsNone(settings.get_scan_limit_int())
+
+        settings.update_scan_target("150")
+        self.assertEqual(settings.scan_target, "150")
+        self.assertEqual(settings.get_scan_limit_int(), 150)
+
+        settings.update_scan_sort("change")
+        self.assertEqual(settings.scan_sort, "CHANGE_DESC")
+        settings.update_scan_sort("volume")
+        self.assertEqual(settings.scan_sort, "VOLUME_DESC")
 
     def test_running_pnl_percent_uses_initial_margin(self):
         position = {

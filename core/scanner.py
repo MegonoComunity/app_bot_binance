@@ -6,13 +6,17 @@ from binance import AsyncClient
 from core.exchanges.base import BaseExchange
 
 
-async def get_top_futures_by_volume(client: Union[BaseExchange, AsyncClient], n: Optional[int] = None) -> List[str]:
+async def get_top_futures_by_volume(
+    client: Union[BaseExchange, AsyncClient],
+    n: Optional[int] = None,
+    sort_by: str = "VOLUME_DESC",
+) -> List[str]:
     """
-    Mengambil top koin Futures berdasarkan volume 24 jam terakhir.
+    Mengambil daftar koin Futures berdasarkan volume atau change persentase 24 jam.
     Mendukung BaseExchange adapter maupun direct Binance AsyncClient.
     """
     if isinstance(client, BaseExchange):
-        return await client.get_top_futures_by_volume(n=n)
+        return await client.get_top_futures_by_volume(n=n, sort_by=sort_by)
 
     # Fallback untuk direct Binance AsyncClient
     try:
@@ -23,15 +27,34 @@ async def get_top_futures_by_volume(client: Union[BaseExchange, AsyncClient], n:
         }
         
         tickers = await client.futures_ticker()
-        usdt_pairs = [
-            t for t in tickers
-            if t['symbol'] in valid_symbols and t['symbol'].isascii()
-        ]
-        usdt_pairs.sort(key=lambda x: float(x.get('quoteVolume', 0)), reverse=True)
-        
-        if n is not None:
-            return [pair['symbol'] for pair in usdt_pairs[:n]]
-        return [pair['symbol'] for pair in usdt_pairs]
+        usdt_pairs = []
+        for t in tickers:
+            sym = t.get('symbol', '')
+            if sym not in valid_symbols or not sym.isascii():
+                continue
+            quote_vol = float(t.get('quoteVolume', 0) or 0)
+            change_pct = float(t.get('priceChangePercent', 0) or 0)
+            usdt_pairs.append({
+                "symbol": sym,
+                "quote_vol": quote_vol,
+                "change_pct": change_pct,
+                "abs_change": abs(change_pct),
+            })
+
+        sort_mode = str(sort_by).upper().strip()
+        if sort_mode in ("CHANGE_DESC", "CHANGE", "VOLATILITY"):
+            usdt_pairs.sort(key=lambda x: (x["abs_change"], x["quote_vol"]), reverse=True)
+        elif sort_mode in ("GAINERS", "TOP_GAINERS"):
+            usdt_pairs.sort(key=lambda x: x["change_pct"], reverse=True)
+        elif sort_mode in ("LOSERS", "TOP_LOSERS"):
+            usdt_pairs.sort(key=lambda x: x["change_pct"], reverse=False)
+        else:
+            usdt_pairs.sort(key=lambda x: x["quote_vol"], reverse=True)
+
+        symbols = [pair['symbol'] for pair in usdt_pairs]
+        if n is not None and isinstance(n, int) and n > 0:
+            return symbols[:n]
+        return symbols
     except Exception as e:
         print(f"Error fetching top coins: {e}")
         return []

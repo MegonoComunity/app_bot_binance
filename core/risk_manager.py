@@ -79,6 +79,25 @@ def total_position_notional(positions: list[dict]) -> float:
     return total
 
 
+def total_position_margin(positions: list[dict], default_leverage: int = 20) -> float:
+    """Menghitung total margin yang terpakai oleh seluruh posisi terbuka (Futures)."""
+    total = 0.0
+    for p in positions:
+        amt = abs(float(p.get("positionAmt", p.get("position_amt", 0))))
+        if amt == 0:
+            continue
+        direct_margin = float(p.get("margin", p.get("isolatedMargin", 0)) or 0)
+        if direct_margin > 0:
+            total += direct_margin
+            continue
+        entry = float(p.get("entryPrice", p.get("entry_price", 0)) or 0)
+        lev = float(p.get("leverage", 0) or default_leverage)
+        if lev <= 0:
+            lev = 1.0
+        total += (amt * entry) / lev
+    return total
+
+
 def evaluate_time_based_exit(
     hold_duration_hours: float,
     roi_percent: float,
