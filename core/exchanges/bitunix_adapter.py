@@ -92,6 +92,7 @@ class BitunixAdapter(BaseExchange):
             sorted_params = dict(sorted_items)
             query_params_str = "".join(f"{k}{v}" for k, v in sorted_items)
 
+        body_str = json.dumps(data, separators=(",", ":")) if data else ""
         if auth_required:
             nonce = uuid.uuid4().hex
             timestamp = str(int(time.time() * 1000))
@@ -101,6 +102,7 @@ class BitunixAdapter(BaseExchange):
                 "nonce": nonce,
                 "timestamp": timestamp,
                 "sign": signature,
+                "language": "en-US",
             })
 
         try:
@@ -108,7 +110,7 @@ class BitunixAdapter(BaseExchange):
                 method=method.upper(),
                 url=url,
                 params=sorted_params,
-                json=data if data else None,
+                data=body_str if body_str else None,
                 headers=headers,
                 proxy=self._proxy,
                 timeout=aiohttp.ClientTimeout(total=10),
@@ -129,9 +131,9 @@ class BitunixAdapter(BaseExchange):
             log_error(f"BITUNIX_REQ_{endpoint}", str(e))
             raise
 
-    async def get_top_futures_by_volume(self, n: Optional[int] = None) -> List[str]:
+    async def get_top_futures_by_volume(self, n: Optional[int] = None, sort_by: str = "VOLUME_DESC") -> List[str]:
         """
-        Mengambil Top N ticker Futures berpasangan USDT berdasarkan volume 24 jam yang valid & OPEN untuk trading.
+        Mengambil Top N / Seluruh ticker Futures berpasangan USDT berdasarkan volume atau change 24 jam yang valid & OPEN.
         """
         try:
             # 1. Ambil daftar instrumen yang berstatus OPEN dan didukung API
@@ -146,32 +148,54 @@ class BitunixAdapter(BaseExchange):
             except Exception as e_pairs:
                 logger.debug(f"[BITUNIX] Gagal fetch trading_pairs status: {e_pairs}")
 
-            # 2. Ambil tickers untuk sorting volume
+            # 2. Ambil tickers untuk sorting
             res = await self._request("GET", "/api/v1/futures/market/tickers")
             ticker_list = res.get("data", []) if isinstance(res, dict) else res
             if not isinstance(ticker_list, list):
                 ticker_list = []
 
             # Filter hanya pair USDT yang aktif
-            usdt_pairs = [
-                t for t in ticker_list
-                if str(t.get("symbol", "")).upper().endswith("USDT")
-                and (not valid_symbols or str(t.get("symbol", "")).upper() in valid_symbols)
-            ]
+            usdt_pairs = []
+            for t in ticker_list:
+                sym = str(t.get("symbol", "")).upper()
+                if not sym.endswith("USDT"):
+                    continue
+                if valid_symbols and sym not in valid_symbols:
+                    continue
 
-            # Urutkan berdasarkan quote volume (volume dalam USDT)
-            usdt_pairs.sort(
-                key=lambda x: float(x.get("quoteVol", x.get("quoteVolume", x.get("amount", x.get("volume", 0))))),
-                reverse=True,
-            )
+                quote_vol = float(t.get("quoteVol", t.get("quoteVolume", t.get("amount", t.get("volume", 0)))) or 0)
+                open_p = float(t.get("open", 0) or 0)
+                last_p = float(t.get("lastPrice", t.get("last", 0)) or 0)
+                change_pct = ((last_p - open_p) / open_p * 100) if open_p > 0 else 0.0
 
-            symbols = [p["symbol"].upper() for p in usdt_pairs]
-            if n is not None:
+                usdt_pairs.append({
+                    "symbol": sym,
+                    "quote_vol": quote_vol,
+                    "change_pct": change_pct,
+                    "abs_change": abs(change_pct),
+                })
+
+            sort_mode = str(sort_by).upper().strip()
+            if sort_mode in ("CHANGE_DESC", "CHANGE", "VOLATILITY"):
+                # Urutkan berdasarkan persentase perubahan harga terbesar (volatilitas)
+                usdt_pairs.sort(key=lambda x: (x["abs_change"], x["quote_vol"]), reverse=True)
+            elif sort_mode in ("GAINERS", "TOP_GAINERS"):
+                # Urutkan dari koin naik terbanyak
+                usdt_pairs.sort(key=lambda x: x["change_pct"], reverse=True)
+            elif sort_mode in ("LOSERS", "TOP_LOSERS"):
+                # Urutkan dari koin turun terdalam
+                usdt_pairs.sort(key=lambda x: x["change_pct"], reverse=False)
+            else:
+                # Default: Urutkan berdasarkan volume USDT 24h tertinggi
+                usdt_pairs.sort(key=lambda x: x["quote_vol"], reverse=True)
+
+            symbols = [p["symbol"] for p in usdt_pairs]
+            if n is not None and isinstance(n, int) and n > 0:
                 return symbols[:n]
             return symbols
         except Exception as e:
             log_error("BITUNIX_TOP_COINS", str(e))
-            print(f"[BITUNIX] Error fetching top coins: {e}")
+            print(f"[BITUNIX] Error fetching scan coins: {e}")
             return []
 
     async def fetch_ohlcv(self, symbol: str, interval: str, limit: int = 100) -> pd.DataFrame:
@@ -276,32 +300,68 @@ class BitunixAdapter(BaseExchange):
             log_error(f"BITUNIX_PRICE_{symbol}", str(e))
             return 0.0
 
-    async def get_account_balance(self) -> Dict[str, float]:
+    async def get_account_balance(self, margin_coin: str = "USDT") -> Dict[str, float]:
         """
-        Mengambil balance futures Bitunix.
+        Mengambil balance futures Bitunix untuk margin coin (default USDT).
+        Endpoint resmi: GET /api/v1/futures/account?marginCoin=USDT
         """
         try:
-            res = await self._request("GET", "/api/v1/futures/account", auth_required=True)
-            data = res.get("data", {}) if isinstance(res, dict) else {}
-            total_wallet = float(data.get("marginBalance", data.get("totalWalletBalance", 0.0)))
-            available = float(data.get("availableBalance", data.get("available", 0.0)))
-            unrealized = float(data.get("unrealizedProfit", data.get("unrealizedPnl", 0.0)))
+            res = await self._request(
+                "GET",
+                "/api/v1/futures/account",
+                params={"marginCoin": margin_coin.upper()},
+                auth_required=True,
+            )
+            raw_data = res.get("data", []) if isinstance(res, dict) else []
+            if isinstance(raw_data, list) and len(raw_data) > 0:
+                data = raw_data[0]
+            elif isinstance(raw_data, dict):
+                data = raw_data
+            else:
+                data = {}
+
+            available = float(data.get("available", data.get("availableBalance", 0.0)))
+            margin_locked = float(data.get("margin", 0.0))
+            frozen = float(data.get("frozen", 0.0))
+            cross_unreal = float(data.get("crossUnrealizedPNL", 0.0))
+            iso_unreal = float(data.get("isolationUnrealizedPNL", 0.0))
+            unrealized = cross_unreal + iso_unreal
+
+            # Total wallet balance = available + margin terkunci + frozen
+            total_wallet = available + margin_locked + frozen
+            if total_wallet == 0.0:
+                total_wallet = float(data.get("transfer", data.get("marginBalance", available)))
+
             return {
                 "total_wallet_balance": total_wallet,
                 "available_balance": available,
                 "unrealized_pnl": unrealized,
+                "margin_locked": margin_locked,
+                "frozen": frozen,
             }
         except Exception as e:
             log_error("BITUNIX_BALANCE", str(e))
-            return {"total_wallet_balance": 0.0, "available_balance": 0.0, "unrealized_pnl": 0.0}
+            raise
 
-    async def get_open_positions(self) -> List[Dict[str, Any]]:
+    async def get_open_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Mengambil posisi aktif futures Bitunix.
+        Endpoint resmi: GET /api/v1/futures/position/get_pending_positions
         """
         try:
-            res = await self._request("GET", "/api/v1/futures/position", auth_required=True)
+            params = {}
+            if symbol:
+                params["symbol"] = symbol.upper()
+            res = await self._request(
+                "GET",
+                "/api/v1/futures/position/get_pending_positions",
+                params=params if params else None,
+                auth_required=True,
+            )
             pos_list = res.get("data", []) if isinstance(res, dict) else []
+            if not isinstance(pos_list, list):
+                pos_list = []
+
             active_positions = []
             for pos in pos_list:
                 qty = float(pos.get("qty", pos.get("positionAmt", 0.0)))
@@ -310,20 +370,32 @@ class BitunixAdapter(BaseExchange):
                     if not side_str:
                         side_str = "LONG" if qty > 0 else "SHORT"
 
+                    entry_p = float(pos.get("avgOpenPrice", pos.get("entryPrice", pos.get("avgPrice", 0.0))))
+                    unreal_pnl = float(pos.get("unrealizedPNL", pos.get("unrealizedProfit", pos.get("unrealizedPnl", 0.0))))
+
                     active_positions.append({
-                        "symbol": pos.get("symbol", "").upper(),
+                        "position_id": str(pos.get("positionId", "")),
+                        "symbol": str(pos.get("symbol", "")).upper(),
                         "side": side_str,
-                        "position_amt": qty,
-                        "entry_price": float(pos.get("entryPrice", pos.get("avgPrice", 0.0))),
-                        "mark_price": float(pos.get("markPrice", pos.get("lastPrice", 0.0))),
-                        "unrealized_pnl": float(pos.get("unrealizedProfit", pos.get("unrealizedPnl", 0.0))),
+                        "position_amt": qty if side_str == "LONG" else -qty,
+                        "qty": qty,
+                        "entry_price": entry_p,
+                        "entry_value": float(pos.get("entryValue", 0.0)),
+                        "mark_price": float(pos.get("markPrice", pos.get("lastPrice", entry_p))),
+                        "unrealized_pnl": unreal_pnl,
                         "leverage": int(pos.get("leverage", 1)),
-                        "liquidation_price": float(pos.get("liquidationPrice", pos.get("liqPrice", 0.0))),
+                        "margin_mode": pos.get("marginMode", "ISOLATION"),
+                        "position_mode": pos.get("positionMode", "HEDGE"),
+                        "liquidation_price": float(pos.get("liqPrice", pos.get("liquidationPrice", 0.0))),
+                        "margin": float(pos.get("margin", 0.0)),
+                        "fee": float(pos.get("fee", 0.0)),
+                        "funding": float(pos.get("funding", 0.0)),
+                        "ctime": int(pos.get("ctime", 0)),
                     })
             return active_positions
         except Exception as e:
             log_error("BITUNIX_POSITIONS", str(e))
-            return []
+            raise
 
     async def set_leverage(self, symbol: str, leverage: int) -> int:
         for lev in range(leverage, 0, -1):
@@ -376,20 +448,31 @@ class BitunixAdapter(BaseExchange):
         quantity: float,
         price: Optional[float] = None,
         reduce_only: bool = False,
+        trade_side: Optional[str] = None,
+        position_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         precision = await self.get_symbol_precision(symbol)
         formatted_qty = round(quantity, precision["qty"])
 
+        side_clean = side.upper().strip()
+        if not trade_side:
+            trade_side = "CLOSE" if reduce_only else "OPEN"
+
         payload: Dict[str, Any] = {
             "symbol": symbol.upper(),
-            "side": side.upper(),  # 'BUY' atau 'SELL'
-            "orderType": order_type.upper(),  # 'MARKET' atau 'LIMIT'
             "qty": str(formatted_qty),
+            "side": side_clean,
+            "tradeSide": trade_side.upper(),
+            "orderType": order_type.upper(),
             "reduceOnly": reduce_only,
         }
 
+        if position_id:
+            payload["positionId"] = str(position_id)
+
         if order_type.upper() == "LIMIT" and price is not None:
             payload["price"] = f"{price:.{precision['price']}f}"
+            payload["effect"] = "GTC"
 
         return await self._request("POST", "/api/v1/futures/trade/place_order", data=payload, auth_required=True)
 
@@ -401,48 +484,60 @@ class BitunixAdapter(BaseExchange):
         tp_price: Optional[float] = None,
         sl_price: Optional[float] = None,
     ) -> Dict[str, Any]:
+        """
+        Memasang Take Profit dan/atau Stop Loss untuk posisi aktif menggunakan endpoint resmi Bitunix:
+        POST /api/v1/futures/tpsl/position/place_order
+        """
+        positions = await self.get_open_positions(symbol=symbol)
+        pos = next((p for p in positions if p.get("symbol") == symbol.upper()), None)
+        pos_id = pos.get("position_id") if pos else None
+
         precision = await self.get_symbol_precision(symbol)
         results: Dict[str, Any] = {}
 
-        if tp_price is not None:
-            try:
-                tp_payload = {
-                    "symbol": symbol.upper(),
-                    "side": side.upper(),
-                    "orderType": "TAKE_PROFIT_MARKET",
-                    "triggerPrice": f"{tp_price:.{precision['price']}f}",
-                    "qty": str(round(quantity, precision["qty"])),
-                    "reduceOnly": True,
-                }
-                res = await self._request("POST", "/api/v1/futures/trade/place_order", data=tp_payload, auth_required=True)
-                results["take_profit"] = res
-            except Exception as e:
-                log_error(f"BITUNIX_TP_{symbol}", str(e))
-                results["tp_error"] = str(e)
+        if pos_id:
+            tpsl_payload: Dict[str, Any] = {
+                "symbol": symbol.upper(),
+                "positionId": str(pos_id),
+            }
+            if tp_price is not None:
+                tpsl_payload["tpPrice"] = f"{tp_price:.{precision['price']}f}"
+                tpsl_payload["tpStopType"] = "MARK_PRICE"
+            if sl_price is not None:
+                tpsl_payload["slPrice"] = f"{sl_price:.{precision['price']}f}"
+                tpsl_payload["slStopType"] = "MARK_PRICE"
 
-        if sl_price is not None:
             try:
-                sl_payload = {
-                    "symbol": symbol.upper(),
-                    "side": side.upper(),
-                    "orderType": "STOP_MARKET",
-                    "triggerPrice": f"{sl_price:.{precision['price']}f}",
-                    "qty": str(round(quantity, precision["qty"])),
-                    "reduceOnly": True,
-                }
-                res = await self._request("POST", "/api/v1/futures/trade/place_order", data=sl_payload, auth_required=True)
-                results["stop_loss"] = res
+                res = await self._request("POST", "/api/v1/futures/tpsl/position/place_order", data=tpsl_payload, auth_required=True)
+                results["position_tpsl"] = res
+                results["status"] = "success"
+                return results
             except Exception as e:
-                log_error(f"BITUNIX_SL_{symbol}", str(e))
-                results["sl_error"] = str(e)
+                log_error(f"BITUNIX_POS_TPSL_{symbol}", str(e))
+                results["tpsl_error"] = str(e)
+                results["status"] = "error"
+                return results
 
-        return results
+        # Fallback jika positionId belum tersedia
+        return {"status": "NO_POSITION_FOR_TPSL", "symbol": symbol}
 
     async def emergency_close_position(self, symbol: str) -> Dict[str, Any]:
+        """
+        Menutup posisi secara instan di market menggunakan flash close atau market order close.
+        """
         positions = await self.get_open_positions()
         pos = next((p for p in positions if p["symbol"] == symbol.upper()), None)
         if not pos:
             return {"status": "NO_POSITION", "symbol": symbol}
+
+        pos_id = pos.get("position_id")
+        # Coba flash close position jika ada positionId
+        if pos_id:
+            try:
+                res_fc = await self._request("POST", "/api/v1/futures/trade/flash_close_position", data={"positionId": str(pos_id)}, auth_required=True)
+                return {"status": "success", "flash_close": res_fc}
+            except Exception as e_fc:
+                log_error(f"BITUNIX_FLASH_CLOSE_{symbol}", str(e_fc))
 
         close_side = "SELL" if pos["side"] == "LONG" else "BUY"
         return await self.place_order(
@@ -451,4 +546,6 @@ class BitunixAdapter(BaseExchange):
             order_type="MARKET",
             quantity=abs(pos["position_amt"]),
             reduce_only=True,
+            trade_side="CLOSE",
+            position_id=pos_id,
         )

@@ -45,7 +45,7 @@ class BinanceAdapter(BaseExchange):
             await self._client.close_connection()
             self._client = None
 
-    async def get_top_futures_by_volume(self, n: Optional[int] = None) -> List[str]:
+    async def get_top_futures_by_volume(self, n: Optional[int] = None, sort_by: str = "VOLUME_DESC") -> List[str]:
         try:
             exchange_info = await self.client.futures_exchange_info()
             valid_symbols = {
@@ -54,19 +54,37 @@ class BinanceAdapter(BaseExchange):
             }
 
             tickers = await self.client.futures_ticker()
-            usdt_pairs = [
-                t for t in tickers
-                if t['symbol'] in valid_symbols and t['symbol'].isascii()
-            ]
+            usdt_pairs = []
+            for t in tickers:
+                sym = t.get('symbol', '')
+                if sym not in valid_symbols or not sym.isascii():
+                    continue
+                quote_vol = float(t.get('quoteVolume', 0) or 0)
+                change_pct = float(t.get('priceChangePercent', 0) or 0)
+                usdt_pairs.append({
+                    "symbol": sym,
+                    "quote_vol": quote_vol,
+                    "change_pct": change_pct,
+                    "abs_change": abs(change_pct),
+                })
 
-            usdt_pairs.sort(key=lambda x: float(x.get('quoteVolume', 0)), reverse=True)
+            sort_mode = str(sort_by).upper().strip()
+            if sort_mode in ("CHANGE_DESC", "CHANGE", "VOLATILITY"):
+                usdt_pairs.sort(key=lambda x: (x["abs_change"], x["quote_vol"]), reverse=True)
+            elif sort_mode in ("GAINERS", "TOP_GAINERS"):
+                usdt_pairs.sort(key=lambda x: x["change_pct"], reverse=True)
+            elif sort_mode in ("LOSERS", "TOP_LOSERS"):
+                usdt_pairs.sort(key=lambda x: x["change_pct"], reverse=False)
+            else:
+                usdt_pairs.sort(key=lambda x: x["quote_vol"], reverse=True)
 
-            if n is not None:
-                return [pair['symbol'] for pair in usdt_pairs[:n]]
-            return [pair['symbol'] for pair in usdt_pairs]
+            symbols = [pair['symbol'] for pair in usdt_pairs]
+            if n is not None and isinstance(n, int) and n > 0:
+                return symbols[:n]
+            return symbols
         except Exception as e:
             log_error("BINANCE_TOP_COINS", str(e))
-            print(f"[BINANCE] Error fetching top coins: {e}")
+            print(f"[BINANCE] Error fetching scan coins: {e}")
             return []
 
     async def fetch_ohlcv(self, symbol: str, interval: str, limit: int = 100) -> pd.DataFrame:

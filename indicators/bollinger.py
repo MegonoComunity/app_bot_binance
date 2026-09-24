@@ -16,7 +16,12 @@ def calculate_bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float
     df['bb_upper'] = df['bb_middle'] + (rolling_std * std_dev)
     df['bb_lower'] = df['bb_middle'] - (rolling_std * std_dev)
     
-    # Kondisi harga (low) menyentuh atau mendekati lower band (toleransi 0.5%)
+    # Aliases for backward and cross-module compatibility
+    df['upper_band'] = df['bb_upper']
+    df['lower_band'] = df['bb_lower']
+    
+    # Kondisi harga menyentuh atau mendekati bands (toleransi 0.5%)
     df['is_near_lower_band'] = df['low'] <= (df['bb_lower'] * 1.005)
+    df['is_near_upper_band'] = df['high'] >= (df['bb_upper'] * 0.995)
         
     return df

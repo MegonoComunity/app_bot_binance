@@ -23,6 +23,7 @@ from core.order_manager import close_profitable_position
 from core.market_analysis import analyze_daily_market
 from core.risk_manager import calculate_account_pnl_percent, calculate_position_pnl_percent
 from core.trade_stats import trade_summary, reset_trade_stats
+from database.trade_repo import get_trade_summary
 
 # Initialize bot and dispatcher
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -68,7 +69,15 @@ class DatasetForm(StatesGroup):
     waiting_for_image = State()
     waiting_for_label = State()
 
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, FSInputFile, BotCommand
+from aiogram.types import (
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove,
+    FSInputFile,
+    BotCommand,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 import os
 
 from core.exchanges.base import BaseExchange
@@ -89,8 +98,12 @@ async def setup_bot_commands(bot_instance: Bot) -> None:
         BotCommand(command="help", description="Panduan & Daftar Perintah Lengkap"),
         BotCommand(command="scan_order_paper", description="🔵 Mulai Scan & Simulasi Paper Trade"),
         BotCommand(command="scan_order_real", description="🟢 Mulai Scan & Order REAL Account"),
+        BotCommand(command="mode", description="Cek / Ganti Mode Trading (REAL/SIMULASI)"),
         BotCommand(command="status", description="Cek Saldo & Posisi Terbuka"),
         BotCommand(command="set_exchange", description="Pilih Exchange (binance/bitunix)"),
+        BotCommand(command="set_scan", description="🌐 Atur Target Scan & Urutan (ALL/Volume/Change)"),
+        BotCommand(command="set_scan_target", description="Target Scan (all/50/100/200/500)"),
+        BotCommand(command="set_scan_sort", description="Urutan Scan (volume/change/gainers/losers)"),
         BotCommand(command="pengaturan", description="Menu Pengaturan Lengkap"),
         BotCommand(command="reset_demo", description="Reset Modal ($100) & Statistik"),
         BotCommand(command="hitung_margin", description="Kalkulator Margin Aman"),
@@ -216,29 +229,178 @@ async def set_exchange_handler(message: types.Message, command: CommandObject):
 import time
 from datetime import datetime
 
+
+async def fetch_account_balance_info(client_inst, exchange_name: str, mode: str) -> dict:
+    """
+    Mengambil saldo dan posisi realtime secara adaptif:
+    - BINANCE REAL: Cek saldo real dari Binance Production Futures API.
+    - BINANCE TESTNET/DEMO: Cek saldo demo dari Binance Futures Testnet API, fallback ke Paper Sim jika testnet API tidak terhubung.
+    - BITUNIX REAL: Cek saldo real dari Bitunix Futures API.
+    - BITUNIX SIMULASI: Cek saldo virtual dari database & memori (bot_config.simulated_modal).
+    """
+    is_real = mode.upper() in ("REAL", "LIVE")
+    target_ex = exchange_name.upper().strip()
+
+    if is_real:
+        try:
+            target_client = get_exchange_adapter(target_ex, is_testnet=False)
+            await target_client.init()
+            bot_state["client"] = target_client
+
+            if isinstance(target_client, BaseExchange):
+                bal_info = await target_client.get_account_balance()
+                total = float(bal_info.get("total_wallet_balance", 0.0))
+                avail = float(bal_info.get("available_balance", total))
+                unreal = float(bal_info.get("unrealized_pnl", 0.0))
+                positions = await target_client.get_open_positions()
+            else:
+                acc_info = await target_client.futures_account()
+                total = float(acc_info.get("totalMarginBalance", 0.0))
+                avail = float(acc_info.get("availableBalance", total))
+                unreal = float(acc_info.get("totalUnrealizedProfit", 0.0))
+                raw_pos = acc_info.get("positions", [])
+                positions = [p for p in raw_pos if float(p.get("positionAmt", 0)) != 0]
+
+            return {
+                "success": True,
+                "is_real": True,
+                "source": f"{target_ex} Real Account API",
+                "exchange": target_ex,
+                "total_balance": total,
+                "available_balance": avail,
+                "unrealized_pnl": unreal,
+                "positions_count": len(positions),
+                "positions": positions,
+            }
+        except Exception as err:
+            err_str = str(err)
+            if "whitelist" in err_str.lower() or "10004" in err_str:
+                err_clean = "IP saat ini belum terdaftar di IP Whitelist Bitunix API Key Anda (code: 10004). Mohon buka dashboard Bitunix > API Management, lalu tambahkan IP publik Anda ke whitelist atau pilih opsi 'No IP Restriction'."
+            elif "403" in err_str:
+                err_clean = "Akses terblokir HTTP 403 (Kemungkinan ISP/Internet Positif, silakan pasang Proxy atau VPN)"
+            elif "100007" in err_str or "signature" in err_str.lower():
+                err_clean = "API Key / Secret Key ditolak oleh Bitunix (Sign error 100007 / IP Restriction). Pastikan API Key memiliki permission Futures Trading dan IP diizinkan."
+            else:
+                err_clean = err_str
+
+            return {
+                "success": False,
+                "is_real": True,
+                "source": f"{target_ex} Real API",
+                "exchange": target_ex,
+                "error": err_clean,
+                "total_balance": 0.0,
+                "available_balance": 0.0,
+                "unrealized_pnl": 0.0,
+                "positions_count": 0,
+                "positions": [],
+            }
+    else:
+        # Mode SIMULASI / PAPER / TESTNET
+        if target_ex == "BINANCE":
+            # Coba koneksi ke Binance Futures Testnet API terlebih dahulu
+            try:
+                testnet_client = get_exchange_adapter("BINANCE", is_testnet=True)
+                await testnet_client.init()
+                bal_info = await testnet_client.get_account_balance()
+                total_tn = float(bal_info.get("total_wallet_balance", 0.0))
+                avail_tn = float(bal_info.get("available_balance", total_tn))
+                unreal_tn = float(bal_info.get("unrealized_pnl", 0.0))
+                positions_tn = await testnet_client.get_open_positions()
+                
+                if total_tn > 0:
+                    bot_state["client"] = testnet_client
+                    return {
+                        "success": True,
+                        "is_real": False,
+                        "source": "Binance Futures Testnet Demo API",
+                        "exchange": "BINANCE",
+                        "total_balance": total_tn,
+                        "available_balance": avail_tn,
+                        "unrealized_pnl": unreal_tn,
+                        "positions_count": len(positions_tn),
+                        "positions": positions_tn,
+                        "is_api_demo": True,
+                    }
+            except Exception as e_tn:
+                pass
+
+        # Fallback / Default Paper Simulation (Memori & Database)
+        sim_modal = bot_config.simulated_modal if bot_config.simulated_modal is not None and bot_config.simulated_modal > 0 else 100.0
+        bot_config.simulated_modal = sim_modal
+        
+        db_stats = {}
+        try:
+            db_stats = await get_trade_summary(exchange=f"{target_ex}_SIM")
+        except Exception:
+            pass
+
+        active_meta = bot_state.get("active_trade_meta", {})
+        active_sim_pos = [m for m in active_meta.values() if m.get("is_paper")]
+
+        return {
+            "success": True,
+            "is_real": False,
+            "source": f"{target_ex} Virtual Paper Simulation (DB / Memori)",
+            "exchange": target_ex,
+            "total_balance": sim_modal,
+            "available_balance": sim_modal,
+            "unrealized_pnl": 0.0,
+            "positions_count": len(active_sim_pos),
+            "positions": active_sim_pos,
+            "db_stats": db_stats,
+            "is_api_demo": False,
+        }
+
+
 @dp.message(Command("scan_order_real"))
 @dp.message(F.text == "🟢 Scan Order Real")
 async def scan_order_real_handler(message: types.Message):
     """
-    Mengaktifkan mode REAL Trading: bot akan men-scan market dan mengeksekusi order nyata di exchange.
+    Mengaktifkan mode REAL Trading: bot akan men-scan market dan mengeksekusi order nyata di exchange,
+    serta otomatis mengecek dan menampilkan saldo akun real via API.
     """
     try:
         bot_config.update_trading_mode("REAL")
         bot_config.simulated_modal = None
         bot_config._update_env("SIMULATED_MODAL", "0.0")
-        active_ex = getattr(bot_config, "active_exchange", "BINANCE")
+        active_ex = getattr(bot_config, "active_exchange", "BITUNIX")
         
         bot_state["is_running"] = True
         bot_state["state"] = "RUNNING"
         
+        # Cek saldo real secara otomatis
+        client_inst = bot_state.get("client")
+        bal_res = await fetch_account_balance_info(client_inst, active_ex, "REAL")
+        
+        if bal_res.get("success"):
+            total_bal = bal_res.get("total_balance", 0.0)
+            avail_bal = bal_res.get("available_balance", 0.0)
+            unr_pnl = bal_res.get("unrealized_pnl", 0.0)
+            pos_cnt = bal_res.get("positions_count", 0)
+            src_lbl = bal_res.get("source", f"{active_ex} Real API")
+            
+            saldo_text = (
+                f"💰 **Saldo Real Wallet:** `${total_bal:.2f} USDT`\n"
+                f"💵 **Available Margin:** `${avail_bal:.2f} USDT`\n"
+                f"📈 **Floating PnL:** `{unr_pnl:+.2f} USDT`\n"
+                f"📊 **Posisi Real Terbuka:** `{pos_cnt}` posisi\n"
+                f"🔌 **Sumber Data:** `{src_lbl}`\n"
+            )
+        else:
+            saldo_text = f"⚠️ **Saldo Real:** Gagal terhubung ke API `{active_ex}` ({bal_res.get('error')})\n"
+
         text = (
             f"🚀 **MODE ORDER REAL DIAKTIFKAN!** 🟢\n"
             f"────────────────────────\n"
             f"🏛️ **Exchange Aktif:** `{active_ex}`\n"
             f"⚡ **Status Scanning:** `AKTIF (Running)`\n"
             f"🎯 **Mode Eksekusi:** `REAL ACCOUNT ORDERS`\n"
+            f"────────────────────────\n"
+            f"{saldo_text}"
+            f"────────────────────────\n"
             f"⚠️ **Perhatian:** Sinyal valid akan langsung dieksekusi sebagai real order di akun **{active_ex}** Anda.\n"
-            f"🔧 **Setup:** Leverage `{bot_config.leverage}x` | TP `{bot_config.tp_percent}%` | SL `{bot_config.sl_percent}%`\n\n"
+            f"🔧 **Setup:** Lev `{bot_config.leverage}x` | TP `{bot_config.tp_percent}%` | SL `{bot_config.sl_percent}%` | Mode `{bot_config.margin_mode}`\n\n"
             f"Gunakan `/scan_order_paper` kapan saja untuk kembali ke mode simulasi aman."
         )
         await message.answer(text, parse_mode="Markdown")
@@ -251,27 +413,90 @@ async def scan_order_real_handler(message: types.Message):
 @dp.message(F.text == "🔵 Scan Order Paper")
 async def scan_order_paper_handler(message: types.Message):
     """
-    Mengaktifkan mode Paper Trading / Simulasi: bot men-scan market live dan mengeksekusi order virtual.
+    Mengaktifkan mode Paper Trading / Simulasi: bot men-scan market live dan mengeksekusi order virtual,
+    serta otomatis mengecek saldo akun demo (Binance Testnet API) atau memori/database (Bitunix).
     """
     try:
         bot_config.update_trading_mode("PAPER_TRADING")
-        active_ex = getattr(bot_config, "active_exchange", "BINANCE")
+        active_ex = getattr(bot_config, "active_exchange", "BITUNIX")
         
         bot_state["is_running"] = True
         bot_state["state"] = "RUNNING"
         
+        # Cek saldo simulasi / demo secara otomatis
+        client_inst = bot_state.get("client")
+        bal_res = await fetch_account_balance_info(client_inst, active_ex, "PAPER_TRADING")
+        
+        sim_bal = bal_res.get("total_balance", 100.0)
+        pos_cnt = bal_res.get("positions_count", 0)
+        db_stats = bal_res.get("db_stats", {})
+        src_lbl = bal_res.get("source", "Virtual Paper Simulation")
+        is_api_demo = bal_res.get("is_api_demo", False)
+        
+        stats_text = ""
+        if db_stats and db_stats.get("total", 0) > 0:
+            stats_text = f"📊 **Riwayat Simulasi DB:** `{db_stats.get('wins', 0)}W / {db_stats.get('losses', 0)}L` (WR: `{db_stats.get('win_rate', 0)}%` | Net: `{db_stats.get('net_pnl', 0):+.2f} USDT`)\n"
+
+        saldo_label = "Saldo Demo Testnet API" if is_api_demo else "Saldo Virtual Simulasi"
+
         text = (
-            f"🧪 **MODE PAPER TRADING DIAKTIFKAN!** 🔵\n"
+            f"🧪 **MODE SIMULASI / DEMO DIAKTIFKAN!** 🔵\n"
             f"────────────────────────\n"
-            f"🏛️ **Exchange Data:** `{active_ex}` (Live Market)\n"
+            f"🏛️ **Exchange Data:** `{active_ex}` (Live Market Feed)\n"
             f"⚡ **Status Scanning:** `AKTIF (Running)`\n"
-            f"🎯 **Mode Eksekusi:** `VIRTUAL SIMULATION` (Tanpa Resiko Modal)\n"
-            f"📊 **Catatan:** Sinyal market real {active_ex} akan disimulasikan dan dipantau 24/7 hingga TP/SL tercapai. Data tercatat di Dashboard tab `{active_ex} Simulation`.\n\n"
+            f"🎯 **Mode Eksekusi:** `{'DEMO TESTNET API' if is_api_demo else 'VIRTUAL SIMULATION'}`\n"
+            f"────────────────────────\n"
+            f"💰 **{saldo_label}:** `${sim_bal:.2f} USDT`\n"
+            f"🔌 **Sumber:** `{src_lbl}`\n"
+            f"📊 **Posisi Aktif:** `{pos_cnt}` posisi\n"
+            f"{stats_text}"
+            f"────────────────────────\n"
+            f"💡 **Catatan:** Sinyal market real {active_ex} akan diproses dan dipantau 24/7 hingga target TP/SL tercapai.\n"
+            f"🔧 **Setup:** Lev `{bot_config.leverage}x` | TP `{bot_config.tp_percent}%` | SL `{bot_config.sl_percent}%`\n\n"
             f"Gunakan `/scan_order_real` untuk mulai order dengan modal real."
         )
         await message.answer(text, parse_mode="Markdown")
     except Exception as e:
         await message.answer(f"❌ Gagal mengaktifkan mode Paper Trading: {e}")
+
+
+@dp.message(Command("mode"))
+@dp.message(Command("set_mode"))
+async def mode_switch_handler(message: types.Message, command: CommandObject):
+    """
+    Perintah fleksibel untuk melihat status atau mengubah mode trading:
+    • /mode real -> Ganti ke mode Real & cek saldo real
+    • /mode paper / /mode simulasi -> Ganti ke mode Simulasi & cek saldo simulasi
+    • /mode -> Tampilkan status mode & saldo saat ini
+    """
+    arg = (command.args or "").strip().upper()
+    if arg in ("REAL", "LIVE", "ASLI"):
+        await scan_order_real_handler(message)
+    elif arg in ("PAPER", "SIMULASI", "DEMO", "VIRTUAL", "PAPER_TRADING"):
+        await scan_order_paper_handler(message)
+    else:
+        active_ex = getattr(bot_config, "active_exchange", "BITUNIX")
+        curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
+        client_inst = bot_state.get("client")
+        bal_res = await fetch_account_balance_info(client_inst, active_ex, curr_mode)
+        
+        is_real = curr_mode.upper() in ("REAL", "LIVE")
+        bal_val = bal_res.get("total_balance", 0.0)
+        bal_label = "Saldo Real Wallet" if is_real else "Saldo Virtual Simulasi"
+        
+        await message.answer(
+            f"ℹ️ **STATUS MODE TRADING SAAT INI**\n"
+            f"────────────────────────\n"
+            f"🏛️ **Exchange:** `{active_ex}`\n"
+            f"🎯 **Mode Aktif:** `{'🟢 REAL' if is_real else '🔵 PAPER TRADING (SIMULASI)'}`\n"
+            f"💰 **{bal_label}:** `${bal_val:.2f} USDT`\n"
+            f"────────────────────────\n"
+            f"**Perintah Ganti Mode:**\n"
+            f"• `/mode real` atau tombol `🟢 Scan Order Real`\n"
+            f"• `/mode paper` atau tombol `🔵 Scan Order Paper`",
+            parse_mode="Markdown"
+        )
+
 
 @dp.message(Command("set_exchange"))
 async def set_exchange_handler(message: types.Message, command: CommandObject):
@@ -281,8 +506,8 @@ async def set_exchange_handler(message: types.Message, command: CommandObject):
         await message.answer(
             f"🏛️ **Exchange Saat Ini:** `{current}`\n\n"
             "Format ganti exchange:\n"
-            "• `/set_exchange binance`\n"
-            "• `/set_exchange bitunix`",
+            "• `/set_exchange bitunix`\n"
+            "• `/set_exchange binance`",
             parse_mode="Markdown"
         )
         return
@@ -291,7 +516,27 @@ async def set_exchange_handler(message: types.Message, command: CommandObject):
         new_adapter = get_exchange_adapter(target)
         await new_adapter.init()
         bot_state["client"] = new_adapter
-        await message.answer(f"✅ Exchange berhasil diubah ke **{target}**!\nBot sekarang menggunakan platform {target}.", parse_mode="Markdown")
+        
+        curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
+        bal_res = await fetch_account_balance_info(new_adapter, target, curr_mode)
+        
+        is_real = curr_mode.upper() in ("REAL", "LIVE")
+        if is_real:
+            total_bal = bal_res.get("total_balance", 0.0)
+            bal_str = f"💰 **Saldo Akun Real {target}:** `${total_bal:.2f} USDT`\n"
+        else:
+            sim_bal = bal_res.get("total_balance", 100.0)
+            bal_str = f"💰 **Saldo Simulasi:** `${sim_bal:.2f} USDT` (Live Market Feed dari {target})\n"
+        
+        await message.answer(
+            f"✅ **EXCHANGE BERHASIL DIUBAH KE {target}!**\n"
+            f"────────────────────────\n"
+            f"🏛️ **Platform Aktif:** `{target}`\n"
+            f"🎯 **Mode Saat Ini:** `{curr_mode}`\n"
+            f"{bal_str}"
+            f"⚡ Scanner sekarang membaca orderbook & data kline langsung dari **{target}**.",
+            parse_mode="Markdown"
+        )
     except Exception as e:
         await message.answer(f"❌ Gagal mengubah exchange ke {target}: {e}")
 
@@ -335,7 +580,12 @@ async def status_handler(message: types.Message):
             amt = float(p.get('position_amt', p.get('positionAmt', 0)))
             pnl = float(p.get('unrealized_pnl', p.get('unrealizedProfit', 0)))
             entry = float(p.get('entry_price', p.get('entryPrice', 0)))
-            pnl_percent = (pnl / (entry * abs(amt)) * 100) if (entry * abs(amt)) > 0 else 0.0
+            leverage = float(p.get('leverage', 0) or bot_config.leverage)
+            margin_target = float(p.get('margin', 0) or 0)
+            if margin_target <= 0:
+                margin_target = abs(amt) * entry / leverage if leverage > 0 else 0
+            
+            pnl_percent = (pnl / margin_target * 100) if margin_target > 0 else calculate_position_pnl_percent(p)
             
             mark = float(p.get('mark_price', p.get('markPrice', 0)) or 0)
             if mark <= 0 and amt != 0 and entry > 0:
@@ -415,8 +665,11 @@ async def status_handler(message: types.Message):
             sl_str = f"{sl_price:.8f}".rstrip('0').rstrip('.')
             mfe_str = f"+{mfe_val:.2f} USDT" if mfe_val > 0 else "0.00 USDT"
 
+            is_bot = meta is not None and meta.get("is_bot_trade", False)
+            tag_manual = "" if is_bot else " _(Manual Trade)_"
+
             p_info = (
-                f"🔸 **{symbol}**\n"
+                f"🔸 **{symbol}**{tag_manual}\n"
                 f"   Margin: `{margin_target:.2f} USDT` | Lev: `{leverage}x`\n"
                 f"   PNL berjalan: `{pnl:+.2f} USDT ({pnl_percent:+.2f}%)` | MFE: `{mfe_str}`\n"
                 f"   Harga entry: `{entry_str}`\n"
@@ -786,6 +1039,154 @@ async def set_scanner_mode_handler(message: types.Message, command: CommandObjec
         await message.answer(f"❌ {error}")
 
 
+def get_scan_settings_keyboard() -> InlineKeyboardMarkup:
+    curr_target = str(getattr(bot_config, "scan_target", "ALL")).upper()
+    curr_sort = str(getattr(bot_config, "scan_sort", "VOLUME_DESC")).upper()
+
+    t_all = f"{'✅ ' if curr_target == 'ALL' else ''}🌐 ALL Altcoins"
+    t_500 = f"{'✅ ' if curr_target == '500' else ''}Top 500"
+    t_200 = f"{'✅ ' if curr_target == '200' else ''}Top 200"
+    t_100 = f"{'✅ ' if curr_target == '100' else ''}Top 100"
+    t_50 = f"{'✅ ' if curr_target == '50' else ''}Top 50"
+
+    s_vol = f"{'✅ ' if curr_sort == 'VOLUME_DESC' else ''}📊 Volume Terbesar"
+    s_chg = f"{'✅ ' if curr_sort == 'CHANGE_DESC' else ''}🔥 Change Terbanyak"
+    s_gain = f"{'✅ ' if curr_sort == 'GAINERS' else ''}🚀 Top Gainers"
+    s_lose = f"{'✅ ' if curr_sort == 'LOSERS' else ''}🔻 Top Losers"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=t_all, callback_data="scan_target:ALL"),
+            InlineKeyboardButton(text=t_500, callback_data="scan_target:500"),
+            InlineKeyboardButton(text=t_200, callback_data="scan_target:200"),
+        ],
+        [
+            InlineKeyboardButton(text=t_100, callback_data="scan_target:100"),
+            InlineKeyboardButton(text=t_50, callback_data="scan_target:50"),
+        ],
+        [
+            InlineKeyboardButton(text=s_vol, callback_data="scan_sort:VOLUME_DESC"),
+            InlineKeyboardButton(text=s_chg, callback_data="scan_sort:CHANGE_DESC"),
+        ],
+        [
+            InlineKeyboardButton(text=s_gain, callback_data="scan_sort:GAINERS"),
+            InlineKeyboardButton(text=s_lose, callback_data="scan_sort:LOSERS"),
+        ]
+    ])
+    return kb
+
+
+def get_scan_settings_text() -> str:
+    curr_target = str(getattr(bot_config, "scan_target", "ALL")).upper()
+    curr_sort = str(getattr(bot_config, "scan_sort", "VOLUME_DESC")).upper()
+    active_ex = getattr(bot_config, "active_exchange", "BINANCE")
+    
+    target_desc = "Semua Altcoin Futures (ALL)" if curr_target == "ALL" else f"Top {curr_target} Koin"
+    if curr_sort == "VOLUME_DESC":
+        sort_desc = "Volume Terbesar 24 Jam (Quote Volume USDT 📊)"
+    elif curr_sort == "CHANGE_DESC":
+        sort_desc = "Change Terbanyak / Volatilitas Tertinggi (% Perubahan Harga 🔥)"
+    elif curr_sort == "GAINERS":
+        sort_desc = "Top Gainers (% Kenaikan Tertinggi 🚀)"
+    else:
+        sort_desc = "Top Losers (% Penurunan Terdalam 🔻)"
+
+    text = (
+        f"⚙️ **PENGATURAN SCANNER ALTCOIN**\n\n"
+        f"🏛️ **Exchange:** `{active_ex}`\n"
+        f"🎯 **Target Koin:** `{target_desc}`\n"
+        f"🔄 **Urutan Sortir:** `{sort_desc}`\n\n"
+        f"Klik tombol di bawah ini untuk langsung mengubah target dan urutan scanning:\n"
+        f"• **Target Koin:** Pilih `ALL Altcoins` atau batasi (Top 500, 200, 100, 50).\n"
+        f"• **Urutan Koin:** Pilih `Volume Terbesar`, `Change Terbanyak`, `Gainers`, atau `Losers`.\n\n"
+        f"_Bisa juga via teks: `/set_scan_target all` atau `/set_scan_sort change`_"
+    )
+    return text
+
+
+@dp.message(Command("set_scan"))
+@dp.message(Command("scan_settings"))
+async def set_scan_menu_handler(message: types.Message):
+    await message.answer(get_scan_settings_text(), reply_markup=get_scan_settings_keyboard(), parse_mode="Markdown")
+
+
+@dp.message(Command("set_scan_target"))
+async def set_scan_target_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg:
+        await message.answer(
+            f"ℹ️ Target scan saat ini: `{bot_config.scan_target}`\n"
+            f"Gunakan: `/set_scan_target all` atau `/set_scan_target 200`\n"
+            f"Atau buka panel tombol interaktif: `/set_scan`",
+            parse_mode="Markdown"
+        )
+        return
+    try:
+        bot_config.update_scan_target(arg)
+        target_info = "Semua Altcoin Futures (ALL)" if bot_config.scan_target == "ALL" else f"Top {bot_config.scan_target} koin"
+        await message.answer(
+            f"✅ **Target scan diperbarui:** `{bot_config.scan_target}` ({target_info})",
+            parse_mode="Markdown"
+        )
+    except ValueError as e:
+        await message.answer(f"❌ {e}")
+
+
+@dp.message(Command("set_scan_sort"))
+async def set_scan_sort_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip().lower()
+    if not arg:
+        await message.answer(
+            f"ℹ️ Urutan scan saat ini: `{bot_config.scan_sort}`\n"
+            f"Pilihan yang tersedia:\n"
+            f"• `/set_scan_sort volume` (Urutan dari volume USDT terbesar)\n"
+            f"• `/set_scan_sort change` (Urutan dari % change terbanyak/volatil)\n"
+            f"• `/set_scan_sort gainers` (Urutan koin naik tertinggi)\n"
+            f"• `/set_scan_sort losers` (Urutan koin turun terdalam)\n"
+            f"Atau buka panel tombol interaktif: `/set_scan`",
+            parse_mode="Markdown"
+        )
+        return
+    try:
+        bot_config.update_scan_sort(arg)
+        await message.answer(
+            f"✅ **Urutan scan diperbarui:** `{bot_config.scan_sort}`",
+            parse_mode="Markdown"
+        )
+    except ValueError as e:
+        await message.answer(f"❌ {e}")
+
+
+@dp.callback_query(F.data.startswith("scan_target:"))
+async def callback_scan_target(query: types.CallbackQuery):
+    target = query.data.split(":")[1]
+    try:
+        bot_config.update_scan_target(target)
+        await query.answer(f"Target Scan: {bot_config.scan_target}")
+        await query.message.edit_text(
+            get_scan_settings_text(),
+            reply_markup=get_scan_settings_keyboard(),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await query.answer(f"Error: {e}", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("scan_sort:"))
+async def callback_scan_sort(query: types.CallbackQuery):
+    sort_mode = query.data.split(":")[1]
+    try:
+        bot_config.update_scan_sort(sort_mode)
+        await query.answer(f"Urutan Scan: {bot_config.scan_sort}")
+        await query.message.edit_text(
+            get_scan_settings_text(),
+            reply_markup=get_scan_settings_keyboard(),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await query.answer(f"Error: {e}", show_alert=True)
+
+
 @dp.message(Command("set_analysis_days"))
 async def set_analysis_days_handler(message: types.Message, command: CommandObject):
     try:
@@ -1128,6 +1529,9 @@ async def btn_pengaturan_handler(message: types.Message):
     margin_desc = "DYNAMIC (Auto Computed)" if bot_config.margin_mode == "DYNAMIC" else f"FIXED ({bot_config.margin_usdt:.2f} USDT)"
     modal_desc = f"{bot_config.simulated_modal:.2f} USDT (Custom Demo)" if bot_config.simulated_modal else "AUTO (Saldo Real Exchange)"
     
+    scan_target_desc = "Semua Altcoin Futures (ALL)" if bot_config.scan_target == "ALL" else f"Top {bot_config.scan_target}"
+    scan_sort_desc = "Volume Terbesar 📊" if bot_config.scan_sort == "VOLUME_DESC" else ("Change % 🔥" if bot_config.scan_sort == "CHANGE_DESC" else ("Gainers 🚀" if bot_config.scan_sort == "GAINERS" else "Losers 🔻"))
+
     text = (
         "⚙️ **PENGATURAN BOT LENGKAP** ⚙️\n\n"
         "💰 **1. MODAL & MARGIN SIZING**\n"
@@ -1140,12 +1544,22 @@ async def btn_pengaturan_handler(message: types.Message):
         f"• Stop Loss   : `{bot_config.sl_percent}%` ROI\n"
         f"• Trailing Stop : `{ts_status}` (Act: `{bot_config.ts_activation_percent}%`, Call: `{bot_config.ts_callback_rate}%`)\n\n"
         "⚡ **3. EKSEKUSI & SCANNER**\n"
+        f"• Exchange    : `{bot_config.active_exchange}` | Mode: `{bot_config.trading_mode}`\n"
+        f"• Target Scan : `{scan_target_desc}`\n"
+        f"• Urutan Scan : `{scan_sort_desc}`\n"
         f"• Leverage    : `{bot_config.leverage}x`\n"
         f"• Max Posisi  : `{bot_config.max_open_positions} koin bersamaan`\n"
         f"• RSI Filter  : `{bot_config.rsi_length}` (Oversold: `{bot_config.rsi_oversold:g}` / Overbought: `{bot_config.rsi_overbought:g}`)\n"
         f"• Scanner Mode: `{bot_config.scanner_mode}`\n"
         "──────────────\n"
         "📝 **DAFTAR PERINTAH PENGATURAN:**\n"
+        "🌐 **Scanner & Target Koin:**\n"
+        "• `/set_scan` (Buka Panel Tombol Target & Urutan Scan)\n"
+        "• `/set_scan_target all` (Scan seluruh altcoin futures)\n"
+        "• `/set_scan_target 200` (Batasi top 200 koin)\n"
+        "• `/set_scan_sort volume` (Urutan volume USDT terbesar)\n"
+        "• `/set_scan_sort change` (Urutan % change tertinggi/volatil)\n"
+        "• `/set_scan_sort gainers` | `/set_scan_sort losers`\n\n"
         "💵 **Modal & Sizing:**\n"
         "• `/set_modal 100` (Atur modal uji coba $100)\n"
         "• `/set_modal auto` (Gunakan saldo real)\n"

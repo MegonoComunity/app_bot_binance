@@ -31,9 +31,9 @@ class BaseExchange(ABC):
         await self.close()
 
     @abstractmethod
-    async def get_top_futures_by_volume(self, n: Optional[int] = None) -> List[str]:
+    async def get_top_futures_by_volume(self, n: Optional[int] = None, sort_by: str = "VOLUME_DESC") -> List[str]:
         """
-        Mengambil daftar simbol koin Futures berpasangan USDT teratas berdasarkan volume 24 jam.
+        Mengambil daftar simbol koin Futures berpasangan USDT teratas berdasarkan volume atau change persentase 24 jam.
         """
         pass
 

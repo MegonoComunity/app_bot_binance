@@ -41,6 +41,9 @@ def calculate_position_pnl_percent(position: dict) -> float:
     entry_price = float(position.get("entryPrice", position.get("entry_price", 0)))
     leverage = float(position.get("leverage", 0) or 0)
     unrealized_pnl = float(position.get("unrealizedProfit", position.get("unrealized_pnl", 0)))
+    margin = float(position.get("margin", position.get("isolatedMargin", 0)) or 0)
+    if margin > 0:
+        return (unrealized_pnl / margin) * 100
     if amount <= 0 or entry_price <= 0 or leverage <= 0:
         return 0.0
     initial_margin = amount * entry_price / leverage
@@ -76,35 +79,56 @@ def total_position_notional(positions: list[dict]) -> float:
     return total
 
 
+def total_position_margin(positions: list[dict], default_leverage: int = 20) -> float:
+    """Menghitung total margin yang terpakai oleh seluruh posisi terbuka (Futures)."""
+    total = 0.0
+    for p in positions:
+        amt = abs(float(p.get("positionAmt", p.get("position_amt", 0))))
+        if amt == 0:
+            continue
+        direct_margin = float(p.get("margin", p.get("isolatedMargin", 0)) or 0)
+        if direct_margin > 0:
+            total += direct_margin
+            continue
+        entry = float(p.get("entryPrice", p.get("entry_price", 0)) or 0)
+        lev = float(p.get("leverage", 0) or default_leverage)
+        if lev <= 0:
+            lev = 1.0
+        total += (amt * entry) / lev
+    return total
+
+
 def evaluate_time_based_exit(
     hold_duration_hours: float,
     roi_percent: float,
     loss_limit_percent: float = -5.0,
-    loss_time_limit_hours: float = 2.0,
+    loss_time_limit_hours: float = 4.0,
     profit_target_percent: float = 20.0,
-    profit_time_limit_hours: float = 4.0,
-) -> tuple[bool, str]:
+    profit_time_limit_hours: float = 8.0,
+) -> tuple[bool, str, str]:
     """
-    Evaluasi apakah posisi harus ditutup darurat berdasarkan durasi hold dan ROI:
-    1. Hold > 2 jam DAN ROI <= -5%  --> Tutup darurat (Cut Loss) untuk cegah boncos berkepanjangan.
-    2. Hold > 4 jam DAN ROI >= +20% --> Tutup darurat (Take Profit) untuk mengunci profit sebelum reversal.
+    Evaluasi metode Safety Exit berdasarkan durasi hold dan ROI (Berlaku untuk Bitunix & Binance):
+    1. Hold >= 4 jam DAN posisi minus <= -5% (atau -10%) --> Auto Cut Loss darurat untuk evaluasi metode AI & proteksi modal.
+    2. Hold >= 8 jam DAN posisi profit >= +20% --> Auto Take Profit lock untuk mencegah pembalikan arah (auto reversal) akibat hold terlalu lama.
 
     Returns:
-        tuple[bool, str]: (should_close, reason_string)
+        tuple[bool, str, str]: (should_close, exit_type, reason_description)
     """
     if hold_duration_hours >= loss_time_limit_hours and roi_percent <= loss_limit_percent:
         return (
             True,
-            f"CUT_LOSS_TIME: Hold {hold_duration_hours:.1f}h (>= {loss_time_limit_hours}h) & Loss {roi_percent:.2f}% (<= {loss_limit_percent}%)"
+            "SAFETY_CUT_LOSS_4H",
+            f"SAFETY CUT LOSS: Hold {hold_duration_hours:.1f} jam (>= {loss_time_limit_hours:.0f} jam) & floating loss {roi_percent:.2f}% (<= {loss_limit_percent:.1f}%). Evaluasi AI Brain: eksekusi cut loss untuk evaluasi metode dan konsep posisi serta mencegah kerugian berkepanjangan."
         )
 
     if hold_duration_hours >= profit_time_limit_hours and roi_percent >= profit_target_percent:
         return (
             True,
-            f"TAKE_PROFIT_TIME: Hold {hold_duration_hours:.1f}h (>= {profit_time_limit_hours}h) & Profit +{roi_percent:.2f}% (>= +{profit_target_percent}%)"
+            "SAFETY_PROFIT_LOCK_8H",
+            f"SAFETY PROFIT LOCK: Hold {hold_duration_hours:.1f} jam (>= {profit_time_limit_hours:.0f} jam) & profit +{roi_percent:.2f}% (>= +{profit_target_percent:.1f}%). Evaluasi AI Brain: amankan profit dari potensi auto-reversal arah market karena posisi ditahan terlalu lama."
         )
 
-    return (False, "")
+    return (False, "", "")
 
 
 def calculate_volatility_adjusted_leverage(

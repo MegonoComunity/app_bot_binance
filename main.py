@@ -39,7 +39,13 @@ from core.order_manager import (
 from indicators.bollinger import calculate_bollinger_bands
 from indicators.support_resistance import detect_support_zones, is_near_support, detect_resistance_zones, is_near_resistance
 from indicators.rsi import calculate_rsi
-from indicators.patterns import detect_candlestick_patterns, is_bull_trap
+from indicators.patterns import (
+    detect_candlestick_patterns,
+    is_bull_trap,
+    is_bear_trap,
+    check_consecutive_green_candles,
+    check_consecutive_red_candles,
+)
 from indicators.trend import get_htf_trend
 from core.learner import is_pattern_reliable, record_trade_result
 from core.risk_manager import (
@@ -49,6 +55,7 @@ from core.risk_manager import (
     count_open_positions,
     daily_loss_limit_reached,
     total_position_notional,
+    total_position_margin,
     evaluate_time_based_exit,
 )
 from core.trade_stats import trade_summary, record_closed_trade
@@ -232,8 +239,10 @@ async def scanner_loop():
                     await asyncio.sleep(SCAN_INTERVAL_SECONDS)
                     continue
 
-                # 1. Dapatkan semua koin
-                all_symbols = await get_top_futures_by_volume(client, TOP_N_COINS_ENV)
+                # 1. Dapatkan koin sesuai target (ALL / Top N) dan sorting setting
+                scan_limit = bot_config.get_scan_limit_int()
+                scan_sort = getattr(bot_config, "scan_sort", "VOLUME_DESC")
+                all_symbols = await get_top_futures_by_volume(client, n=scan_limit, sort_by=scan_sort)
                 
                 # Update Market Intelligence (BTC Anchor & Market Breadth)
                 try:
@@ -278,6 +287,9 @@ async def scanner_loop():
                 except Exception as e_intel:
                     logger.debug(f"[INTEL] Update market intel skipped: {e_intel}")
 
+                target_label = f"ALL ({len(all_symbols)} Altcoins)" if scan_limit is None else f"Top {scan_limit}"
+                sort_label = "Volume 📊" if scan_sort == "VOLUME_DESC" else ("Change % 🔥" if scan_sort == "CHANGE_DESC" else ("Gainers 🚀" if scan_sort == "GAINERS" else "Losers 🔻"))
+
                 batch_size = 1 if bot_config.scanner_mode == "per_coin" else SCAN_BATCH_SIZE_ENV
                 active_pump_alerts: List[Dict[str, Any]] = []
                 for i in range(0, len(all_symbols), batch_size):
@@ -286,12 +298,12 @@ async def scanner_loop():
                     batch_signal_found = False
                     
                     if tahap == 1:
-                        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Scan koin top {i+1} - {i+len(batch_symbols)}")
+                        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Mulai scan {len(all_symbols)} koin [{target_label} | Urutan: {sort_label}]")
                     else:
-                        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Scan tahap ke-{tahap} scan koin top {i+1} - {i+len(batch_symbols)}")
+                        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Scan tahap ke-{tahap} scan koin urutan {i+1} - {i+len(batch_symbols)}")
                         
                     for idx, symbol in enumerate(batch_symbols):
-                        print(f"Koin top {i + idx + 1} {symbol}")
+                        print(f"Koin urutan {i + idx + 1} {symbol}")
                         
                         # Tunggu jika limit lokal hampir penuh
                         used_local = await rate_limiter.wait_if_needed()
@@ -347,7 +359,6 @@ async def scanner_loop():
                                 pnl_pct = abs((current_price - v_trade['entry_price']) / v_trade['entry_price'] * 100) if v_trade.get('entry_price', 0) > 0 else 0.0
                                 est_margin = 50.0
                                 est_pnl = est_margin * (pnl_pct / 100)
-                                new_sim_modal = bot_config.add_simulated_pnl(est_pnl)
 
                                 msg = (
                                     f"🎯 **HASIL LATIHAN SIMULASI: SESUAI TARGET (TP) ✅**\n"
@@ -355,9 +366,9 @@ async def scanner_loop():
                                     f"• **Entry:** `{v_trade['entry_price']:.6f}` ➔ **Exit TP:** `{current_price:.6f}` (+{pnl_pct:.2f}%)\n"
                                     f"• **Status:** Sesuai Target TP (Analisa Valid)\n"
                                     f"• **Setup:** {v_trade['alasan']}\n"
-                                    f"💰 **Saldo Simulasi:** `${new_sim_modal:.2f} USDT` (+${est_pnl:.2f})"
+                                    f"📚 *Catatan: Hasil latihan simulasi hanya untuk pembelajaran AI & pola (tidak memotong/menambah saldo wallet).* "
                                 )
-                                print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: SESUAI TARGET TP (+{pnl_pct:.2f}%) | Saldo Simulasi: {new_sim_modal:.2f} USDT")
+                                print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: SESUAI TARGET TP (+{pnl_pct:.2f}%) | Setup: {v_trade['alasan']}")
                                 
                                 # Kirim ke channel Telegram (Admin & Error/Latihan channel) dengan flood rate limit guard
                                 try:
@@ -387,7 +398,6 @@ async def scanner_loop():
                                 pnl_pct = abs((current_price - v_trade['entry_price']) / v_trade['entry_price'] * 100) if v_trade.get('entry_price', 0) > 0 else 0.0
                                 est_margin = 50.0
                                 est_pnl = -est_margin * (pnl_pct / 100)
-                                new_sim_modal = bot_config.add_simulated_pnl(est_pnl)
 
                                 msg = (
                                     f"🛑 **HASIL LATIHAN SIMULASI: GAGAL TARGET (SL) ❌**\n"
@@ -395,9 +405,9 @@ async def scanner_loop():
                                     f"• **Entry:** `{v_trade['entry_price']:.6f}` ➔ **Exit SL:** `{current_price:.6f}` (-{pnl_pct:.2f}%)\n"
                                     f"• **Status:** Gagal Target / Kena SL (Perlu Evaluasi)\n"
                                     f"• **Setup:** {v_trade['alasan']}\n"
-                                    f"💰 **Saldo Simulasi:** `${new_sim_modal:.2f} USDT` (${est_pnl:.2f})"
+                                    f"📚 *Catatan: Hasil latihan simulasi hanya untuk pembelajaran AI & pola (tidak memotong/menambah saldo wallet).* "
                                 )
-                                print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: GAGAL TARGET SL (-{pnl_pct:.2f}%) | Saldo Simulasi: {new_sim_modal:.2f} USDT")
+                                print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: GAGAL TARGET SL (-{pnl_pct:.2f}%) | Setup: {v_trade['alasan']}")
                                 
                                 # Kirim ke channel Telegram (Admin & Error/Latihan channel) dengan flood rate limit guard
                                 try:
@@ -409,7 +419,6 @@ async def scanner_loop():
                                             await safe_send_message(bot, cid, msg)
                                 except Exception as e_res:
                                     print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
-
                                 
                                 record_trade_result(v_trade['alasan'], is_profit=False)
                                 
@@ -460,7 +469,8 @@ async def scanner_loop():
                         current_price = last_row['close']
                         
                         # 4. Cek Kondisi Teknikal Entry LONG
-                        near_lower_bb = last_row.get('is_near_lower_band', False)
+                        lower_band = last_row.get('lower_band', last_row.get('bb_lower'))
+                        near_lower_bb = last_row.get('is_near_lower_band', False) or (current_price <= lower_band * 1.005 if pd.notnull(lower_band) else False)
                         near_support = is_near_support(current_price, support_zones)
                         smart_buy_level = find_frequent_open_close_level(
                             df_daily,
@@ -474,19 +484,21 @@ async def scanner_loop():
                         )
                         rsi_value = float(last_row.get('RSI', 50))
                         is_oversold = rsi_value < bot_config.rsi_oversold
+                        two_green_at_support = near_support and check_consecutive_green_candles(df, min_candles=2)
                         
                         # 4. Cek Kondisi Teknikal Entry SHORT
-                        upper_band = last_row.get('upper_band')
-                        near_upper_bb = current_price >= upper_band * 0.995 if pd.notnull(upper_band) else False
+                        upper_band = last_row.get('upper_band', last_row.get('bb_upper'))
+                        near_upper_bb = last_row.get('is_near_upper_band', False) or (current_price >= upper_band * 0.995 if pd.notnull(upper_band) else False)
                         resistance_zones = detect_resistance_zones(df)
                         near_resistance = is_near_resistance(current_price, resistance_zones)
                         is_overbought = rsi_value > bot_config.rsi_overbought
+                        two_red_at_resistance = near_resistance and check_consecutive_red_candles(df, min_candles=2)
                         
                         pattern_detected = pattern_info['detected']
                         pattern_name = pattern_info['pattern']
                         pattern_type = pattern_info['type']
                         vol_ratio = pattern_info.get('volume_ratio', 1.0)
-                        has_volume_surge = vol_ratio >= 1.5
+                        has_volume_surge = vol_ratio >= 1.25
 
                         # Hitung Volatilitas ATR
                         atr_val = calculate_atr(df, period=14)
@@ -494,9 +506,12 @@ async def scanner_loop():
                             atr_val, current_price, base_leverage=bot_config.leverage
                         )
                         
-                        # Skenario Tier-A Reversal & Breakout untuk LONG
-                        syarat_teknikal_long = near_lower_bb and near_support and is_oversold and htf_trend in ["UPTREND", "SIDEWAYS"]
-                        syarat_pola_long = near_support and pattern_detected and pattern_type == 'LONG' and htf_trend in ["UPTREND", "SIDEWAYS"]
+                        # Skenario Tier-A Reversal & Breakout untuk LONG (High Win-Rate)
+                        syarat_teknikal_long = (
+                            (near_lower_bb and near_support and is_oversold and htf_trend in ["UPTREND", "SIDEWAYS"]) or
+                            (two_green_at_support and (near_lower_bb or is_oversold or near_support) and htf_trend in ["UPTREND", "SIDEWAYS"])
+                        )
+                        syarat_pola_long = (near_support or near_lower_bb) and pattern_detected and pattern_type == 'LONG' and htf_trend in ["UPTREND", "SIDEWAYS"]
                         syarat_smart_buy_long = (
                             near_smart_buy_level
                             and htf_trend in ["UPTREND", "SIDEWAYS"]
@@ -509,18 +524,22 @@ async def scanner_loop():
                             and htf_trend in ["UPTREND", "SIDEWAYS"]
                         )
                         
-                        # Skenario untuk SHORT
+                        # Skenario Tier-A Reversal & Breakdown untuk SHORT (High Win-Rate)
+                        syarat_teknikal_short = (
+                            (near_upper_bb and near_resistance and is_overbought and htf_trend in ["DOWNTREND", "SIDEWAYS"]) or
+                            (two_red_at_resistance and (near_upper_bb or is_overbought or near_resistance) and htf_trend in ["DOWNTREND", "SIDEWAYS"])
+                        )
+                        syarat_pola_short = (near_resistance or near_upper_bb) and pattern_detected and pattern_type == 'SHORT' and htf_trend in ["DOWNTREND", "SIDEWAYS"]
                         syarat_breakout_short = (
                             breakout["ready"]
                             and breakout["score"] >= bot_config.breakout_min_score
                             and last_row["close"] < last_row["open"]
                             and htf_trend in ["DOWNTREND", "SIDEWAYS"]
                         )
-                        syarat_teknikal_short = near_upper_bb and near_resistance and is_overbought and htf_trend in ["DOWNTREND", "SIDEWAYS"]
-                        syarat_pola_short = near_resistance and pattern_detected and pattern_type == 'SHORT' and htf_trend in ["DOWNTREND", "SIDEWAYS"]
                         
-                        # Anti-Bull Trap (Untuk LONG)
+                        # Anti-Trap Filters
                         bull_trap_detected = is_bull_trap(last_row['open'], last_row['high'], last_row['low'], last_row['close']) or (pattern_type == 'CLOSE_LONG')
+                        bear_trap_detected = is_bear_trap(last_row['open'], last_row['high'], last_row['low'], last_row['close']) or (pattern_type == 'CLOSE_SHORT')
                         
                         if syarat_breakout_long:
                             alasan_long = (
@@ -529,6 +548,8 @@ async def scanner_loop():
                             )
                         elif syarat_pola_long:
                             alasan_long = f"Pola Tier-A {pattern_name} (Vol: {vol_ratio:.2f}x, HTF: {htf_trend})"
+                        elif two_green_at_support:
+                            alasan_long = f"Reversal 2x Candle Hijau di Support (Vol: {vol_ratio:.2f}x, HTF: {htf_trend})"
                         elif syarat_smart_buy_long:
                             alasan_long = (
                                 f"Smart Buy level {smart_buy_level['level']:.8f} "
@@ -544,16 +565,66 @@ async def scanner_loop():
                             )
                         elif syarat_pola_short:
                             alasan_short = f"Pola Reversal {pattern_name} (Vol: {vol_ratio:.2f}x, HTF: {htf_trend})"
+                        elif two_red_at_resistance:
+                            alasan_short = f"Reversal 2x Candle Merah di Resistance (Vol: {vol_ratio:.2f}x, HTF: {htf_trend})"
                         else:
                             alasan_short = f"RSI Overbought ({rsi_value:.2f}) di Upper BB (HTF: {htf_trend})"
                         
                         # Evaluasi Keandalan dari Learner
-                        reliable_long = is_pattern_reliable(alasan_long) if (syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or syarat_breakout_long) else True
-                        reliable_short = is_pattern_reliable(alasan_short) if (syarat_teknikal_short or syarat_pola_short or syarat_breakout_short) else True
+                        raw_long = (syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or syarat_breakout_long)
+                        raw_short = (syarat_teknikal_short or syarat_pola_short or syarat_breakout_short)
+
+                        reliable_long = is_pattern_reliable(alasan_long) if raw_long else True
+                        reliable_short = is_pattern_reliable(alasan_short) if raw_short else True
                         
-                        trigger_long = (syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or syarat_breakout_long) and not bull_trap_detected and reliable_long
-                        trigger_short = (syarat_teknikal_short or syarat_pola_short or syarat_breakout_short) and reliable_short
+                        trigger_long = raw_long and not bull_trap_detected and reliable_long
+                        trigger_short = raw_short and not bear_trap_detected and reliable_short
                         
+                        # Jika sinyal teknikal/pola terdeteksi tetapi ditolak oleh filter Learner/Trap/Blacklist,
+                        # simpan sebagai LATIHAN SIMULASI di background memory agar AI tetap belajar dan menguji win rate pola!
+                        if (raw_long or raw_short) and not (trigger_long or trigger_short):
+                            sim_side = "LONG" if raw_long else "SHORT"
+                            sim_alasan = alasan_long if sim_side == "LONG" else alasan_short
+                            if symbol not in virtual_trades:
+                                pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
+                                pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
+                                v_tp = current_price * (1 + pm_tp_v) if sim_side == "LONG" else current_price * (1 - pm_tp_v)
+                                v_sl = current_price * (1 - pm_sl_v) if sim_side == "LONG" else current_price * (1 + pm_sl_v)
+                                ex_name = getattr(client, "exchange_name", "BITUNIX")
+                                cond_sim = {
+                                    "side": sim_side,
+                                    "htf_trend": htf_trend,
+                                    "bb_zone": "LOWER" if near_lower_bb else ("UPPER" if near_upper_bb else "MID"),
+                                    "rsi_zone": "OVERSOLD" if is_oversold else ("OVERBOUGHT" if is_overbought else "NEUTRAL"),
+                                    "pattern": pattern_name if pattern_detected else "NONE",
+                                    "is_breakout": bool(syarat_breakout_long or syarat_breakout_short),
+                                    "squeeze_score": float(breakout.get("score", 0)),
+                                    "volume_ratio": round(vol_ratio, 2),
+                                    "atr_percent": round((atr_val / current_price * 100), 2) if current_price > 0 else 0.0,
+                                }
+                                p_entry_id_v = record_pattern_entry(
+                                    symbol=symbol,
+                                    side=sim_side,
+                                    entry_price=current_price,
+                                    conditions=cond_sim,
+                                    alasan=f"[LATIHAN] {sim_alasan}",
+                                    margin_usdt=0.0,
+                                    leverage=dynamic_leverage,
+                                    exchange=f"{ex_name}_SIM_TRAIN",
+                                )
+                                virtual_trades[symbol] = {
+                                    "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "tipe": sim_side,
+                                    "entry_price": current_price,
+                                    "tp_price": v_tp,
+                                    "sl_price": v_sl,
+                                    "alasan": sim_alasan,
+                                    "leverage": dynamic_leverage,
+                                    "pattern_entry_id": p_entry_id_v,
+                                }
+                                print(f"📚 [LATIHAN SIMULASI] Sinyal {sim_side} {symbol} dicatat ke Background Memory untuk melatih Win Rate pola (ID: {p_entry_id_v}).")
+                            continue
+
                         if trigger_long or trigger_short:
                             trade_type = "LONG" if trigger_long else "SHORT"
                             alasan = alasan_long if trade_type == "LONG" else alasan_short
@@ -574,6 +645,33 @@ async def scanner_loop():
                             # Evaluasi Pattern Memory: tolak jika pola terbukti buruk (>= 3 sample, WR < 45%)
                             if is_pattern_memory_blacklisted(conditions_snapshot):
                                 print(f"🚫 [PATTERN MEMORY] Sinyal {trade_type} pada {symbol} DITOLAK karena pola historis memiliki Win Rate rendah!")
+                                if symbol not in virtual_trades:
+                                    pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
+                                    pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
+                                    v_tp = current_price * (1 + pm_tp_v) if trade_type == "LONG" else current_price * (1 - pm_tp_v)
+                                    v_sl = current_price * (1 - pm_sl_v) if trade_type == "LONG" else current_price * (1 + pm_sl_v)
+                                    ex_name = getattr(client, "exchange_name", "BITUNIX")
+                                    p_entry_id_v = record_pattern_entry(
+                                        symbol=symbol,
+                                        side=trade_type,
+                                        entry_price=current_price,
+                                        conditions=conditions_snapshot,
+                                        alasan=f"[LATIHAN] {alasan}",
+                                        margin_usdt=0.0,
+                                        leverage=dynamic_leverage,
+                                        exchange=f"{ex_name}_SIM_TRAIN",
+                                    )
+                                    virtual_trades[symbol] = {
+                                        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        "tipe": trade_type,
+                                        "entry_price": current_price,
+                                        "tp_price": v_tp,
+                                        "sl_price": v_sl,
+                                        "alasan": alasan,
+                                        "leverage": dynamic_leverage,
+                                        "pattern_entry_id": p_entry_id_v,
+                                    }
+                                    print(f"📚 [LATIHAN SIMULASI] Sinyal {trade_type} {symbol} dicatat untuk evaluasi memory.")
                                 continue
 
                             batch_signal_found = True
@@ -617,10 +715,37 @@ async def scanner_loop():
                                     print(f"⏩ Lewati {symbol}: Sudah ada posisi terbuka.")
                                     continue
 
-                                total_exposure = total_position_notional(positions)
+                                total_margin_used = total_position_margin(positions, bot_config.leverage)
                                 exposure_limit = modal * bot_config.max_total_exposure_percent / 100
-                                if total_exposure >= exposure_limit:
-                                    print(f"[RISK] Lewati {symbol}: exposure {total_exposure:.2f} >= limit {exposure_limit:.2f}")
+                                if total_margin_used >= exposure_limit:
+                                    print(f"[RISK] Lewati {symbol}: margin terpakai {total_margin_used:.2f} >= limit {exposure_limit:.2f}")
+                                    if symbol not in virtual_trades:
+                                        pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
+                                        pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
+                                        v_tp = current_price * (1 + pm_tp_v) if trade_type == "LONG" else current_price * (1 - pm_tp_v)
+                                        v_sl = current_price * (1 - pm_sl_v) if trade_type == "LONG" else current_price * (1 + pm_sl_v)
+                                        ex_name = getattr(client, "exchange_name", "BITUNIX")
+                                        p_entry_id_v = record_pattern_entry(
+                                            symbol=symbol,
+                                            side=trade_type,
+                                            entry_price=current_price,
+                                            conditions=conditions_snapshot,
+                                            alasan=f"[LATIHAN] {alasan}",
+                                            margin_usdt=0.0,
+                                            leverage=dynamic_leverage,
+                                            exchange=f"{ex_name}_SIM_TRAIN",
+                                        )
+                                        virtual_trades[symbol] = {
+                                            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                            "tipe": trade_type,
+                                            "entry_price": current_price,
+                                            "tp_price": v_tp,
+                                            "sl_price": v_sl,
+                                            "alasan": alasan,
+                                            "leverage": dynamic_leverage,
+                                            "pattern_entry_id": p_entry_id_v,
+                                        }
+                                        print(f"📚 [LATIHAN SIMULASI] {symbol} ({trade_type}) dicatat untuk latihan memory karena batas margin real penuh.")
                                     continue
 
                                 # Market guard opsional jika Binance
@@ -909,6 +1034,7 @@ async def scanner_loop():
                                     "sl_price": sl_price,
                                     "exchange": exchange_tag,
                                     "is_paper": is_paper_trading,
+                                    "is_bot_trade": True,
                                     "mfe": 0.0,
                                     "mae": 0.0,
                                     "pattern_entry_id": pattern_entry_id,
@@ -1211,17 +1337,17 @@ async def profitable_position_monitor_loop():
                         hold_hours = (datetime.now() - e_time).total_seconds() / 3600.0
                         hold_mins = hold_hours * 60.0
 
-                        should_close_time, time_reason = evaluate_time_based_exit(
+                        should_close_time, exit_type, time_reason = evaluate_time_based_exit(
                             hold_duration_hours=hold_hours,
                             roi_percent=roi_pct,
                             loss_limit_percent=-5.0,
-                            loss_time_limit_hours=2.0,
+                            loss_time_limit_hours=4.0,
                             profit_target_percent=20.0,
-                            profit_time_limit_hours=4.0,
+                            profit_time_limit_hours=8.0,
                         )
 
                         if reached_tp or reached_sl or should_close_time:
-                            close_type = "TAKE_PROFIT" if reached_tp else ("STOP_LOSS" if reached_sl else f"TIME_EXIT ({time_reason})")
+                            close_type = "TAKE_PROFIT" if reached_tp else ("STOP_LOSS" if reached_sl else exit_type)
                             r_pnl = u_pnl
                             comm = curr_price * qty * 0.0004 * 2
                             n_pnl = r_pnl - comm
@@ -1277,7 +1403,7 @@ async def profitable_position_monitor_loop():
                                 "net_pnl": n_pnl,
                                 "mfe": f"+{mfe_pct:.2f}%",
                                 "mae": f"-{mae_pct:.2f}%",
-                                "duration": f"{hold_mins:.1f} menit",
+                                "duration": f"{hold_mins:.1f} menit ({hold_hours:.1f} jam)",
                                 "duration_minutes": hold_mins,
                                 "fingerprint": ai_s.get("fingerprint", t_alasan),
                                 "win_rate": ai_s.get("win_rate", 0.0),
@@ -1285,7 +1411,7 @@ async def profitable_position_monitor_loop():
                                 "wins": ai_s.get("wins", 0),
                                 "losses": ai_s.get("losses", 0),
                                 "alasan_masuk": t_alasan,
-                                "ai_eval_summary": meta.get("ai_eval_summary", ""),
+                                "ai_eval_summary": meta.get("ai_eval_summary", time_reason if should_close_time else ""),
                             }
 
                             try:
@@ -1337,11 +1463,20 @@ async def profitable_position_monitor_loop():
                     entry_price = float(position.get("entry_price", position.get("entryPrice", 0)))
                     symbol = position.get("symbol")
                     
-                    if amount != 0:
-                        meta = bot_state.setdefault("active_trade_meta", {}).get(symbol)
-                        if meta is not None:
-                            meta["mfe"] = max(float(meta.get("mfe", 0.0)), profit)
-                            meta["mae"] = min(float(meta.get("mae", 0.0)), profit)
+                    if amount == 0 or not symbol:
+                        continue
+
+                    meta = bot_state.setdefault("active_trade_meta", {}).get(symbol)
+                    if meta is not None:
+                        meta["mfe"] = max(float(meta.get("mfe", 0.0)), profit)
+                        meta["mae"] = min(float(meta.get("mae", 0.0)), profit)
+
+                    # Pastikan posisi yang BUKAN dibuka oleh bot (manual trade) TIDAK diintervensi oleh bot
+                    is_bot_trade = meta is not None and meta.get("is_bot_trade", False)
+                    if not is_bot_trade:
+                        # Trade dibuka manual oleh user di exchange: bot hanya memantau info di /status Telegram
+                        # tanpa melakukan auto close, time exit, ataupun auto TP/SL agar tidak bertabrakan.
+                        continue
 
                     initial_margin = abs(amount) * entry_price / bot_config.leverage if entry_price > 0 else 0
                     roi_percent = (profit / initial_margin * 100) if initial_margin > 0 else 0
@@ -1431,7 +1566,7 @@ async def profitable_position_monitor_loop():
                                 print(f"[TELEGRAM] Gagal kirim notifikasi closed order monitor: {e_fill_notif}")
                         continue
 
-                    # Evaluasi Time-Based Risk Exit (Hold > 2h & ROI <= -5% atau Hold > 4h & ROI >= +20%)
+                    # Evaluasi Time-Based Risk Exit (Hold >= 4h & ROI <= -5% atau Hold >= 8h & ROI >= +20%)
                     meta = bot_state.get("active_trade_meta", {}).get(symbol, {})
                     entry_time = meta.get("entry_time")
                     if entry_time:
@@ -1440,13 +1575,13 @@ async def profitable_position_monitor_loop():
                         update_time_ms = int(position.get("updateTime", 0))
                         hold_duration_hours = ((now_ms - update_time_ms) / 3600000.0) if update_time_ms > 0 else 0.0
 
-                    should_time_close, time_close_reason = evaluate_time_based_exit(
+                    should_time_close, exit_type, time_close_reason = evaluate_time_based_exit(
                         hold_duration_hours=hold_duration_hours,
                         roi_percent=roi_percent,
                         loss_limit_percent=-5.0,
-                        loss_time_limit_hours=2.0,
+                        loss_time_limit_hours=4.0,
                         profit_target_percent=20.0,
-                        profit_time_limit_hours=4.0,
+                        profit_time_limit_hours=8.0,
                     )
 
                     if amount != 0 and should_time_close:
@@ -1462,11 +1597,38 @@ async def profitable_position_monitor_loop():
                         )
                         if close_result.get("status") == "success":
                             meta = bot_state.get("active_trade_meta", {}).pop(symbol, {})
-                            duration_minutes = round(hold_duration_hours * 60, 1)
+                            hold_mins = round(hold_duration_hours * 60, 1)
+                            pos_side = "LONG" if amount > 0 else "SHORT"
+                            is_win_trade = profit > 0
                             margin_val = float(meta.get("margin_usdt", initial_margin) or initial_margin)
                             exit_price = float(close_result.get("price") or (entry_price + (profit / amount) if amount != 0 else entry_price))
-                            order_data = {
+                            ex_tag = getattr(bot_config, 'exchange', 'BINANCE').upper()
+
+                            t_alasan = bot_state.get("active_trade_reasons", {}).pop(symbol, meta.get("alasan", "Real Trade"))
+                            if t_alasan:
+                                record_trade_result(t_alasan, is_win_trade)
+
+                            record_closed_trade({
+                                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                 "symbol": symbol,
+                                "side": pos_side,
+                                "entry_price": entry_price,
+                                "exit_price": exit_price,
+                                "realized_pnl": profit,
+                                "commission": 0.0,
+                                "funding_fee": 0.0,
+                                "net_pnl": profit,
+                                "margin_usdt": margin_val,
+                                "leverage": bot_config.leverage,
+                                "mfe": f"{profit:+.4f}",
+                                "mae": "0.00%",
+                                "duration_minutes": hold_mins,
+                                "order_type": "TIME_BASED_EXIT",
+                                "exchange": ex_tag,
+                            })
+
+                            order_data = {
+                                "symbol": f"[{ex_tag}] {symbol}",
                                 "order_type": "TIME_BASED_EXIT",
                                 "price": f"{exit_price:.6f}",
                                 "entry_price": meta.get("entry_price", entry_price),
@@ -1477,17 +1639,20 @@ async def profitable_position_monitor_loop():
                                 "net_pnl": profit,
                                 "mfe": f"{profit:+.4f}",
                                 "mae": "0.00%",
-                                "duration": f"{duration_minutes:.1f} menit",
-                                "duration_minutes": duration_minutes,
-                                "fingerprint": meta.get("fingerprint", meta.get("alasan", "Kombinasi Standar")),
+                                "duration": f"{hold_mins:.1f} menit ({hold_duration_hours:.1f} jam)",
+                                "duration_minutes": hold_mins,
+                                "fingerprint": meta.get("fingerprint", t_alasan),
                                 "win_rate": 0.0,
                                 "total_trades": 0,
                                 "wins": 0,
                                 "losses": 0,
-                                "alasan_masuk": f"{meta.get('alasan', 'Sinyal AI')} | Trigger: {time_close_reason}",
-                                "ai_eval_summary": meta.get("ai_eval_summary", ""),
+                                "alasan_masuk": f"{t_alasan} | Trigger: {time_close_reason}",
+                                "ai_eval_summary": meta.get("ai_eval_summary", time_close_reason),
                             }
-                            await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                            try:
+                                await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                            except Exception as e_ntf:
+                                print(f"[TELEGRAM] Gagal kirim notifikasi real time exit: {e_ntf}")
                         continue
 
                     if amount != 0 and entry_price > 0:

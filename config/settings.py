@@ -39,8 +39,10 @@ SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", "60"))
 API_REQUEST_DELAY = float(os.getenv("API_REQUEST_DELAY", "0.5"))
 TIMEFRAME = os.getenv("TIMEFRAME", "5m")
 MAX_OPEN_POSITIONS_ENV = int(os.getenv("MAX_OPEN_POSITIONS", "4"))
-SCAN_UNIVERSE_SIZE_ENV = int(os.getenv("SCAN_UNIVERSE_SIZE", "30"))
+SCAN_UNIVERSE_SIZE_ENV = int(os.getenv("SCAN_UNIVERSE_SIZE", "80"))
 TOP_N_COINS_ENV = int(os.getenv("TOP_N_COINS", str(SCAN_UNIVERSE_SIZE_ENV)))
+SCAN_TARGET_COINS_ENV = os.getenv("SCAN_TARGET_COINS", "ALL").strip()
+SCAN_SORT_ORDER_ENV = os.getenv("SCAN_SORT_ORDER", "VOLUME_DESC").upper().strip()
 SCAN_BATCH_SIZE_ENV = int(os.getenv("SCAN_BATCH_SIZE", "10"))
 
 SMART_BUY_LOOKBACK_DAYS_ENV = int(os.getenv("SMART_BUY_LOOKBACK_DAYS", "20"))
@@ -127,6 +129,8 @@ class BotSettings:
             
             cls._instance.active_exchange = ACTIVE_EXCHANGE
             cls._instance.trading_mode = TRADING_MODE
+            cls._instance.scan_target = SCAN_TARGET_COINS_ENV if SCAN_TARGET_COINS_ENV else "ALL"
+            cls._instance.scan_sort = SCAN_SORT_ORDER_ENV if SCAN_SORT_ORDER_ENV in {"VOLUME_DESC", "CHANGE_DESC", "GAINERS", "LOSERS"} else "VOLUME_DESC"
             
             # Fitur Lanjutan
             cls._instance.daily_loss_limit_percent = DAILY_LOSS_LIMIT_PERCENT_ENV
@@ -257,6 +261,45 @@ class BotSettings:
             raise ValueError(f"RSI Overbought harus antara {self.rsi_oversold} dan 100")
         self.rsi_overbought = val
         self._update_env("RSI_OVERBOUGHT", str(val))
+
+    def update_scan_target(self, target: str | int):
+        target_str = str(target).strip().upper()
+        if target_str in ("ALL", "SEMUA", "0", "NONE"):
+            self.scan_target = "ALL"
+        else:
+            try:
+                val = int(target_str)
+                if val <= 0:
+                    self.scan_target = "ALL"
+                else:
+                    self.scan_target = str(val)
+            except ValueError:
+                raise ValueError("Target scan harus 'ALL' atau angka (contoh: 50, 100, 200, 500)")
+        self._update_env("SCAN_TARGET_COINS", self.scan_target)
+
+    def update_scan_sort(self, sort_by: str):
+        sort_str = str(sort_by).strip().upper()
+        if sort_str in ("VOLUME", "VOL", "VOLUME_DESC"):
+            self.scan_sort = "VOLUME_DESC"
+        elif sort_str in ("CHANGE", "CHG", "CHANGE_DESC", "VOLATILITY"):
+            self.scan_sort = "CHANGE_DESC"
+        elif sort_str in ("GAINERS", "TOP_GAINERS", "NAIK"):
+            self.scan_sort = "GAINERS"
+        elif sort_str in ("LOSERS", "TOP_LOSERS", "TURUN"):
+            self.scan_sort = "LOSERS"
+        else:
+            raise ValueError("Urutan scan harus: VOLUME_DESC, CHANGE_DESC, GAINERS, atau LOSERS")
+        self._update_env("SCAN_SORT_ORDER", self.scan_sort)
+
+    def get_scan_limit_int(self) -> Optional[int]:
+        """Mengembalikan limit integer untuk scanner, atau None jika ALL."""
+        if str(self.scan_target).upper() in ("ALL", "SEMUA", "0", "NONE"):
+            return None
+        try:
+            val = int(self.scan_target)
+            return val if val > 0 else None
+        except (ValueError, TypeError):
+            return None
 
     def _update_env(self, key: str, value: str):
         try:
