@@ -113,6 +113,8 @@ async def setup_bot_commands(bot_instance: Bot) -> None:
         BotCommand(command="set_leverage", description="Ubah Leverage"),
         BotCommand(command="set_tp", description="Target Take Profit (%)"),
         BotCommand(command="set_sl", description="Target Stop Loss (%)"),
+        BotCommand(command="set_confluence", description="Skor Konfluensi Minimum (50-100, Rekomendasi: 80)"),
+        BotCommand(command="set_breakeven", description="Auto Break-Even (on/off, target ROI %)"),
         BotCommand(command="backup_db", description="Backup Database ke Telegram"),
         BotCommand(command="close_all", description="Tutup Semua Posisi Terbuka"),
         BotCommand(command="pause", description="Jeda Scanning"),
@@ -1196,6 +1198,113 @@ async def set_analysis_days_handler(message: types.Message, command: CommandObje
     except ValueError as error:
         await message.answer(f"❌ {error}\nMinimal adalah 20 hari.")
 
+@dp.message(Command("set_tp"))
+async def set_tp_handler(message: types.Message, command: CommandObject):
+    if command.args:
+        try:
+            val = float(command.args)
+            if val <= 0:
+                await message.answer("❌ Target Take Profit harus lebih besar dari 0%.")
+                return
+            bot_config.update_tp(val)
+            await message.answer(f"✅ Target Take Profit berhasil diubah menjadi `{val:.1f}%` ROI", parse_mode="Markdown")
+        except ValueError:
+            await message.answer("❌ Format salah. Contoh: `/set_tp 30`", parse_mode="Markdown")
+    else:
+        await message.answer(f"ℹ️ Take Profit saat ini: `{bot_config.tp_percent}%` ROI (Gunakan `/set_tp <angka>` untuk mengubah)", parse_mode="Markdown")
+
+@dp.message(Command("set_sl"))
+async def set_sl_handler(message: types.Message, command: CommandObject):
+    if command.args:
+        try:
+            val = float(command.args)
+            if val <= 0:
+                await message.answer("❌ Batas Stop Loss harus lebih besar dari 0%.")
+                return
+            bot_config.update_sl(val)
+            await message.answer(f"✅ Batas Stop Loss berhasil diubah menjadi `{val:.1f}%` ROI", parse_mode="Markdown")
+        except ValueError:
+            await message.answer("❌ Format salah. Contoh: `/set_sl 25`", parse_mode="Markdown")
+    else:
+        await message.answer(f"ℹ️ Stop Loss saat ini: `{bot_config.sl_percent}%` ROI (Gunakan `/set_sl <angka>` untuk mengubah)", parse_mode="Markdown")
+
+@dp.message(Command("set_confluence"))
+async def set_confluence_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg:
+        curr_score = getattr(bot_config, "min_confluence_score", 80.0)
+        text = (
+            f"🎯 **SMART CONFLUENCE SCORING MATRIX**\n"
+            f"────────────────────────\n"
+            f"Skor Minimum Saat Ini: **`{curr_score:.0f}/100`** Poin\n\n"
+            f"5 Pilar Analisis Institusional:\n"
+            f"1. HTF Trend (1D/1H): 25 Poin\n"
+            f"2. Pola Candlestick @ Support: 25 Poin\n"
+            f"3. Volume Surge (RVOL 5M): 20 Poin\n"
+            f"4. Volatility Squeeze Breakout: 15 Poin\n"
+            f"5. Momentum & RSI Zone: 15 Poin\n\n"
+            f"Gunakan `/set_confluence <50-100>` (Rekomendasi: `80` untuk High-Probability Pro Trades)"
+        )
+        await message.answer(text, parse_mode="Markdown")
+        return
+    try:
+        val = float(arg)
+        bot_config.update_confluence_score(val)
+        await message.answer(
+            f"✅ **Batas Skor Konfluensi Diperbarui!**\n"
+            f"Skor Minimum Baru: **`{val:.1f}/100`**\n"
+            f"Bot hanya akan mengeksekusi sinyal jika total skor $\\ge {val:.1f}$.",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await message.answer(f"❌ {e}")
+
+@dp.message(Command("set_breakeven", "set_be"))
+async def set_breakeven_handler(message: types.Message, command: CommandObject):
+    args = (command.args or "").strip().split()
+    if not args:
+        is_on = getattr(bot_config, "use_auto_breakeven", True)
+        roi_target = getattr(bot_config, "auto_breakeven_roi_percent", 8.0)
+        status_str = "AKTIF (ON) 🟢" if is_on else "NONAKTIF (OFF) 🔴"
+        text = (
+            f"🛡️ **PENGATURAN AUTO BREAK-EVEN (RISK-FREE)**\n"
+            f"────────────────────────\n"
+            f"Status Fitur : **{status_str}**\n"
+            f"Trigger ROI  : **`+{roi_target:.1f}%`**\n\n"
+            f"Penjelasan:\n"
+            f"Ketika posisi floating profit mencapai $\\ge +{roi_target:.1f}\\%$, Stop Loss otomatis digeser ke harga Entry (+ fee buffer). Anda bebas risiko dari kerugian!\n\n"
+            f"Perintah:\n"
+            f"• `/set_breakeven on` (Aktifkan Auto BE)\n"
+            f"• `/set_breakeven off` (Matikan Auto BE)\n"
+            f"• `/set_breakeven 8.0` (Set trigger aktivasi ke ROI +8.0%)\n"
+            f"• `/set_breakeven on 10.0` (Aktifkan dengan trigger +10.0%)"
+        )
+        await message.answer(text, parse_mode="Markdown")
+        return
+    
+    first = args[0].lower()
+    roi_val = None
+    if len(args) > 1:
+        try:
+            roi_val = float(args[1])
+        except ValueError:
+            pass
+
+    if first in ("on", "true", "1", "aktif", "enable"):
+        bot_config.update_auto_breakeven(True, roi_val)
+        roi_info = f" pada ROI `+{bot_config.auto_breakeven_roi_percent:.1f}%`" if roi_val is not None else ""
+        await message.answer(f"✅ **Auto Break-Even DIAKTIFKAN**{roi_info}! 🛡️", parse_mode="Markdown")
+    elif first in ("off", "false", "0", "nonaktif", "disable"):
+        bot_config.update_auto_breakeven(False)
+        await message.answer("🛑 **Auto Break-Even DINONAKTIFKAN**.", parse_mode="Markdown")
+    else:
+        try:
+            val = float(first)
+            bot_config.update_auto_breakeven(True, val)
+            await message.answer(f"✅ **Auto Break-Even diset ke ROI `+{val:.1f}%`** (Status: ON) 🛡️", parse_mode="Markdown")
+        except ValueError:
+            await message.answer("❌ Format salah. Gunakan `/set_breakeven on`, `/set_breakeven off`, atau `/set_breakeven 8.0`", parse_mode="Markdown")
+
 @dp.message(Command("set_leverage"))
 async def set_leverage_handler(message: types.Message, command: CommandObject):
     if command.args:
@@ -1526,11 +1635,13 @@ async def btn_hitung_margin_handler(message: types.Message):
 @dp.message(F.text == "⚙️ Pengaturan")
 async def btn_pengaturan_handler(message: types.Message):
     ts_status = "ON" if bot_config.use_trailing_stop else "OFF"
+    be_status = f"ON (+{getattr(bot_config, 'auto_breakeven_roi_percent', 8.0):.1f}% ROI)" if getattr(bot_config, "use_auto_breakeven", True) else "OFF"
     margin_desc = "DYNAMIC (Auto Computed)" if bot_config.margin_mode == "DYNAMIC" else f"FIXED ({bot_config.margin_usdt:.2f} USDT)"
     modal_desc = f"{bot_config.simulated_modal:.2f} USDT (Custom Demo)" if bot_config.simulated_modal else "AUTO (Saldo Real Exchange)"
     
     scan_target_desc = "Semua Altcoin Futures (ALL)" if bot_config.scan_target == "ALL" else f"Top {bot_config.scan_target}"
     scan_sort_desc = "Volume Terbesar 📊" if bot_config.scan_sort == "VOLUME_DESC" else ("Change % 🔥" if bot_config.scan_sort == "CHANGE_DESC" else ("Gainers 🚀" if bot_config.scan_sort == "GAINERS" else "Losers 🔻"))
+    min_conf = getattr(bot_config, "min_confluence_score", 80.0)
 
     text = (
         "⚙️ **PENGATURAN BOT LENGKAP** ⚙️\n\n"
@@ -1539,12 +1650,14 @@ async def btn_pengaturan_handler(message: types.Message):
         f"• Mode Margin : `{margin_desc}`\n"
         f"• Risk / Trade: `{bot_config.risk_per_trade_percent}%` dari saldo\n"
         f"• Max Alokasi : `{bot_config.max_position_equity_ratio * 100:.0f}%` saldo / posisi\n\n"
-        "🛡️ **2. TARGET & PROTEKSI (TP / SL / TS)**\n"
+        "🛡️ **2. TARGET & PROTEKSI (TP / SL / BE / TS)**\n"
         f"• Take Profit : `{bot_config.tp_percent}%` ROI\n"
         f"• Stop Loss   : `{bot_config.sl_percent}%` ROI\n"
-        f"• Trailing Stop : `{ts_status}` (Act: `{bot_config.ts_activation_percent}%`, Call: `{bot_config.ts_callback_rate}%`)\n\n"
-        "⚡ **3. EKSEKUSI & SCANNER**\n"
+        f"• Auto Break-Even : `{be_status}` (Risk-Free Mode 🛡️)\n"
+        f"• Trailing Stop   : `{ts_status}` (Act: `{bot_config.ts_activation_percent}%`, Call: `{bot_config.ts_callback_rate}%`)\n\n"
+        "⚡ **3. EKSEKUSI & SCANNER PRO**\n"
         f"• Exchange    : `{bot_config.active_exchange}` | Mode: `{bot_config.trading_mode}`\n"
+        f"• Confluence Matrix : Min `{min_conf:.0f}/100` Poin (5-Pillar Pro Setup)\n"
         f"• Target Scan : `{scan_target_desc}`\n"
         f"• Urutan Scan : `{scan_sort_desc}`\n"
         f"• Leverage    : `{bot_config.leverage}x`\n"
@@ -1553,13 +1666,17 @@ async def btn_pengaturan_handler(message: types.Message):
         f"• Scanner Mode: `{bot_config.scanner_mode}`\n"
         "──────────────\n"
         "📝 **DAFTAR PERINTAH PENGATURAN:**\n"
+        "🎯 **Pro Matrix & Proteksi:**\n"
+        "• `/set_confluence 80` (Min skor konfluensi 80/100)\n"
+        "• `/set_breakeven on 8.0` (Auto geser SL ke Entry saat ROI $\\ge +8\%$)\n"
+        "• `/set_tp 30` (Take profit 30%)\n"
+        "• `/set_sl 25` (Stop loss 25%)\n"
+        "• `/set_ts_use True` / `/set_ts_use False`\n\n"
         "🌐 **Scanner & Target Koin:**\n"
         "• `/set_scan` (Buka Panel Tombol Target & Urutan Scan)\n"
         "• `/set_scan_target all` (Scan seluruh altcoin futures)\n"
         "• `/set_scan_target 200` (Batasi top 200 koin)\n"
-        "• `/set_scan_sort volume` (Urutan volume USDT terbesar)\n"
-        "• `/set_scan_sort change` (Urutan % change tertinggi/volatil)\n"
-        "• `/set_scan_sort gainers` | `/set_scan_sort losers`\n\n"
+        "• `/set_scan_sort volume` | `/set_scan_sort change`\n\n"
         "💵 **Modal & Sizing:**\n"
         "• `/set_modal 100` (Atur modal uji coba $100)\n"
         "• `/set_modal auto` (Gunakan saldo real)\n"
@@ -1569,12 +1686,6 @@ async def btn_pengaturan_handler(message: types.Message):
         "• `/set_risk 1.0` (Risk per trade 1% saldo)\n"
         "• `/set_max_ratio 15` (Max 15% saldo per posisi)\n"
         "• `/hitung_margin` (Kalkulator margin aman)\n\n"
-        "🎯 **Target & Proteksi:**\n"
-        "• `/set_tp 30` (Take profit 30%)\n"
-        "• `/set_sl 25` (Stop loss 25%)\n"
-        "• `/set_ts_use True` / `/set_ts_use False`\n"
-        "• `/set_ts_activation 15.0`\n"
-        "• `/set_ts_callback 1.0`\n\n"
         "⚡ **Eksekusi & Filter:**\n"
         "• `/set_leverage 10` (Ubah leverage)\n"
         "• `/set_max_positions 3` (Max 3 posisi)\n"

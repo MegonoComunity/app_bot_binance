@@ -76,6 +76,11 @@ TS_CALLBACK_RATE_ENV = float(os.getenv("TS_CALLBACK_RATE", "1.0"))
 HTF_TIMEFRAME = os.getenv("HTF_TIMEFRAME", "1h")
 SIMULATED_MODAL_ENV = float(os.getenv("SIMULATED_MODAL", "0.0"))
 
+# Fitur Pro: Confluence Matrix & Auto Break-Even (Risk-Free)
+MIN_CONFLUENCE_SCORE_ENV = float(os.getenv("MIN_CONFLUENCE_SCORE", "80.0"))
+USE_AUTO_BREAKEVEN_ENV = os.getenv("USE_AUTO_BREAKEVEN", "True").lower() == "true"
+AUTO_BREAKEVEN_ROI_PERCENT_ENV = float(os.getenv("AUTO_BREAKEVEN_ROI_PERCENT", "8.0"))
+
 # Validasi API key sesuai exchange aktif
 if ACTIVE_EXCHANGE == "BINANCE":
     if not BINANCE_API_KEY or not BINANCE_API_SECRET:
@@ -132,6 +137,11 @@ class BotSettings:
             cls._instance.scan_target = SCAN_TARGET_COINS_ENV if SCAN_TARGET_COINS_ENV else "ALL"
             cls._instance.scan_sort = SCAN_SORT_ORDER_ENV if SCAN_SORT_ORDER_ENV in {"VOLUME_DESC", "CHANGE_DESC", "GAINERS", "LOSERS"} else "VOLUME_DESC"
             
+            # Fitur Pro: Confluence Matrix & Auto Break-Even
+            cls._instance.min_confluence_score = MIN_CONFLUENCE_SCORE_ENV
+            cls._instance.use_auto_breakeven = USE_AUTO_BREAKEVEN_ENV
+            cls._instance.auto_breakeven_roi_percent = AUTO_BREAKEVEN_ROI_PERCENT_ENV
+            
             # Fitur Lanjutan
             cls._instance.daily_loss_limit_percent = DAILY_LOSS_LIMIT_PERCENT_ENV
             cls._instance.min_order_book_depth_usdt = MIN_ORDER_BOOK_DEPTH_USDT_ENV
@@ -139,6 +149,21 @@ class BotSettings:
             cls._instance.atr_multiplier_sl = ATR_MULTIPLIER_SL_ENV
             cls._instance.limit_order_timeout_seconds = LIMIT_ORDER_TIMEOUT_SECONDS_ENV
         return cls._instance
+        
+    def update_confluence_score(self, val: float):
+        if val < 50.0 or val > 100.0:
+            raise ValueError("Min Confluence Score harus antara 50.0 sampai 100.0")
+        self.min_confluence_score = val
+        self._update_env("MIN_CONFLUENCE_SCORE", str(val))
+
+    def update_auto_breakeven(self, enabled: bool, roi_percent: Optional[float] = None):
+        self.use_auto_breakeven = enabled
+        self._update_env("USE_AUTO_BREAKEVEN", str(enabled))
+        if roi_percent is not None:
+            if roi_percent <= 0 or roi_percent > 50.0:
+                raise ValueError("Auto Break-Even ROI harus antara 1.0% sampai 50.0%")
+            self.auto_breakeven_roi_percent = roi_percent
+            self._update_env("AUTO_BREAKEVEN_ROI_PERCENT", str(roi_percent))
         
     def update_trading_mode(self, mode: str):
         mode = mode.upper().strip()

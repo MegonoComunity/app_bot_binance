@@ -226,4 +226,47 @@ def calculate_computed_position_size(
         "risk_percent": risk_percent,
         "is_valid": True,
         "reason": "OK",
+    }
+
+
+def evaluate_auto_breakeven(
+    current_roi_percent: float,
+    entry_price: float,
+    side: str = "LONG",
+    be_activation_roi: float = 8.0,
+    fee_buffer_percent: float = 0.1,
+    current_sl_price: float | None = None,
+) -> dict:
+    """
+    Mengevaluasi apakah posisi berhak digeser Stop Loss-nya ke level Break-Even (Risk-Free).
+    """
+    if current_roi_percent < be_activation_roi:
+        return {
+            "should_move_to_be": False,
+            "new_sl_price": current_sl_price,
+            "reason": f"ROI ({current_roi_percent:.2f}%) belum mencapai target BE ({be_activation_roi:.1f}%)"
+        }
+
+    side = side.upper()
+    if side in ("LONG", "BUY"):
+        new_sl_price = entry_price * (1 + (fee_buffer_percent / 100.0))
+        if current_sl_price is not None and current_sl_price >= new_sl_price:
+            return {
+                "should_move_to_be": False,
+                "new_sl_price": current_sl_price,
+                "reason": "Stop Loss sudah berada di level Break-Even atau lebih tinggi"
+            }
+    else:  # SHORT
+        new_sl_price = entry_price * (1 - (fee_buffer_percent / 100.0))
+        if current_sl_price is not None and current_sl_price <= new_sl_price:
+            return {
+                "should_move_to_be": False,
+                "new_sl_price": current_sl_price,
+                "reason": "Stop Loss sudah berada di level Break-Even atau lebih rendah (SHORT)"
+            }
+
+    return {
+        "should_move_to_be": True,
+        "new_sl_price": round(new_sl_price, 8),
+        "reason": f"ROI mencapai +{current_roi_percent:.2f}% >= +{be_activation_roi:.1f}%. Geser SL ke Break-Even ({new_sl_price:.6f})"
     }

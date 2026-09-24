@@ -47,11 +47,13 @@ from indicators.patterns import (
     check_consecutive_red_candles,
 )
 from indicators.trend import get_htf_trend
+from core.confluence_engine import calculate_confluence_score
 from core.learner import is_pattern_reliable, record_trade_result
 from core.risk_manager import (
     calculate_risk_margin,
     calculate_volatility_adjusted_leverage,
     calculate_computed_position_size,
+    evaluate_auto_breakeven,
     count_open_positions,
     daily_loss_limit_reached,
     total_position_notional,
@@ -642,6 +644,60 @@ async def scanner_loop():
                                 "atr_percent": round((atr_val / current_price * 100), 2) if current_price > 0 else 0.0,
                             }
 
+                            # Hitung Pilar 1: Smart Confluence Scoring Matrix (Institutional-Grade Setup)
+                            confluence_res = calculate_confluence_score(
+                                df_5m=df,
+                                df_htf=df_htf,
+                                df_daily=df_daily,
+                                side=trade_type,
+                                pattern_name=pattern_name if pattern_detected else None,
+                                pattern_type=pattern_type if pattern_detected else None,
+                                near_support=near_support,
+                                near_resistance=near_resistance,
+                                near_lower_bb=near_lower_bb,
+                                near_upper_bb=near_upper_bb,
+                                is_oversold=is_oversold,
+                                is_overbought=is_overbought,
+                                vol_ratio=vol_ratio,
+                                breakout_info=breakout,
+                                htf_trend=htf_trend,
+                                min_score_threshold=bot_config.min_confluence_score,
+                            )
+                            confluence_score = confluence_res["score"]
+                            confluence_approved = confluence_res["is_approved"]
+                            confluence_breakdown = confluence_res["breakdown"]
+
+                            if not confluence_approved:
+                                print(f"🛡️ [CONFLUENCE FILTER] {symbol} ({trade_type}) DITOLAK: Skor {confluence_score}/100 < {bot_config.min_confluence_score} (Syarat Institusional Belum Terpenuhi). Breakdown: {confluence_breakdown}")
+                                if symbol not in virtual_trades:
+                                    pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
+                                    pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
+                                    v_tp = current_price * (1 + pm_tp_v) if trade_type == "LONG" else current_price * (1 - pm_tp_v)
+                                    v_sl = current_price * (1 - pm_sl_v) if trade_type == "LONG" else current_price * (1 + pm_sl_v)
+                                    ex_name = getattr(client, "exchange_name", "BITUNIX")
+                                    p_entry_id_v = record_pattern_entry(
+                                        symbol=symbol,
+                                        side=trade_type,
+                                        entry_price=current_price,
+                                        conditions=conditions_snapshot,
+                                        alasan=f"[LATIHAN (Score: {confluence_score})] {alasan}",
+                                        margin_usdt=0.0,
+                                        leverage=dynamic_leverage,
+                                        exchange=f"{ex_name}_SIM_TRAIN",
+                                    )
+                                    virtual_trades[symbol] = {
+                                        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        "tipe": trade_type,
+                                        "entry_price": current_price,
+                                        "tp_price": v_tp,
+                                        "sl_price": v_sl,
+                                        "alasan": f"{alasan} (Score: {confluence_score})",
+                                        "leverage": dynamic_leverage,
+                                        "pattern_entry_id": p_entry_id_v,
+                                    }
+                                    print(f"📚 [LATIHAN SIMULASI] Sinyal {trade_type} {symbol} (Skor {confluence_score}/100) dialihkan ke memory AI.")
+                                continue
+
                             # Evaluasi Pattern Memory: tolak jika pola terbukti buruk (>= 3 sample, WR < 45%)
                             if is_pattern_memory_blacklisted(conditions_snapshot):
                                 print(f"🚫 [PATTERN MEMORY] Sinyal {trade_type} pada {symbol} DITOLAK karena pola historis memiliki Win Rate rendah!")
@@ -675,7 +731,7 @@ async def scanner_loop():
                                 continue
 
                             batch_signal_found = True
-                            print(f"SETUP TEKNIKAL {trade_type} DITEMUKAN PADA {symbol}! Alasan: {alasan}")
+                            print(f"SETUP TEKNIKAL {trade_type} DITEMUKAN PADA {symbol}! [Skor: {confluence_score}/100] Alasan: {alasan}")
                             
                             # 5. Cek Modal & Hitung Sizing Computed
                             try:
@@ -948,6 +1004,9 @@ async def scanner_loop():
                                 # 7. Kirim Notifikasi
                                 # Analisis Evaluasi Komprehensif Brain AI
                                 ai_eval_lines = []
+                                grade_label = "INSTITUTIONAL A+ 🏆" if confluence_score >= 90 else "HIGH CONFLUENCE A 🌟"
+                                ai_eval_lines.append(f"• **Smart Confluence Score:** `{confluence_score}/100` ({grade_label})")
+
                                 rsi_status = "Oversold 🟢" if is_oversold else ("Overbought 🔴" if is_overbought else "Neutral ⚪")
                                 ai_eval_lines.append(f"• **Indikator RSI ({bot_config.rsi_length}):** `{rsi_value:.1f}` ({rsi_status})")
                                 
@@ -973,17 +1032,7 @@ async def scanner_loop():
                                 
                                 ai_eval_text = "\n".join(ai_eval_lines)
 
-                                signal_score = round(
-                                    sum([
-                                        htf_trend in (["UPTREND", "SIDEWAYS"] if trade_type == "LONG" else ["DOWNTREND", "SIDEWAYS"]),
-                                        near_support if trade_type == "LONG" else near_resistance,
-                                        is_oversold if trade_type == "LONG" else is_overbought,
-                                        syarat_pola_long if trade_type == "LONG" else syarat_pola_short,
-                                        has_volume_surge,
-                                        not bull_trap_detected,
-                                    ]) * (100 / 6),
-                                    1,
-                                )
+                                signal_score = confluence_score
                                 mode_label = f"[{exchange_tag}] " if is_paper_trading else ""
                                 trade_data = {
                                     'symbol': f"{mode_label}{symbol}",
@@ -996,15 +1045,15 @@ async def scanner_loop():
                                     'tp_price': tp_price,
                                     'sl_price': sl_price,
                                     'score': signal_score,
-                                    'confidence': f"{signal_score:.1f}%",
+                                    'confidence': f"{signal_score}/100",
                                     'tf': TIMEFRAME,
                                     'datetime': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                                     'margin': f"{current_margin:.2f} (Modal: {modal:.2f})",
                                     'leverage': actual_leverage,
                                     'tp_sl_info': f"TP: {tp_price:.4f} ({bot_config.tp_percent}%), SL: {sl_price:.4f} ({bot_config.sl_percent}%)",
-                                    'syarat_1': f"Area {'Support' if trade_type == 'LONG' else 'Resistance'} Divalidasi. Tren {HTF_TIMEFRAME}: {htf_trend}",
+                                    'syarat_1': f"Score {signal_score}/100 ({grade_label}) | HTF {HTF_TIMEFRAME}: {htf_trend}",
                                     'syarat_2': alasan,
-                                    'pola_ml': pattern_name if pattern_detected else "Computed Sizing",
+                                    'pola_ml': pattern_name if pattern_detected else "Confluence Matrix",
                                     'ai_evaluation': ai_eval_text,
                                     'method': alasan,
                                 }
@@ -1320,6 +1369,36 @@ async def profitable_position_monitor_loop():
 
                         roi_pct = (u_pnl / m_usdt * 100) if m_usdt > 0 else 0.0
 
+                        # Evaluasi Auto Break-Even Protection (Risk-Free Trade)
+                        if bot_config.use_auto_breakeven and not meta.get("is_breakeven_set", False):
+                            be_eval = evaluate_auto_breakeven(
+                                current_roi_percent=roi_pct,
+                                entry_price=e_price,
+                                side=pos_side,
+                                be_activation_roi=bot_config.auto_breakeven_roi_percent,
+                                fee_buffer_percent=0.1,
+                                current_sl_price=target_sl if target_sl > 0 else None,
+                            )
+                            if be_eval.get("should_move_to_be"):
+                                new_sl = be_eval["new_sl_price"]
+                                meta["sl_price"] = new_sl
+                                target_sl = new_sl
+                                meta["is_breakeven_set"] = True
+                                ex_tag = meta.get("exchange", "BITUNIX_SIM")
+                                print(f"🛡️ [AUTO BREAK-EVEN (PAPER)] {sym}: ROI {roi_pct:+.2f}% >= +{bot_config.auto_breakeven_roi_percent}%. SL digeser ke Entry+Buffer: {new_sl:.6f} (Risk-Free!)")
+                                try:
+                                    be_msg = (
+                                        f"🛡️ **AUTO BREAK-EVEN ACTIVATED (RISK-FREE) 🛡️**\n\n"
+                                        f"• **Koin:** `[{ex_tag}] {sym}` ({pos_side})\n"
+                                        f"• **Floating ROI:** `{roi_pct:+.2f}%` (Trigger $\ge +{bot_config.auto_breakeven_roi_percent}%$)\n"
+                                        f"• **Entry Price:** `{e_price:.6f}`\n"
+                                        f"• **Stop Loss Baru:** `{new_sl:.6f}` (Entry + 0.1% Fee Buffer)\n\n"
+                                        f"✨ *Trade sekarang 100% Bebas Risiko (Anti Rungkad).* Target TP Statik tetap aktif!"
+                                    )
+                                    await safe_send_message(bot, TELEGRAM_ADMIN_CHAT_ID, be_msg)
+                                except Exception as e_be_msg:
+                                    print(f"[TELEGRAM] Gagal kirim notif Auto-BE: {e_be_msg}")
+
                         reached_tp = False
                         reached_sl = False
                         if pos_side in ("LONG", "BUY"):
@@ -1480,6 +1559,49 @@ async def profitable_position_monitor_loop():
 
                     initial_margin = abs(amount) * entry_price / bot_config.leverage if entry_price > 0 else 0
                     roi_percent = (profit / initial_margin * 100) if initial_margin > 0 else 0
+
+                    # Evaluasi Auto Break-Even Protection pada Real Position
+                    if bot_config.use_auto_breakeven and meta is not None and not meta.get("is_breakeven_set", False):
+                        be_eval = evaluate_auto_breakeven(
+                            current_roi_percent=roi_percent,
+                            entry_price=entry_price,
+                            side="LONG" if amount > 0 else "SHORT",
+                            be_activation_roi=bot_config.auto_breakeven_roi_percent,
+                            fee_buffer_percent=0.1,
+                            current_sl_price=float(meta.get("sl_price", 0.0)) if meta.get("sl_price") else None,
+                        )
+                        if be_eval.get("should_move_to_be"):
+                            new_sl = be_eval["new_sl_price"]
+                            close_side = "SELL" if amount > 0 else "BUY"
+                            try:
+                                update_res = await place_take_profit_stop_loss(
+                                    client,
+                                    symbol,
+                                    close_side,
+                                    abs(amount),
+                                    tp_price=float(meta.get("tp_price", 0.0)),
+                                    sl_price=new_sl,
+                                    use_trailing_stop=False,
+                                )
+                                if update_res.get("status") in ("success", "existing"):
+                                    meta["sl_price"] = new_sl
+                                    meta["is_breakeven_set"] = True
+                                    print(f"🛡️ [AUTO BREAK-EVEN (REAL)] {symbol}: ROI {roi_percent:+.2f}% >= +{bot_config.auto_breakeven_roi_percent}%. SL digeser ke Entry+Buffer: {new_sl:.6f} (Risk-Free!)")
+                                    try:
+                                        be_msg = (
+                                            f"🛡️ **AUTO BREAK-EVEN ACTIVATED (RISK-FREE) 🛡️**\n\n"
+                                            f"• **Koin:** `{symbol}` ({'LONG' if amount > 0 else 'SHORT'})\n"
+                                            f"• **Floating ROI:** `{roi_percent:+.2f}%` (Trigger $\ge +{bot_config.auto_breakeven_roi_percent}%$)\n"
+                                            f"• **Entry Price:** `{entry_price:.6f}`\n"
+                                            f"• **Stop Loss Baru:** `{new_sl:.6f}` (Entry + 0.1% Fee Buffer)\n\n"
+                                            f"✨ *Order SL di bursa telah diperbarui. Posisi ini 100% Bebas Risiko (Anti Rungkad).* Target TP Statik tetap aktif!"
+                                        )
+                                        await safe_send_message(bot, TELEGRAM_ADMIN_CHAT_ID, be_msg)
+                                    except Exception as e_be_notif:
+                                        print(f"[TELEGRAM] Gagal kirim notif Auto-BE Real: {e_be_notif}")
+                            except Exception as e_be_real:
+                                print(f"[AUTO BREAK-EVEN REAL ERROR] {symbol}: {e_be_real}")
+
                     reached_take_profit = roi_percent >= bot_config.tp_percent
                     reached_stop_loss = roi_percent <= -bot_config.sl_percent
                     if amount != 0 and (reached_take_profit or reached_stop_loss):
