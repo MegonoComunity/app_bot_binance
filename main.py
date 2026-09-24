@@ -384,14 +384,11 @@ async def scanner_loop():
                                 )
                                 print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: SESUAI TARGET TP (+{pnl_pct:.2f}%) | Setup: {v_trade['alasan']}")
                                 
-                                # Kirim ke channel Telegram (Admin & Error/Latihan channel) dengan flood rate limit guard
+                                # Kirim hasil simulasi ke channel Telegram (TELEGRAM_ERROR_CHAT_ID)
                                 try:
-                                    target_chats = {TELEGRAM_ADMIN_CHAT_ID}
-                                    if TELEGRAM_ERROR_CHAT_ID:
-                                        target_chats.add(TELEGRAM_ERROR_CHAT_ID)
-                                    for cid in target_chats:
-                                        if cid:
-                                            await safe_send_message(bot, cid, msg)
+                                    sim_channel = TELEGRAM_ERROR_CHAT_ID if TELEGRAM_ERROR_CHAT_ID else TELEGRAM_ADMIN_CHAT_ID
+                                    if sim_channel:
+                                        await safe_send_message(bot, sim_channel, msg)
                                 except Exception as e_res:
                                     print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
                                 
@@ -423,14 +420,11 @@ async def scanner_loop():
                                 )
                                 print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: GAGAL TARGET SL (-{pnl_pct:.2f}%) | Setup: {v_trade['alasan']}")
                                 
-                                # Kirim ke channel Telegram (Admin & Error/Latihan channel) dengan flood rate limit guard
+                                # Kirim hasil simulasi ke channel Telegram (TELEGRAM_ERROR_CHAT_ID)
                                 try:
-                                    target_chats = {TELEGRAM_ADMIN_CHAT_ID}
-                                    if TELEGRAM_ERROR_CHAT_ID:
-                                        target_chats.add(TELEGRAM_ERROR_CHAT_ID)
-                                    for cid in target_chats:
-                                        if cid:
-                                            await safe_send_message(bot, cid, msg)
+                                    sim_channel = TELEGRAM_ERROR_CHAT_ID if TELEGRAM_ERROR_CHAT_ID else TELEGRAM_ADMIN_CHAT_ID
+                                    if sim_channel:
+                                        await safe_send_message(bot, sim_channel, msg)
                                 except Exception as e_res:
                                     print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
                                 
@@ -520,6 +514,14 @@ async def scanner_loop():
                             atr_val, current_price, base_leverage=bot_config.leverage
                         )
                         
+                        # Deteksi Pre-Pump & Momentum Aktif
+                        pump_is_active = bool(pump_intel.get("is_alert", False) or pump_intel.get("score", 0) >= 60)
+                        syarat_pump_long = (
+                            pump_is_active
+                            and last_row["close"] > last_row["open"]
+                            and htf_trend in ["UPTREND", "SIDEWAYS"]
+                        )
+                        
                         # Skenario Tier-A Reversal & Breakout untuk LONG (High Win-Rate)
                         syarat_teknikal_long = (
                             (near_lower_bb and near_support and is_oversold and htf_trend in ["UPTREND", "SIDEWAYS"]) or
@@ -539,23 +541,34 @@ async def scanner_loop():
                         )
                         
                         # Skenario Tier-A Reversal & Breakdown untuk SHORT (High Win-Rate)
-                        syarat_teknikal_short = (
-                            (near_upper_bb and near_resistance and is_overbought and htf_trend in ["DOWNTREND", "SIDEWAYS"]) or
-                            (two_red_at_resistance and (near_upper_bb or is_overbought or near_resistance) and htf_trend in ["DOWNTREND", "SIDEWAYS"])
-                        )
-                        syarat_pola_short = (near_resistance or near_upper_bb) and pattern_detected and pattern_type == 'SHORT' and htf_trend in ["DOWNTREND", "SIDEWAYS"]
-                        syarat_breakout_short = (
-                            breakout["ready"]
-                            and breakout["score"] >= bot_config.breakout_min_score
-                            and last_row["close"] < last_row["open"]
-                            and htf_trend in ["DOWNTREND", "SIDEWAYS"]
-                        )
+                        # VETO: Larang open SHORT jika koin sedang aktif terdeteksi PUMP RADAR!
+                        if pump_is_active:
+                            syarat_teknikal_short = False
+                            syarat_pola_short = False
+                            syarat_breakout_short = False
+                        else:
+                            syarat_teknikal_short = (
+                                (near_upper_bb and near_resistance and is_overbought and htf_trend in ["DOWNTREND", "SIDEWAYS"]) or
+                                (two_red_at_resistance and (near_upper_bb or is_overbought or near_resistance) and htf_trend in ["DOWNTREND", "SIDEWAYS"])
+                            )
+                            syarat_pola_short = (near_resistance or near_upper_bb) and pattern_detected and pattern_type == 'SHORT' and htf_trend in ["DOWNTREND", "SIDEWAYS"]
+                            syarat_breakout_short = (
+                                breakout["ready"]
+                                and breakout["score"] >= bot_config.breakout_min_score
+                                and last_row["close"] < last_row["open"]
+                                and htf_trend in ["DOWNTREND", "SIDEWAYS"]
+                            )
                         
                         # Anti-Trap Filters
                         bull_trap_detected = is_bull_trap(last_row['open'], last_row['high'], last_row['low'], last_row['close']) or (pattern_type == 'CLOSE_LONG')
                         bear_trap_detected = is_bear_trap(last_row['open'], last_row['high'], last_row['low'], last_row['close']) or (pattern_type == 'CLOSE_SHORT')
                         
-                        if syarat_breakout_long:
+                        if syarat_pump_long:
+                            alasan_long = (
+                                f"🔥 Pre-Pump Radar ({pump_intel.get('tier', 'TIER_1')} - "
+                                f"Score: {pump_intel.get('score', 0)}/100, RVOL: {pump_intel.get('rvol', 1.0)}x, HTF: {htf_trend})"
+                            )
+                        elif syarat_breakout_long:
                             alasan_long = (
                                 f"Dormant breakout score {breakout['score']:.1f} "
                                 f"(vol {breakout['volume_spike']:.2f}x, HTF: {htf_trend})"
@@ -585,7 +598,7 @@ async def scanner_loop():
                             alasan_short = f"RSI Overbought ({rsi_value:.2f}) di Upper BB (HTF: {htf_trend})"
                         
                         # Evaluasi Keandalan dari Learner
-                        raw_long = (syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or syarat_breakout_long)
+                        raw_long = (syarat_pump_long or syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or syarat_breakout_long)
                         raw_short = (syarat_teknikal_short or syarat_pola_short or syarat_breakout_short)
 
                         reliable_long = is_pattern_reliable(alasan_long) if raw_long else True
@@ -674,6 +687,7 @@ async def scanner_loop():
                                 breakout_info=breakout,
                                 htf_trend=htf_trend,
                                 min_score_threshold=bot_config.min_confluence_score,
+                                pump_info=pump_intel,
                             )
                             confluence_score = confluence_res["score"]
                             confluence_approved = confluence_res["is_approved"]
@@ -978,6 +992,11 @@ async def scanner_loop():
                                 # Convert configured margin ROI into deterministic price movement.
                                 pm_tp = (bot_config.tp_percent / 100) / actual_leverage
                                 pm_sl = (bot_config.sl_percent / 100) / actual_leverage
+
+                                # Jika entry berasal dari PUMP RADAR: Pasang SL Ketat (maksimal 1.5% jarak harga) & TP Besar (+10% s.d +50%)
+                                if syarat_pump_long:
+                                    pm_sl = min(pm_sl, 0.015)  # SL Ketat Maksimal 1.5% jarak harga (Anti Rungkad saat pump berbalik)
+                                    pm_tp = max(pm_tp, 0.10)   # TP Target Ledakan Pump minimal +10%
                                 
                                 if trade_type == "LONG":
                                     tp_price = entry_price * (1 + pm_tp)
@@ -1069,7 +1088,8 @@ async def scanner_loop():
                                     'ai_evaluation': ai_eval_text,
                                     'method': alasan,
                                 }
-                                await send_trade_notification(bot, TELEGRAM_ADMIN_CHAT_ID, trade_data)
+                                trade_target_chat = (TELEGRAM_ERROR_CHAT_ID or TELEGRAM_ADMIN_CHAT_ID) if is_paper_trading else TELEGRAM_ADMIN_CHAT_ID
+                                await send_trade_notification(bot, trade_target_chat, trade_data)
                                 bot_state["active_trade_reasons"][symbol] = alasan
 
                                 # Catat ke Pattern Memory & PostgreSQL
@@ -1407,7 +1427,8 @@ async def profitable_position_monitor_loop():
                                         f"• **Stop Loss Baru:** `{new_sl:.6f}` (Entry + 0.1% Fee Buffer)\n\n"
                                         f"✨ *Trade sekarang 100% Bebas Risiko (Anti Rungkad).* Target TP Statik tetap aktif!"
                                     )
-                                    await safe_send_message(bot, TELEGRAM_ADMIN_CHAT_ID, be_msg)
+                                    paper_chat = TELEGRAM_ERROR_CHAT_ID if TELEGRAM_ERROR_CHAT_ID else TELEGRAM_ADMIN_CHAT_ID
+                                    await safe_send_message(bot, paper_chat, be_msg)
                                 except Exception as e_be_msg:
                                     print(f"[TELEGRAM] Gagal kirim notif Auto-BE: {e_be_msg}")
 
@@ -1506,7 +1527,8 @@ async def profitable_position_monitor_loop():
                             }
 
                             try:
-                                await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, o_data)
+                                paper_chat = TELEGRAM_ERROR_CHAT_ID if TELEGRAM_ERROR_CHAT_ID else TELEGRAM_ADMIN_CHAT_ID
+                                await send_order_filled_notification(bot, paper_chat, o_data)
                             except Exception as e_fill_notif:
                                 print(f"[TELEGRAM] Gagal kirim notifikasi closed order paper: {e_fill_notif}")
 

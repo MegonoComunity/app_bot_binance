@@ -1,25 +1,25 @@
-import sys
-if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding='utf-8')
-        sys.stderr.reconfigure(encoding='utf-8')
-    except Exception:
-        pass
-
 import asyncio
-from config.settings import bot_config
-from core.exchanges.factory import get_exchange_adapter
+import os
+import json
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from core.exchanges.bitunix_adapter import BitunixAdapter
 
 async def main():
-    bot_config.active_exchange = "BITUNIX"
-    client = get_exchange_adapter("BITUNIX", force_recreate=True)
-    await client.init()
-    top_coins = await client.get_top_futures_by_volume(5)
-    print("✅ Bitunix Top 5 Coins:", top_coins)
-    df = await client.fetch_ohlcv("BTCUSDT", "5m", 10)
-    print(f"✅ Bitunix BTCUSDT 5m: {len(df)} candles fetched successfully.")
-    print(df.tail(2))
-    await client.close()
+    api_key = os.getenv("BITUNIX_API_KEY", "")
+    api_secret = os.getenv("BITUNIX_API_SECRET", "")
+    adapter = BitunixAdapter(api_key, api_secret)
+    try:
+        res = await adapter._request("GET", "/api/v1/futures/market/trading_pairs")
+        pairs = res.get("data", [])
+        for sym in ["CRVUSDT", "DOGEUSDT", "BTCUSDT", "ETHFIUSDT"]:
+            p = next((x for x in pairs if x.get("symbol") == sym), None)
+            if p:
+                print(f"{sym}: basePrecision={p.get('basePrecision')}, quotePrecision={p.get('quotePrecision')}, minTradeVolume={p.get('minTradeVolume')}")
+    finally:
+        await adapter.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -17,6 +17,12 @@ from typing import Dict, Any, Optional
 import pandas as pd
 import numpy as np
 
+from indicators.market_structure import (
+    analyze_market_structure,
+    calculate_dynamic_swing_avwap,
+    detect_ema21_pullback,
+)
+
 
 def calculate_confluence_score(
     df_5m: pd.DataFrame,
@@ -35,28 +41,46 @@ def calculate_confluence_score(
     breakout_info: Optional[Dict[str, Any]] = None,
     htf_trend: str = "SIDEWAYS",
     min_score_threshold: float = 80.0,
+    pump_info: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Menghitung skor konfluensi teknikal dan memberikan rincian pilar poin.
+    Mendukung:
+    - Smart Money Concepts Market Structure (HH, HL, LH, LL)
+    - Dynamic Swing Anchored VWAP (AVWAP Fair Value)
+    - EMA 21 Dynamic Pullback Reversal
+    - PUMP RADAR momentum wave
     """
     breakdown = {}
     total_score = 0.0
     side = side.upper()
 
-    # ─── PILAR 1: Higher Timeframe (HTF) Alignment (Maks 25 Poin) ─────────────
+    is_pump_alert = bool(pump_info and pump_info.get("is_alert") and side == "LONG")
+    pump_score = float(pump_info.get("score", 0.0)) if pump_info else 0.0
+
+    # Evaluasi Struktur Pasar SMC (HH, HL, LH, LL) & EMA 21 Pullback
+    struct_info = analyze_market_structure(df_5m, window=2)
+    avwap_info = calculate_dynamic_swing_avwap(df_5m, window=2)
+    ema21_info = detect_ema21_pullback(df_5m)
+
+    market_regime = struct_info.get("regime", "SIDEWAYS")
+    is_ema21_pullback = ema21_info.get("is_pullback", False)
+    ema21_type = ema21_info.get("type")
+
+    # ─── PILAR 1: Higher Timeframe (HTF) Alignment & Market Structure (Maks 25 Poin) ─────────────
     htf_points = 0.0
     if side == "LONG":
-        if htf_trend == "UPTREND":
+        if htf_trend == "UPTREND" or market_regime == "UPTREND_HEALTHY":
             htf_points = 25.0
-        elif htf_trend == "SIDEWAYS":
-            htf_points = 12.5
+        elif htf_trend == "SIDEWAYS" or struct_info.get("is_compression"):
+            htf_points = 20.0 if is_pump_alert else 15.0
         else: # DOWNTREND
-            htf_points = 0.0
+            htf_points = 10.0 if is_pump_alert and pump_score >= 80 else 0.0
     else: # SHORT
-        if htf_trend == "DOWNTREND":
+        if htf_trend == "DOWNTREND" or market_regime == "DOWNTREND_HEALTHY":
             htf_points = 25.0
-        elif htf_trend == "SIDEWAYS":
-            htf_points = 12.5
+        elif htf_trend == "SIDEWAYS" or struct_info.get("is_compression"):
+            htf_points = 15.0
         else: # UPTREND
             htf_points = 0.0
 
@@ -64,52 +88,66 @@ def calculate_confluence_score(
         "points": htf_points,
         "max": 25.0,
         "trend": htf_trend,
-        "detail": f"HTF Trend {htf_trend} ({htf_points}/25)"
+        "market_structure": market_regime,
+        "structure_seq": struct_info.get("structure_sequence", []),
+        "detail": f"HTF: {htf_trend} | SMC Structure: {market_regime} ({htf_points}/25)"
     }
     total_score += htf_points
 
-    # ─── PILAR 2: Candlestick Pattern & S/R Validation (Maks 25 Poin) ─────────
+    # ─── PILAR 2: Candlestick Pattern, S/R, AVWAP & EMA21 Pullback (Maks 25 Poin) ─────────
     sr_pattern_points = 0.0
     has_valid_pattern = bool(pattern_name and pattern_name not in ("NONE", "None", ""))
     
     if side == "LONG":
-        if near_support and has_valid_pattern and pattern_type == "LONG":
+        if is_pump_alert:
+            sr_pattern_points = 25.0  # Pump breakout mengonfirmasi momentum kuat di atas struktur
+        elif is_ema21_pullback and ema21_type == "BULLISH_PULLBACK":
+            sr_pattern_points = 25.0  # Golden Pullback EMA21 pada tren impulsif
+        elif avwap_info.get("position_to_avwap") == "BULLISH_ABOVE_AVWAP" and near_support:
+            sr_pattern_points = 25.0  # Fair Value AVWAP Support
+        elif near_support and has_valid_pattern and pattern_type == "LONG":
             sr_pattern_points = 25.0  # Konfluensi sempurna: pola reversal persis di support
         elif near_support and near_lower_bb:
             sr_pattern_points = 20.0  # Support ganda: Lower BB + Price Support
-        elif near_support:
-            sr_pattern_points = 15.0
+        elif near_support or avwap_info.get("position_to_avwap") == "BULLISH_ABOVE_AVWAP":
+            sr_pattern_points = 16.0
         elif has_valid_pattern and pattern_type == "LONG":
             sr_pattern_points = 12.0
         elif near_lower_bb:
             sr_pattern_points = 8.0
     else: # SHORT
-        if near_resistance and has_valid_pattern and pattern_type == "SHORT":
+        if is_ema21_pullback and ema21_type == "BEARISH_PULLBACK":
+            sr_pattern_points = 25.0  # Golden Pullback EMA21 pada tren impulsif turun
+        elif avwap_info.get("position_to_avwap") == "BEARISH_BELOW_AVWAP" and near_resistance:
+            sr_pattern_points = 25.0  # Fair Value AVWAP Resistance
+        elif near_resistance and has_valid_pattern and pattern_type == "SHORT":
             sr_pattern_points = 25.0
         elif near_resistance and near_upper_bb:
             sr_pattern_points = 20.0
-        elif near_resistance:
-            sr_pattern_points = 15.0
+        elif near_resistance or avwap_info.get("position_to_avwap") == "BEARISH_BELOW_AVWAP":
+            sr_pattern_points = 16.0
         elif has_valid_pattern and pattern_type == "SHORT":
             sr_pattern_points = 12.0
         elif near_upper_bb:
             sr_pattern_points = 8.0
 
+    pattern_desc = pattern_name or ("PUMP_BREAKOUT" if is_pump_alert else ("EMA21_PULLBACK" if is_ema21_pullback else "NONE"))
     breakdown["sr_and_pattern"] = {
         "points": sr_pattern_points,
         "max": 25.0,
-        "pattern": pattern_name or "NONE",
-        "detail": f"Pattern: {pattern_name or 'None'}, S/R Touch: {'YES' if (near_support or near_resistance) else 'NO'}"
+        "pattern": pattern_desc,
+        "avwap_bias": avwap_info.get("position_to_avwap"),
+        "detail": f"Pattern: {pattern_desc}, S/R/AVWAP: {'YES' if (near_support or near_resistance or is_pump_alert or is_ema21_pullback) else 'NO'}"
     }
     total_score += sr_pattern_points
 
     # ─── PILAR 3: Volume Spike & Orderflow Pressure (Maks 20 Poin) ───────────
     vol_points = 0.0
-    if vol_ratio >= 4.0:
+    if is_pump_alert or vol_ratio >= 3.0:
         vol_points = 20.0
-    elif vol_ratio >= 2.5:
+    elif vol_ratio >= 2.0:
         vol_points = 16.0
-    elif vol_ratio >= 1.8:
+    elif vol_ratio >= 1.5:
         vol_points = 12.0
     elif vol_ratio >= 1.2:
         vol_points = 8.0
@@ -126,7 +164,9 @@ def calculate_confluence_score(
 
     # ─── PILAR 4: Volatility Squeeze & Pre-Pump Compression (Maks 15 Poin) ───
     squeeze_points = 0.0
-    if breakout_info and isinstance(breakout_info, dict):
+    if is_pump_alert:
+        squeeze_points = 15.0
+    elif breakout_info and isinstance(breakout_info, dict):
         b_score = float(breakout_info.get("score", 0.0))
         is_ready = bool(breakout_info.get("ready", False))
         is_sq = bool(breakout_info.get("squeeze", False))
@@ -141,14 +181,16 @@ def calculate_confluence_score(
     breakdown["volatility_squeeze"] = {
         "points": squeeze_points,
         "max": 15.0,
-        "detail": f"Squeeze Breakout Score: {breakout_info.get('score', 0) if breakout_info else 0:.1f}/100"
+        "detail": f"Squeeze Breakout Score: {100.0 if is_pump_alert else (breakout_info.get('score', 0) if breakout_info else 0):.1f}/100"
     }
     total_score += squeeze_points
 
     # ─── PILAR 5: Momentum & RSI Zone (Maks 15 Poin) ───────────────────────────
     rsi_points = 0.0
     if side == "LONG":
-        if is_oversold:
+        if is_pump_alert:
+            rsi_points = 15.0  # Momentum bullish aktif
+        elif is_oversold:
             rsi_points = 15.0  # RSI oversold < 35
         elif near_lower_bb:
             rsi_points = 10.0
@@ -165,7 +207,7 @@ def calculate_confluence_score(
     breakdown["rsi_momentum"] = {
         "points": rsi_points,
         "max": 15.0,
-        "detail": f"RSI Zone: {'Oversold' if is_oversold else ('Overbought' if is_overbought else 'Neutral')}"
+        "detail": f"RSI Zone: {'Pump Momentum' if is_pump_alert else ('Oversold' if is_oversold else ('Overbought' if is_overbought else 'Neutral'))}"
     }
     total_score += rsi_points
 

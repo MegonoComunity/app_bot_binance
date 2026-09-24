@@ -1,4 +1,5 @@
 from __future__ import annotations
+import math
 import hashlib
 import json
 import time
@@ -128,11 +129,13 @@ class BitunixAdapter(BaseExchange):
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as response:
                 if response.status == 403:
-                    raise RuntimeError("HTTP 403 Forbidden (Kemungkinan terblokir ISP/Internet Positif. Set BITUNIX_PROXY di .env atau gunakan VPN)")
+                    raise RuntimeError("HTTP 403 Forbidden (Kemungkinan terblokir ISP/Internet Positif. Aktifkan VPN / Cloudflare WARP 1.1.1.1 atau isi BITUNIX_PROXY di .env)")
                 try:
                     result = await response.json()
                 except Exception:
                     text_resp = await response.text()
+                    if "<html" in text_resp.lower() or "<!doctype" in text_resp.lower():
+                        raise RuntimeError("Respon terblokir ISP/Internet Positif (Menerima HTML bukan JSON API). Silakan aktifkan VPN / Cloudflare WARP 1.1.1.1 / Private DNS)")
                     raise RuntimeError(f"HTTP {response.status}: {text_resp[:120]}")
 
                 if response.status != 200 or (isinstance(result, dict) and result.get("code") not in (0, "0", 200, "200", None)):
@@ -207,8 +210,13 @@ class BitunixAdapter(BaseExchange):
             return symbols
         except Exception as e:
             log_error("BITUNIX_TOP_COINS", str(e))
-            print(f"[BITUNIX] Error fetching scan coins: {e}")
-            return []
+            print(f"[BITUNIX] Warning saat fetch scan coins: {e}")
+            fallback_coins = [
+                "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
+                "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "SUIUSDT",
+                "PEPEUSDT", "NEARUSDT", "APTUSDT", "OPUSDT", "ARBUSDT"
+            ]
+            return fallback_coins[:n] if n else fallback_coins
 
     async def fetch_ohlcv(self, symbol: str, interval: str, limit: int = 100) -> pd.DataFrame:
         """
@@ -292,8 +300,8 @@ class BitunixAdapter(BaseExchange):
             return df
         except Exception as e:
             err_msg = str(e).lower()
-            if "not allowed to trade" in err_msg or "suspended" in err_msg:
-                # Kontrak tidak diizinkan untuk trading, lewati tanpa log spam
+            if "not allowed to trade" in err_msg or "suspended" in err_msg or "terblokir isp" in err_msg or "html" in err_msg:
+                # Kontrak tidak diizinkan untuk trading atau terblokir ISP, lewati tanpa log spam
                 return pd.DataFrame()
             log_error(f"BITUNIX_OHLCV_{symbol}", str(e))
             print(f"[BITUNIX] Error fetching OHLCV for {symbol}: {e}")
@@ -443,20 +451,25 @@ class BitunixAdapter(BaseExchange):
         except Exception as e:
             log_error(f"BITUNIX_MARGIN_{symbol}", str(e))
 
-    async def get_symbol_precision(self, symbol: str) -> Dict[str, int]:
+    async def get_symbol_precision(self, symbol: str) -> Dict[str, Any]:
         if not self._exchange_info_cache:
             try:
                 res = await self._request("GET", "/api/v1/futures/market/trading_pairs")
                 pairs = res.get("data", []) if isinstance(res, dict) else []
                 for p in pairs:
                     sym = p.get("symbol", "").upper()
-                    qty_prec = int(p.get("qtyPrecision", p.get("amountPrecision", 3)))
-                    price_prec = int(p.get("pricePrecision", 4))
-                    self._exchange_info_cache[sym] = {"qty": qty_prec, "price": price_prec}
+                    qty_prec = int(p.get("basePrecision", p.get("qtyPrecision", p.get("amountPrecision", 3))))
+                    price_prec = int(p.get("quotePrecision", p.get("pricePrecision", 4)))
+                    min_qty = float(p.get("minTradeVolume", p.get("minTradeAmount", p.get("minQty", 0.0))) or 0.0)
+                    self._exchange_info_cache[sym] = {
+                        "qty": qty_prec,
+                        "price": price_prec,
+                        "min_qty": min_qty,
+                    }
             except Exception as e:
                 log_error("BITUNIX_PAIR_INFO", str(e))
 
-        return self._exchange_info_cache.get(symbol.upper(), {"qty": 3, "price": 4})
+        return self._exchange_info_cache.get(symbol.upper(), {"qty": 3, "price": 4, "min_qty": 0.0})
 
     async def place_order(
         self,
@@ -470,7 +483,23 @@ class BitunixAdapter(BaseExchange):
         position_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         precision = await self.get_symbol_precision(symbol)
-        formatted_qty = round(quantity, precision["qty"])
+        qty_prec = precision.get("qty", 3)
+        price_prec = precision.get("price", 4)
+        min_qty = float(precision.get("min_qty", 0.0) or 0.0)
+
+        order_qty = quantity
+        if min_qty > 0 and order_qty < min_qty:
+            order_qty = min_qty
+
+        if qty_prec == 0:
+            formatted_qty_str = str(int(math.floor(order_qty)))
+        else:
+            multiplier = 10 ** qty_prec
+            qty_floored = math.floor(order_qty * multiplier) / multiplier
+            formatted_qty_str = f"{qty_floored:.{qty_prec}f}"
+
+        if float(formatted_qty_str) <= 0:
+            raise ValueError(f"Quantity order untuk {symbol} terlalu kecil: {order_qty} (Formatted: {formatted_qty_str})")
 
         side_clean = side.upper().strip()
         if not trade_side:
@@ -478,18 +507,20 @@ class BitunixAdapter(BaseExchange):
 
         payload: Dict[str, Any] = {
             "symbol": symbol.upper(),
-            "qty": str(formatted_qty),
+            "qty": formatted_qty_str,
             "side": side_clean,
             "tradeSide": trade_side.upper(),
             "orderType": order_type.upper(),
-            "reduceOnly": reduce_only,
         }
 
         if position_id:
             payload["positionId"] = str(position_id)
 
+        if reduce_only:
+            payload["reduceOnly"] = True
+
         if order_type.upper() == "LIMIT" and price is not None:
-            payload["price"] = f"{price:.{precision['price']}f}"
+            payload["price"] = f"{price:.{price_prec}f}"
             payload["effect"] = "GTC"
 
         return await self._request("POST", "/api/v1/futures/trade/place_order", data=payload, auth_required=True)

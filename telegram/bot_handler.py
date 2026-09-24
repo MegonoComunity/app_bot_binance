@@ -668,10 +668,10 @@ async def status_handler(message: types.Message):
             mfe_str = f"+{mfe_val:.2f} USDT" if mfe_val > 0 else "0.00 USDT"
 
             is_bot = meta is not None and meta.get("is_bot_trade", False)
-            tag_manual = "" if is_bot else " _(Manual Trade)_"
+            tag_manual = "" if is_bot else " (Manual Trade)"
 
             p_info = (
-                f"🔸 **{symbol}**{tag_manual}\n"
+                f"🔸 **`{symbol}`**{tag_manual}\n"
                 f"   Margin: `{margin_target:.2f} USDT` | Lev: `{leverage}x`\n"
                 f"   PNL berjalan: `{pnl:+.2f} USDT ({pnl_percent:+.2f}%)` | MFE: `{mfe_str}`\n"
                 f"   Harga entry: `{entry_str}`\n"
@@ -712,7 +712,7 @@ async def status_handler(message: types.Message):
 
                 mfe_str = f"+{mfe_val:.2f} USDT" if mfe_val > 0 else "0.00 USDT"
                 p_info = (
-                    f"🔸 **[SIMULASI] {sym_meta}**\n"
+                    f"🔸 **🧪 SIMULASI: `{sym_meta}`**\n"
                     f"   Margin: `{m_usdt:.2f} USDT` | Lev: `{lev}x`\n"
                     f"   Floating PNL: `{pnl:+.2f} USDT ({pnl_percent:+.2f}%)` | MFE: `{mfe_str}`\n"
                     f"   Entry: `{entry:.6f}`\n"
@@ -751,15 +751,18 @@ async def status_handler(message: types.Message):
         if longs:
             text += "".join(longs)
         else:
-            text += "   _Tidak ada posisi_\n"
+            text += "   — Tidak ada posisi —\n"
             
         text += f"\n**🔴 POSISI SHORT ({len(shorts)}/{bot_config.max_open_positions})**\n"
         if shorts:
             text += "".join(shorts)
         else:
-            text += "   _Tidak ada posisi_\n"
+            text += "   — Tidak ada posisi —\n"
             
-        await wait_msg.edit_text(text, parse_mode="Markdown")
+        try:
+            await wait_msg.edit_text(text, parse_mode="Markdown")
+        except Exception:
+            await wait_msg.edit_text(text)
         
     except Exception as e:
         await wait_msg.edit_text(f"❌ Gagal mengambil profil: {e}")
