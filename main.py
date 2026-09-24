@@ -228,10 +228,19 @@ async def scanner_loop():
                     account_snapshot = await client.futures_account()
                     wallet_margin = float(account_snapshot.get("totalMarginBalance", 0.0))
 
+                curr_trade_mode = getattr(bot_config, "trading_mode", TRADING_MODE).upper()
+                is_paper_trading = curr_trade_mode in ("PAPER_TRADING", "SIMULATION", "VIRTUAL") or (bot_config.simulated_modal is not None and bot_config.simulated_modal > 0)
+                if bot_config.simulated_modal is not None and bot_config.simulated_modal > 0:
+                    effective_equity = bot_config.simulated_modal
+                elif is_paper_trading and wallet_margin <= 0:
+                    effective_equity = 100.0
+                else:
+                    effective_equity = wallet_margin
+
                 daily_stats = trade_summary()
                 if daily_loss_limit_reached(
                     daily_stats["daily_net_pnl"],
-                    wallet_margin,
+                    effective_equity,
                     bot_config.max_daily_loss_percent,
                 ):
                     bot_state["is_running"] = False
