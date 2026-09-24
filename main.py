@@ -11,11 +11,14 @@ import time
 import os
 import csv
 import random
+import logging
 from collections import defaultdict
 from datetime import datetime
 from typing import Union, Optional, List, Dict, Any
 from binance import AsyncClient
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from config.settings import (
     ACTIVE_EXCHANGE, BINANCE_API_KEY, BINANCE_API_SECRET, TRADING_MODE,

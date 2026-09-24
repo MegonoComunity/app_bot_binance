@@ -11,8 +11,8 @@ BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
 
 BITUNIX_API_KEY = os.getenv("BITUNIX_API_KEY", "")
 BITUNIX_API_SECRET = os.getenv("BITUNIX_API_SECRET", "")
-BITUNIX_BASE_URL = os.getenv("BITUNIX_BASE_URL", "https://fapi.bitunix.com")
-BITUNIX_PROXY = os.getenv("BITUNIX_PROXY", "") or os.getenv("HTTPS_PROXY", "") or os.getenv("HTTP_PROXY", "") or None
+BITUNIX_BASE_URL = os.getenv("BITUNIX_BASE_URL", "https://fapi.bitunix.com").strip()
+BITUNIX_PROXY = os.getenv("BITUNIX_PROXY", "").strip() or None
 
 # ─── PostgreSQL ───────────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv("DATABASE_URL", "")

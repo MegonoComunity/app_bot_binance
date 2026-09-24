@@ -4,12 +4,16 @@ import json
 import time
 import uuid
 import ssl
+import socket
+import logging
 from typing import List, Dict, Any, Optional
 import aiohttp
 import pandas as pd
 
 from core.exchanges.base import BaseExchange
 from core.logger import log_error
+
+logger = logging.getLogger(__name__)
 
 
 class BitunixAdapter(BaseExchange):
@@ -42,8 +46,15 @@ class BitunixAdapter(BaseExchange):
             # Hindari kegagalan SSL pada environment tertentu/proxy
             ssl_ctx.check_hostname = False
             ssl_ctx.verify_mode = ssl.CERT_NONE
-            connector = aiohttp.TCPConnector(ssl=ssl_ctx)
-            self._session = aiohttp.ClientSession(connector=connector)
+            connector = aiohttp.TCPConnector(
+                ssl=ssl_ctx,
+                family=socket.AF_INET,
+                happy_eyeballs_delay=None,
+            )
+            self._session = aiohttp.ClientSession(
+                connector=connector,
+                trust_env=bool(self._proxy),
+            )
 
     async def close(self) -> None:
         if self._session and not self._session.closed:
@@ -82,6 +93,7 @@ class BitunixAdapter(BaseExchange):
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
 
         # Urutkan query parameters sesuai standar Bitunix jika ada
