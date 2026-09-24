@@ -44,11 +44,12 @@ def get_exchange_adapter(
                 return _current_exchange_instance
 
     if target_exchange == "BITUNIX":
-        if not BITUNIX_API_KEY or not BITUNIX_API_SECRET:
-            raise ValueError("BITUNIX_API_KEY atau BITUNIX_API_SECRET belum diatur di file .env")
+        is_real = current_mode in ("REAL", "LIVE", "PRODUCTION")
+        if is_real and (not BITUNIX_API_KEY or "your_" in BITUNIX_API_KEY.lower()):
+            raise ValueError("BITUNIX_API_KEY atau BITUNIX_API_SECRET belum diatur di file .env untuk mode REAL.")
         _current_exchange_instance = BitunixAdapter(
-            api_key=BITUNIX_API_KEY,
-            api_secret=BITUNIX_API_SECRET,
+            api_key=BITUNIX_API_KEY or "dummy_key",
+            api_secret=BITUNIX_API_SECRET or "dummy_secret",
             base_url=BITUNIX_BASE_URL,
             proxy=BITUNIX_PROXY,
         )

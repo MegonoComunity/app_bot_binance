@@ -353,7 +353,13 @@ class BitunixAdapter(BaseExchange):
             }
         except Exception as e:
             log_error("BITUNIX_BALANCE", str(e))
-            raise
+            return {
+                "total_wallet_balance": 0.0,
+                "available_balance": 0.0,
+                "unrealized_pnl": 0.0,
+                "margin_locked": 0.0,
+                "frozen": 0.0,
+            }
 
     async def get_open_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """
@@ -407,7 +413,7 @@ class BitunixAdapter(BaseExchange):
             return active_positions
         except Exception as e:
             log_error("BITUNIX_POSITIONS", str(e))
-            raise
+            return []
 
     async def set_leverage(self, symbol: str, leverage: int) -> int:
         for lev in range(leverage, 0, -1):
