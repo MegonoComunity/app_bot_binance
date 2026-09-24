@@ -848,8 +848,15 @@ async def scanner_loop():
                                         break
 
                                 # Cek juga di antrean active_trade_meta jika paper trading
-                                if not is_position_open and symbol in bot_state.get("active_trade_meta", {}):
-                                    is_position_open = True
+                                active_meta_for_sym = bot_state.get("active_trade_meta", {}).get(symbol)
+                                if not is_position_open and active_meta_for_sym:
+                                    if active_meta_for_sym.get("is_paper") or is_paper_trading:
+                                        is_position_open = True
+                                    else:
+                                        # Jika trade real tapi sudah tidak ada di list positions exchange, bersihkan stale entry
+                                        bot_state.get("active_trade_meta", {}).pop(symbol, None)
+                                        bot_state.get("active_trade_reasons", {}).pop(symbol, None)
+                                        bot_state.setdefault("protection_recovery_suppressed", set()).discard(symbol)
 
                                 if is_position_open:
                                     print(f"⏩ Lewati {symbol}: Sudah ada posisi terbuka.")
@@ -921,13 +928,19 @@ async def scanner_loop():
                                         else:
                                             count_short += 1
 
-                                for s_name, s_meta in active_meta.items():
+                                for s_name, s_meta in list(active_meta.items()):
                                     if s_name not in active_real_syms:
-                                        s_side = s_meta.get("side", "").upper()
-                                        if s_side == "LONG":
-                                            count_long += 1
-                                        elif s_side == "SHORT":
-                                            count_short += 1
+                                        if s_meta.get("is_paper") or is_paper_trading:
+                                            s_side = s_meta.get("side", "").upper()
+                                            if s_side == "LONG":
+                                                count_long += 1
+                                            elif s_side == "SHORT":
+                                                count_short += 1
+                                        else:
+                                            # Posisi real stale: bersihkan
+                                            bot_state.get("active_trade_meta", {}).pop(s_name, None)
+                                            bot_state.get("active_trade_reasons", {}).pop(s_name, None)
+                                            bot_state.setdefault("protection_recovery_suppressed", set()).discard(s_name)
 
                                 MAX_POSITIONS_PER_SIDE = getattr(bot_config, "max_positions_per_side", getattr(bot_config, "max_open_positions", 2))
                                 MAX_TOTAL_POSITIONS = getattr(bot_config, "max_open_positions", MAX_POSITIONS_PER_SIDE * 2)
@@ -1058,10 +1071,9 @@ async def scanner_loop():
                                 pm_tp = (bot_config.tp_percent / 100) / actual_leverage
                                 pm_sl = (bot_config.sl_percent / 100) / actual_leverage
 
-                                # Jika entry berasal dari PUMP RADAR: Pasang SL Ketat (maksimal 1.5% jarak harga) & TP Besar (+10% s.d +50%)
+                                # Jika entry berasal dari PUMP RADAR: Pasang SL Ketat (maksimal 1.5% jarak harga)
                                 if syarat_pump_long:
                                     pm_sl = min(pm_sl, 0.015)  # SL Ketat Maksimal 1.5% jarak harga (Anti Rungkad saat pump berbalik)
-                                    pm_tp = max(pm_tp, 0.10)   # TP Target Ledakan Pump minimal +10%
                                 
                                 if trade_type == "LONG":
                                     tp_price = entry_price * (1 + pm_tp)
@@ -1642,6 +1654,134 @@ async def profitable_position_monitor_loop():
                         for p in account_info.get("positions", [])
                         if float(p.get("positionAmt", 0)) != 0
                     ]
+
+                # ─── 2.A Rekonsiliasi Real Position: Deteksi SL/TP/Exit di Exchange ───
+                current_open_real_symbols = {
+                    p.get("symbol") for p in positions
+                    if float(p.get("position_amt", p.get("positionAmt", 0))) != 0 and p.get("symbol")
+                }
+
+                active_meta_all = bot_state.setdefault("active_trade_meta", {})
+                stale_real_trades = [
+                    (sym, meta) for sym, meta in list(active_meta_all.items())
+                    if not meta.get("is_paper") and meta.get("is_bot_trade") and sym not in current_open_real_symbols
+                ]
+
+                for sym, meta in stale_real_trades:
+                    try:
+                        curr_exit_price = await client.get_symbol_price(sym)
+                        e_price = float(meta.get("entry_price", curr_exit_price or 0.0))
+                        if curr_exit_price <= 0:
+                            curr_exit_price = e_price
+
+                        pos_side = meta.get("side", "LONG").upper()
+                        target_tp = float(meta.get("tp_price", 0.0))
+                        target_sl = float(meta.get("sl_price", 0.0))
+                        qty = float(meta.get("quantity", 0.0))
+                        m_usdt = float(meta.get("margin_usdt", 0.0))
+                        lev = int(meta.get("leverage", bot_config.leverage))
+
+                        if pos_side in ("LONG", "BUY"):
+                            realized_pnl = (curr_exit_price - e_price) * qty if qty > 0 else (((curr_exit_price - e_price) / e_price) * m_usdt * lev if e_price > 0 else 0.0)
+                        else:
+                            realized_pnl = (e_price - curr_exit_price) * qty if qty > 0 else (((e_price - curr_exit_price) / e_price) * m_usdt * lev if e_price > 0 else 0.0)
+
+                        is_win = realized_pnl > 0
+
+                        # Tentukan tipe exit (TP / SL / Manual)
+                        if target_tp > 0 and ((pos_side in ("LONG", "BUY") and curr_exit_price >= target_tp * 0.998) or (pos_side not in ("LONG", "BUY") and curr_exit_price <= target_tp * 1.002)):
+                            order_type = "EXCHANGE_TAKE_PROFIT"
+                        elif target_sl > 0 and ((pos_side in ("LONG", "BUY") and curr_exit_price <= target_sl * 1.002) or (pos_side not in ("LONG", "BUY") and curr_exit_price >= target_sl * 0.998)):
+                            order_type = "EXCHANGE_STOP_LOSS"
+                        elif is_win:
+                            order_type = "EXCHANGE_TAKE_PROFIT"
+                        else:
+                            order_type = "EXCHANGE_STOP_LOSS"
+
+                        duration_minutes = None
+                        if meta.get("entry_time"):
+                            duration_minutes = round((datetime.now() - meta["entry_time"]).total_seconds() / 60, 1)
+
+                        mfe_val = float(meta.get("mfe", realized_pnl) or realized_pnl)
+                        mae_val = float(meta.get("mae", 0.0) or 0.0)
+                        if realized_pnl > 0:
+                            mfe_val = max(mfe_val, realized_pnl)
+                        if realized_pnl < 0:
+                            mae_val = min(mae_val, realized_pnl)
+
+                        mfe_pct = (mfe_val / m_usdt * 100) if m_usdt > 0 else 0.0
+                        mae_pct = (abs(mae_val) / m_usdt * 100) if m_usdt > 0 else 0.0
+                        mfe_str = f"+{mfe_pct:.2f}%" if m_usdt > 0 else f"{mfe_val:+.4f}"
+                        mae_str = f"-{mae_pct:.2f}%" if m_usdt > 0 else f"{mae_val:+.4f}"
+
+                        pattern_entry_id = meta.get("pattern_entry_id")
+                        if pattern_entry_id:
+                            record_pattern_result(pattern_entry_id, is_win, realized_pnl)
+
+                        t_alasan = bot_state.get("active_trade_reasons", {}).pop(sym, meta.get("alasan", "Real Trade"))
+                        if t_alasan:
+                            record_trade_result(t_alasan, is_win)
+
+                        ex_tag = meta.get("exchange", getattr(bot_config, 'exchange', 'BITUNIX')).upper()
+
+                        record_closed_trade({
+                            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "symbol": sym,
+                            "side": pos_side,
+                            "entry_price": e_price,
+                            "exit_price": curr_exit_price,
+                            "realized_pnl": realized_pnl,
+                            "commission": 0.0,
+                            "funding_fee": 0.0,
+                            "net_pnl": realized_pnl,
+                            "margin_usdt": m_usdt,
+                            "leverage": lev,
+                            "mfe": mfe_val,
+                            "mae": mae_val,
+                            "duration_minutes": duration_minutes,
+                            "order_type": order_type,
+                            "exchange": ex_tag,
+                        })
+
+                        order_data = {
+                            "symbol": f"[{ex_tag}] {sym}" if not sym.startswith("[") else sym,
+                            "order_type": order_type,
+                            "price": f"{curr_exit_price:.6f}",
+                            "entry_price": meta.get("entry_price", e_price),
+                            "quantity": qty,
+                            "realized_pnl": realized_pnl,
+                            "commission": 0.0,
+                            "funding_fee": 0.0,
+                            "net_pnl": realized_pnl,
+                            "mfe": mfe_str,
+                            "mae": mae_str,
+                            "duration": f"{duration_minutes:.1f} menit" if duration_minutes is not None else "N/A",
+                            "duration_minutes": duration_minutes,
+                            "fingerprint": meta.get("fingerprint", t_alasan),
+                            "win_rate": 0.0,
+                            "total_trades": 0,
+                            "wins": 0,
+                            "losses": 0,
+                            "alasan_masuk": f"{t_alasan} (Closed on Exchange: {order_type})",
+                            "ai_eval_summary": meta.get("ai_eval_summary", ""),
+                        }
+
+                        try:
+                            await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                            if TELEGRAM_ERROR_CHAT_ID and TELEGRAM_ERROR_CHAT_ID != TELEGRAM_ADMIN_CHAT_ID:
+                                await send_order_filled_notification(bot, TELEGRAM_ERROR_CHAT_ID, order_data)
+                        except Exception as e_fill_notif:
+                            print(f"[TELEGRAM] Gagal kirim notifikasi closed real trade {sym}: {e_fill_notif}")
+
+                        # Pop dari memory
+                        bot_state.get("active_trade_meta", {}).pop(sym, None)
+                        bot_state.get("active_trade_reasons", {}).pop(sym, None)
+                        bot_state.setdefault("protection_recovery_suppressed", set()).discard(sym)
+
+                        add_scanner_log("ORDER", sym, f"🛑 Posisi Real {sym} ({pos_side}) selesai @ {curr_exit_price:.6f} | Net: {realized_pnl:+.4f} USDT ({order_type})")
+                        print(f"🛑 [REAL POSITION CLOSED DETECTED] {sym} ({pos_side}) exit @ {curr_exit_price:.6f} | PnL: {realized_pnl:+.4f} USDT | Type: {order_type}")
+                    except Exception as e_recon:
+                        print(f"[RECONCILIATION ERROR] {sym}: {e_recon}")
 
                 for position in positions:
                     amount = float(position.get("position_amt", position.get("positionAmt", 0)))

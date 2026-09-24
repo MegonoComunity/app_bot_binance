@@ -537,22 +537,31 @@ class BitunixAdapter(BaseExchange):
         Memasang Take Profit dan/atau Stop Loss untuk posisi aktif menggunakan endpoint resmi Bitunix:
         POST /api/v1/futures/tpsl/position/place_order
         """
-        positions = await self.get_open_positions(symbol=symbol)
-        pos = next((p for p in positions if p.get("symbol") == symbol.upper()), None)
-        pos_id = pos.get("position_id") if pos else None
-
         precision = await self.get_symbol_precision(symbol)
         results: Dict[str, Any] = {}
+
+        pos = None
+        for attempt in range(4):
+            positions = await self.get_open_positions(symbol=symbol)
+            pos = next((p for p in positions if p.get("symbol") == symbol.upper()), None)
+            if not pos:
+                all_positions = await self.get_open_positions()
+                pos = next((p for p in all_positions if p.get("symbol") == symbol.upper()), None)
+            if pos and pos.get("position_id"):
+                break
+            await asyncio.sleep(0.35)
+
+        pos_id = pos.get("position_id") if pos else None
 
         if pos_id:
             tpsl_payload: Dict[str, Any] = {
                 "symbol": symbol.upper(),
                 "positionId": str(pos_id),
             }
-            if tp_price is not None:
+            if tp_price is not None and tp_price > 0:
                 tpsl_payload["tpPrice"] = f"{tp_price:.{precision['price']}f}"
                 tpsl_payload["tpStopType"] = "MARK_PRICE"
-            if sl_price is not None:
+            if sl_price is not None and sl_price > 0:
                 tpsl_payload["slPrice"] = f"{sl_price:.{precision['price']}f}"
                 tpsl_payload["slStopType"] = "MARK_PRICE"
 
