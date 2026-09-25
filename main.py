@@ -101,7 +101,7 @@ def calculate_atr(df: pd.DataFrame, period: int = 14) -> float:
 try:
     from database.connection import get_pool, close_pool, is_db_available
     from database.migrations import create_tables
-    from database.trade_repo import migrate_from_json as migrate_trades
+    from database.trade_repo import migrate_from_json as migrate_trades, sync_exchange_trades_to_db
     from database.pattern_repo import migrate_from_json as migrate_patterns
     from database.ohlcv_repo import upsert_candles
     from core.ohlcv_scraper import run_initial_scrape, run_short_term_scraper, run_long_term_scraper
@@ -381,32 +381,90 @@ async def scanner_loop():
                         # --- MONITORING PAPER TRADING (VIRTUAL TRADES) ---
                         if symbol in virtual_trades:
                             v_trade = virtual_trades[symbol]
+                            entry_p = float(v_trade.get('entry_price', current_price) or current_price)
+                            v_lev = int(v_trade.get('leverage', 10) or 10)
+                            v_side = str(v_trade.get('tipe', 'LONG')).upper()
+                            
+                            # Hitung durasi hold dalam jam
+                            v_time_raw = v_trade.get('time')
+                            try:
+                                v_entry_dt = datetime.strptime(v_time_raw, "%Y-%m-%d %H:%M:%S") if isinstance(v_time_raw, str) else datetime.now()
+                            except Exception:
+                                v_entry_dt = datetime.now()
+                            hold_h = max((datetime.now() - v_entry_dt).total_seconds() / 3600.0, 0.0)
+                            
+                            # Hitung Perubahan Harga % & Floating ROE %
+                            if entry_p > 0:
+                                price_pnl_pct = ((current_price - entry_p) / entry_p * 100.0) if v_side == "LONG" else ((entry_p - current_price) / entry_p * 100.0)
+                            else:
+                                price_pnl_pct = 0.0
+                            roi_pct = price_pnl_pct * v_lev
+                            
+                            # 1. Evaluasi Auto Break-Even (Risk-Free Trade) jika ROI >= +25%
+                            if getattr(bot_config, "use_auto_breakeven", True) and not v_trade.get("is_breakeven_set", False):
+                                be_threshold = getattr(bot_config, "auto_breakeven_roi_percent", 25.0)
+                                be_eval = evaluate_auto_breakeven(
+                                    current_roi_percent=roi_pct,
+                                    entry_price=entry_p,
+                                    side=v_side,
+                                    be_activation_roi=be_threshold,
+                                    fee_buffer_percent=0.1,
+                                    current_sl_price=v_trade.get('sl_price'),
+                                )
+                                if be_eval.get("should_move_to_be"):
+                                    new_be_sl = be_eval["new_sl_price"]
+                                    v_trade['sl_price'] = new_be_sl
+                                    v_trade['is_breakeven_set'] = True
+                                    print(f"🛡️ [AUTO BREAK-EVEN (VIRTUAL)] {symbol}: ROI {roi_pct:+.2f}% >= +{be_threshold}%. SL digeser ke Entry: {new_be_sl:.6f} (Risk-Free!)")
+
+                            # 2. Cek Eksekusi TP / SL
                             is_tp = False
                             is_sl = False
+                            target_tp_v = float(v_trade.get('tp_price', 0.0))
+                            target_sl_v = float(v_trade.get('sl_price', 0.0))
+
+                            if v_side == 'LONG':
+                                if target_tp_v > 0 and current_price >= target_tp_v:
+                                    is_tp = True
+                                elif target_sl_v > 0 and current_price <= target_sl_v:
+                                    is_sl = True
+                            elif v_side == 'SHORT':
+                                if target_tp_v > 0 and current_price <= target_tp_v:
+                                    is_tp = True
+                                elif target_sl_v > 0 and current_price >= target_sl_v:
+                                    is_sl = True
+                                
+                            # 3. Evaluasi Time-Based Exit (Cut Loss > 2 jam & Profit Lock 4-8 jam)
+                            should_time_close, time_exit_type, time_reason = evaluate_time_based_exit(
+                                hold_duration_hours=hold_h,
+                                roi_percent=roi_pct,
+                                loss_limit_percent=-5.0,
+                                loss_time_limit_hours=2.0,
+                                profit_target_percent=15.0,
+                                profit_time_limit_hours=4.0,
+                                max_hold_hours=8.0,
+                            )
                             
-                            if v_trade['tipe'] == 'LONG':
-                                if current_price >= v_trade['tp_price']: is_tp = True
-                                elif current_price <= v_trade['sl_price']: is_sl = True
-                            elif v_trade['tipe'] == 'SHORT':
-                                if current_price <= v_trade['tp_price']: is_tp = True
-                                elif current_price >= v_trade['sl_price']: is_sl = True
+                            if is_tp or is_sl or should_time_close:
+                                is_win = is_tp or (should_time_close and roi_pct > 0)
+                                est_margin = float(getattr(bot_config, "margin_usdt", 1.0) or 1.0)
+                                est_pnl = est_margin * (roi_pct / 100.0)
                                 
-                            if is_tp:
-                                pnl_pct = abs((current_price - v_trade['entry_price']) / v_trade['entry_price'] * 100) if v_trade.get('entry_price', 0) > 0 else 0.0
-                                est_margin = 50.0
-                                est_pnl = est_margin * (pnl_pct / 100)
-
+                                exit_label = "SESUAI TARGET (TP)" if is_tp else ("STOP LOSS (SL)" if is_sl else time_exit_type)
+                                icon = "🎯" if is_win else "🛑"
+                                status_text = "WIN ✅" if is_win else "LOSS ❌"
+                                
                                 msg = (
-                                    f"🎯 **HASIL LATIHAN SIMULASI: SESUAI TARGET (TP) ✅**\n"
-                                    f"• **Koin:** `{symbol}` ({v_trade['tipe']})\n"
-                                    f"• **Entry:** `{v_trade['entry_price']:.6f}` ➔ **Exit TP:** `{current_price:.6f}` (+{pnl_pct:.2f}%)\n"
-                                    f"• **Status:** Sesuai Target TP (Analisa Valid)\n"
-                                    f"• **Setup:** {v_trade['alasan']}\n"
-                                    f"📚 *Catatan: Hasil latihan simulasi hanya untuk pembelajaran AI & pola (tidak memotong/menambah saldo wallet).* "
+                                    f"{icon} **HASIL LATIHAN SIMULASI: {exit_label} {status_text}**\n"
+                                    f"• **Koin:** `{symbol}` ({v_side} {v_lev}x)\n"
+                                    f"• **Entry:** `{entry_p:.6f}` ➔ **Exit:** `{current_price:.6f}` (Harga: `{price_pnl_pct:+.2f}%`, ROE: `{roi_pct:+.2f}%`)\n"
+                                    f"• **Estimasi PnL (Margin ${est_margin:.1f}):** `{est_pnl:+.2f} USDT` (Hold: {hold_h:.1f} jam)\n"
+                                    f"• **Setup:** {v_trade.get('alasan')}\n"
+                                    f"📚 *Catatan: Hasil simulasi latihan untuk pembelajaran AI & evaluasi akurasi pola candlestick.*"
                                 )
-                                print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: SESUAI TARGET TP (+{pnl_pct:.2f}%) | Setup: {v_trade['alasan']}")
+                                print(f"[HASIL LATIHAN] {symbol} {v_side}: {exit_label} ({roi_pct:+.2f}% ROE) | Setup: {v_trade.get('alasan')}")
                                 
-                                # Kirim hasil simulasi ke channel Telegram (TELEGRAM_ERROR_CHAT_ID)
+                                # Kirim hasil simulasi ke channel Telegram
                                 try:
                                     sim_channel = TELEGRAM_ERROR_CHAT_ID if TELEGRAM_ERROR_CHAT_ID else TELEGRAM_ADMIN_CHAT_ID
                                     if sim_channel:
@@ -414,53 +472,25 @@ async def scanner_loop():
                                 except Exception as e_res:
                                     print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
                                 
-                                record_trade_result(v_trade['alasan'], is_profit=True)
+                                record_trade_result(v_trade.get('alasan', ''), is_profit=is_win)
                                 
                                 # Rekam hasil ke Pattern Memory AI & PostgreSQL Database
                                 p_entry_id = v_trade.get("pattern_entry_id")
                                 if p_entry_id:
-                                    record_pattern_result(p_entry_id, is_win=True, pnl=pnl_pct)
+                                    record_pattern_result(p_entry_id, is_win=is_win, pnl=roi_pct)
                                 
-                                # Simpan ke CSV (SUCCESS)
+                                # Simpan ke CSV
                                 with open("virtual_success_log.csv", "a", newline="", encoding="utf-8") as f:
                                     writer = csv.writer(f)
-                                    writer.writerow([v_trade['time'], symbol, v_trade['tipe'], v_trade['entry_price'], current_price, v_trade['alasan'], "SUCCESS (SESUAI TARGET)"])
-                                    
-                                del virtual_trades[symbol]
-                            elif is_sl:
-                                pnl_pct = abs((current_price - v_trade['entry_price']) / v_trade['entry_price'] * 100) if v_trade.get('entry_price', 0) > 0 else 0.0
-                                est_margin = 50.0
-                                est_pnl = -est_margin * (pnl_pct / 100)
-
-                                msg = (
-                                    f"🛑 **HASIL LATIHAN SIMULASI: GAGAL TARGET (SL) ❌**\n"
-                                    f"• **Koin:** `{symbol}` ({v_trade['tipe']})\n"
-                                    f"• **Entry:** `{v_trade['entry_price']:.6f}` ➔ **Exit SL:** `{current_price:.6f}` (-{pnl_pct:.2f}%)\n"
-                                    f"• **Status:** Gagal Target / Kena SL (Perlu Evaluasi)\n"
-                                    f"• **Setup:** {v_trade['alasan']}\n"
-                                    f"📚 *Catatan: Hasil latihan simulasi hanya untuk pembelajaran AI & pola (tidak memotong/menambah saldo wallet).* "
-                                )
-                                print(f"[HASIL LATIHAN] {symbol} {v_trade['tipe']}: GAGAL TARGET SL (-{pnl_pct:.2f}%) | Setup: {v_trade['alasan']}")
-                                
-                                # Kirim hasil simulasi ke channel Telegram (TELEGRAM_ERROR_CHAT_ID)
-                                try:
-                                    sim_channel = TELEGRAM_ERROR_CHAT_ID if TELEGRAM_ERROR_CHAT_ID else TELEGRAM_ADMIN_CHAT_ID
-                                    if sim_channel:
-                                        await safe_send_message(bot, sim_channel, msg)
-                                except Exception as e_res:
-                                    print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
-                                
-                                record_trade_result(v_trade['alasan'], is_profit=False)
-                                
-                                # Rekam hasil ke Pattern Memory AI & PostgreSQL Database
-                                p_entry_id = v_trade.get("pattern_entry_id")
-                                if p_entry_id:
-                                    record_pattern_result(p_entry_id, is_win=False, pnl=-pnl_pct)
-                                
-                                # Simpan ke CSV (FAILED)
-                                with open("virtual_success_log.csv", "a", newline="", encoding="utf-8") as f:
-                                    writer = csv.writer(f)
-                                    writer.writerow([v_trade['time'], symbol, v_trade['tipe'], v_trade['entry_price'], current_price, v_trade['alasan'], "FAILED (GAGAL TARGET)"])
+                                    writer.writerow([
+                                        v_trade.get('time'),
+                                        symbol,
+                                        v_side,
+                                        entry_p,
+                                        current_price,
+                                        v_trade.get('alasan'),
+                                        f"{exit_label} ({status_text}) | PnL: {roi_pct:+.2f}%"
+                                    ])
                                     
                                 del virtual_trades[symbol]
                         # -------------------------------------------------
@@ -572,8 +602,14 @@ async def scanner_loop():
                         )
                         
                         # Skenario Tier-A Reversal & Breakdown untuk SHORT (High Win-Rate)
-                        # VETO: Larang open SHORT jika koin sedang aktif terdeteksi PUMP RADAR!
-                        if pump_is_active:
+                        # VETO: Larang keras open SHORT jika koin sedang mengalami momentum Bullish, Pre-Pump, atau Volume Lonjakan!
+                        is_bullish_momentum = (
+                            pump_is_active
+                            or vol_ratio >= 1.5
+                            or (last_row["close"] > last_row["open"] and last_row.get('RSI', 50) > 55)
+                            or htf_trend == "UPTREND"
+                        )
+                        if is_bullish_momentum:
                             syarat_teknikal_short = False
                             syarat_pola_short = False
                             syarat_breakout_short = False
@@ -642,6 +678,10 @@ async def scanner_loop():
                         
                         trigger_long = raw_long and not effective_bull_trap and reliable_long
                         trigger_short = raw_short and not bear_trap_detected and reliable_short
+                        
+                        # Prioritaskan arah LONG jika momentum atau konfluensi bullish aktif
+                        if trigger_long and trigger_short:
+                            trigger_short = False
                         
                         # Jika sinyal teknikal/pola terdeteksi tetapi ditolak oleh filter Learner/Trap/Blacklist,
                         # simpan sebagai LATIHAN SIMULASI di background memory agar AI tetap belajar dan menguji win rate pola!
@@ -1538,9 +1578,10 @@ async def profitable_position_monitor_loop():
                             hold_duration_hours=hold_hours,
                             roi_percent=roi_pct,
                             loss_limit_percent=-5.0,
-                            loss_time_limit_hours=4.0,
-                            profit_target_percent=20.0,
-                            profit_time_limit_hours=8.0,
+                            loss_time_limit_hours=2.0,
+                            profit_target_percent=15.0,
+                            profit_time_limit_hours=4.0,
+                            max_hold_hours=8.0,
                         )
 
                         if reached_tp or reached_sl or should_close_time:
@@ -1783,6 +1824,62 @@ async def profitable_position_monitor_loop():
                     except Exception as e_recon:
                         print(f"[RECONCILIATION ERROR] {sym}: {e_recon}")
 
+                # ─── 2.B Sinkronisasi Otomatis Closed Trades langsung dari Exchange API ───
+                if isinstance(client, BaseExchange) and hasattr(client, "get_history_positions"):
+                    try:
+                        synced_trades = await sync_exchange_trades_to_db(client, limit=20)
+                        for st in synced_trades:
+                            st_sym = st.get("symbol", "")
+                            st_side = st.get("side", "LONG")
+                            st_pnl = float(st.get("net_pnl", st.get("realized_pnl", 0.0)))
+                            st_entry = float(st.get("entry_price", 0.0))
+                            st_exit = float(st.get("exit_price", 0.0))
+                            st_res = st.get("result", "WIN" if st_pnl > 0 else "LOSS")
+                            st_dur = float(st.get("duration_minutes", 0.0) or 0.0)
+                            st_ex = st.get("exchange", "BITUNIX_REAL")
+                            st_m = float(st.get("margin_usdt", 0.0))
+                            st_lev = int(st.get("leverage", 1) or 1)
+
+                            add_scanner_log("ORDER", st_sym, f"🛑 [REAL {st_ex}] {st_sym} ({st_side}) Closed @ {st_exit} | Net: {st_pnl:+.4f} USDT ({st_res})")
+                            print(f"🛑 [REAL TRADE SYNCED] {st_sym} ({st_side}) exit @ {st_exit} | Net PnL: {st_pnl:+.4f} USDT [{st_res}]")
+
+                            # Bersihkan juga dari memory jika ada
+                            bot_state.get("active_trade_meta", {}).pop(st_sym, None)
+                            bot_state.get("active_trade_reasons", {}).pop(st_sym, None)
+
+                            # Kirim notifikasi Telegram penutupan real trade jika bot aktif
+                            if bot and TELEGRAM_ADMIN_CHAT_ID:
+                                order_data = {
+                                    "symbol": f"[{st_ex}] {st_sym}",
+                                    "order_type": "EXCHANGE_TP_SL",
+                                    "price": f"{st_exit:.6f}",
+                                    "entry_price": st_entry,
+                                    "quantity": float(st.get("qty", 0.0)),
+                                    "realized_pnl": st_pnl,
+                                    "commission": float(st.get("commission", 0.0)),
+                                    "funding_fee": float(st.get("funding_fee", 0.0)),
+                                    "net_pnl": st_pnl,
+                                    "mfe": f"+{st_pnl:.4f}" if st_pnl > 0 else "0.00",
+                                    "mae": f"{st_pnl:.4f}" if st_pnl < 0 else "0.00",
+                                    "duration": f"{st_dur:.1f} menit" if st_dur > 0 else "N/A",
+                                    "duration_minutes": st_dur,
+                                    "fingerprint": f"REAL_{st_ex}_{st_sym}",
+                                    "win_rate": 0.0,
+                                    "total_trades": 0,
+                                    "wins": 0,
+                                    "losses": 0,
+                                    "alasan_masuk": f"Bitunix Real Position Exit ({st_res}) - TP/SL Triggered on Exchange",
+                                    "ai_eval_summary": "Posisi selesai dieksekusi dan terealisasi di exchange Bitunix.",
+                                }
+                                try:
+                                    await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                                    if TELEGRAM_ERROR_CHAT_ID and TELEGRAM_ERROR_CHAT_ID != TELEGRAM_ADMIN_CHAT_ID:
+                                        await send_order_filled_notification(bot, TELEGRAM_ERROR_CHAT_ID, order_data)
+                                except Exception as e_notif_sync:
+                                    print(f"[TELEGRAM] Gagal kirim notif sync real trade {st_sym}: {e_notif_sync}")
+                    except Exception as e_sync_all:
+                        logger.debug(f"[MONITOR] Gagal sync closed trades: {e_sync_all}")
+
                 for position in positions:
                     amount = float(position.get("position_amt", position.get("positionAmt", 0)))
                     profit = float(position.get("unrealized_pnl", position.get("unrealizedProfit", 0)))
@@ -1948,9 +2045,10 @@ async def profitable_position_monitor_loop():
                         hold_duration_hours=hold_duration_hours,
                         roi_percent=roi_percent,
                         loss_limit_percent=-5.0,
-                        loss_time_limit_hours=4.0,
-                        profit_target_percent=20.0,
-                        profit_time_limit_hours=8.0,
+                        loss_time_limit_hours=2.0,
+                        profit_target_percent=15.0,
+                        profit_time_limit_hours=4.0,
+                        max_hold_hours=8.0,
                     )
 
                     if amount != 0 and should_time_close:
@@ -2162,8 +2260,8 @@ async def _startup_database(client: Union[BaseExchange, AsyncClient]) -> None:
     await migrate_trades()
     await migrate_patterns()
 
-    # Jalankan initial scrape di background (tidak blokir startup)
-    asyncio.ensure_future(run_initial_scrape(client))
+    # Jalankan initial scrape di background (dinonaktifkan agar bot ringan & hemat resource)
+    # asyncio.ensure_future(run_initial_scrape(client))
 
     print("[DB] ✅ Database siap!")
 

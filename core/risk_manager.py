@@ -102,30 +102,42 @@ def evaluate_time_based_exit(
     hold_duration_hours: float,
     roi_percent: float,
     loss_limit_percent: float = -5.0,
-    loss_time_limit_hours: float = 4.0,
-    profit_target_percent: float = 20.0,
-    profit_time_limit_hours: float = 8.0,
+    loss_time_limit_hours: float = 2.0,
+    profit_target_percent: float = 15.0,
+    profit_time_limit_hours: float = 4.0,
+    max_hold_hours: float = 8.0,
 ) -> tuple[bool, str, str]:
     """
-    Evaluasi metode Safety Exit berdasarkan durasi hold dan ROI (Berlaku untuk Bitunix & Binance):
-    1. Hold >= 4 jam DAN posisi minus <= -5% (atau -10%) --> Auto Cut Loss darurat untuk evaluasi metode AI & proteksi modal.
-    2. Hold >= 8 jam DAN posisi profit >= +20% --> Auto Take Profit lock untuk mencegah pembalikan arah (auto reversal) akibat hold terlalu lama.
+    Evaluasi metode Safety Exit & Time Stop berdasarkan durasi hold dan ROI:
+    1. Hold >= 2 jam DAN posisi minus <= -5% --> Auto Cut Loss dini untuk menghindari loss berlarut sampai terkena SL penuh.
+    2. Hold >= 4 jam (s/d 8 jam) DAN posisi profit >= +15% (15-20%) --> Auto Stop / Profit Lock untuk mencegah reversal / pembalikan arah.
+    3. Hold >= 8 jam DAN posisi masih profit (> 0%) --> Auto Take Profit lock pada batas durasi maksimum 8 jam.
 
     Returns:
         tuple[bool, str, str]: (should_close, exit_type, reason_description)
     """
+    # 1. Early Cut Loss: > 2 jam dan rugi >= 5%
     if hold_duration_hours >= loss_time_limit_hours and roi_percent <= loss_limit_percent:
         return (
             True,
-            "SAFETY_CUT_LOSS_4H",
-            f"SAFETY CUT LOSS: Hold {hold_duration_hours:.1f} jam (>= {loss_time_limit_hours:.0f} jam) & floating loss {roi_percent:.2f}% (<= {loss_limit_percent:.1f}%). Evaluasi AI Brain: eksekusi cut loss untuk evaluasi metode dan konsep posisi serta mencegah kerugian berkepanjangan."
+            "SAFETY_CUT_LOSS_2H",
+            f"SAFETY CUT LOSS (TIME STOP): Hold {hold_duration_hours:.1f} jam (>= {loss_time_limit_hours:.1f} jam) & floating loss {roi_percent:.2f}% (<= {loss_limit_percent:.1f}%). Cut loss dini untuk mencegah kerugian berlarut ke SL penuh."
         )
 
+    # 2. Profit Lock Reversal Guard: 4 - 8 jam dan profit 15% - 20%
     if hold_duration_hours >= profit_time_limit_hours and roi_percent >= profit_target_percent:
         return (
             True,
+            "SAFETY_PROFIT_LOCK_4H",
+            f"SAFETY PROFIT LOCK (REVERSAL GUARD): Hold {hold_duration_hours:.1f} jam (>= {profit_time_limit_hours:.1f} jam) & profit +{roi_percent:.2f}% (>= +{profit_target_percent:.1f}%). Mengamankan profit dari risiko tindakan pembalik (reversal)."
+        )
+
+    # 3. Max Hold Timeout: >= 8 jam dan posisi bernilai positif
+    if hold_duration_hours >= max_hold_hours and roi_percent > 0:
+        return (
+            True,
             "SAFETY_PROFIT_LOCK_8H",
-            f"SAFETY PROFIT LOCK: Hold {hold_duration_hours:.1f} jam (>= {profit_time_limit_hours:.0f} jam) & profit +{roi_percent:.2f}% (>= +{profit_target_percent:.1f}%). Evaluasi AI Brain: amankan profit dari potensi auto-reversal arah market karena posisi ditahan terlalu lama."
+            f"SAFETY TIME STOP (8H MAX): Hold {hold_duration_hours:.1f} jam (>= {max_hold_hours:.1f} jam) & profit +{roi_percent:.2f}%. Mengamankan trade karena telah melewati batas hold 8 jam."
         )
 
     return (False, "", "")
@@ -233,7 +245,7 @@ def evaluate_auto_breakeven(
     current_roi_percent: float,
     entry_price: float,
     side: str = "LONG",
-    be_activation_roi: float = 8.0,
+    be_activation_roi: float = 25.0,
     fee_buffer_percent: float = 0.1,
     current_sl_price: float | None = None,
 ) -> dict:

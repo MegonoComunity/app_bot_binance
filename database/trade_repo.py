@@ -105,6 +105,87 @@ async def insert_trade(trade: dict) -> bool:
         return False
 
 
+async def sync_exchange_trades_to_db(client: Any, limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Mengambil closed positions langsung dari Exchange API (Bitunix / Binance)
+    dan menyelaraskan posisi-posisi yang belum tercatat ke PostgreSQL trade_history.
+    Mengembalikan daftar trade yang baru saja di-insert.
+    """
+    if not client or not hasattr(client, "get_history_positions"):
+        return []
+
+    try:
+        raw_history = await client.get_history_positions(limit=limit)
+        if not raw_history:
+            return []
+
+        pool = await get_pool()
+        newly_synced = []
+
+        async with pool.acquire() as conn:
+            for item in raw_history:
+                sym = item.get("symbol")
+                ex = item.get("exchange", "BITUNIX_REAL")
+                pnl = float(item.get("realized_pnl", 0) or 0)
+                closed_at_str = item.get("closed_at")
+                
+                try:
+                    closed_at = datetime.strptime(str(closed_at_str), "%Y-%m-%d %H:%M:%S") if closed_at_str else datetime.now()
+                except Exception:
+                    closed_at = datetime.now()
+
+                # Cek apakah trade ini sudah pernah dicatat di database
+                existing = await conn.fetchval(
+                    """
+                    SELECT id FROM trade_history
+                    WHERE symbol = $1 
+                      AND (exchange = $2 OR (exchange IS NULL AND $2 = 'BINANCE') OR (exchange = 'BITUNIX' AND $2 = 'BITUNIX_REAL') OR (exchange = 'BITUNIX_REAL' AND $2 = 'BITUNIX'))
+                      AND ABS(realized_pnl - $3) < 0.0001
+                      AND closed_at >= $4::timestamptz - interval '10 minutes'
+                      AND closed_at <= $4::timestamptz + interval '10 minutes'
+                    LIMIT 1
+                    """,
+                    sym, ex, pnl, closed_at
+                )
+
+                if existing:
+                    continue
+
+                # Insert ke trade_history
+                comm = float(item.get("commission", 0) or 0)
+                funding = float(item.get("funding_fee", 0) or 0)
+                net_pnl = float(item.get("net_pnl", pnl - comm + funding) or 0)
+                res = "WIN" if net_pnl > 0 else ("LOSS" if net_pnl < 0 else "BREAKEVEN")
+                side = str(item.get("side", "LONG")).upper()
+                entry_p = float(item.get("entry_price", 0) or 0)
+                exit_p = float(item.get("exit_price", 0) or 0)
+                m_usdt = float(item.get("margin_usdt", 0) or 0)
+                lev = int(item.get("leverage", 1) or 1)
+                dur_m = float(item.get("duration_minutes", 0) or 0)
+                order_type = item.get("order_type", "EXCHANGE_TP_SL")
+
+                await conn.execute(
+                    """
+                    INSERT INTO trade_history
+                        (symbol, side, entry_price, exit_price, realized_pnl,
+                         commission, funding_fee, net_pnl, margin_usdt, leverage, mfe, mae,
+                         duration_minutes, order_type, result, closed_at, exchange)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                    """,
+                    sym, side, entry_p, exit_p, pnl, comm, funding, net_pnl,
+                    m_usdt, lev, pnl if pnl > 0 else 0.0, pnl if pnl < 0 else 0.0,
+                    dur_m, order_type, res, closed_at, ex
+                )
+                newly_synced.append(item)
+                logger.info(f"[SYNC DB] Trade {sym} ({side}) [{ex}] synced to database. PnL: {net_pnl:+.4f} USDT")
+
+        return newly_synced
+    except Exception as exc:
+        logger.error(f"[SYNC DB] Gagal sync exchange trades: {exc}")
+        return []
+
+
+
 async def get_available_exchanges() -> List[str]:
     """Mengambil daftar semua exchange yang memiliki riwayat trade di database."""
     try:

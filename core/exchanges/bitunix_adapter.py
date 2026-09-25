@@ -7,6 +7,8 @@ import uuid
 import ssl
 import socket
 import logging
+import datetime
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 import aiohttp
 import pandas as pd
@@ -139,8 +141,11 @@ class BitunixAdapter(BaseExchange):
                     raise RuntimeError(f"HTTP {response.status}: {text_resp[:120]}")
 
                 if response.status != 200 or (isinstance(result, dict) and result.get("code") not in (0, "0", 200, "200", None)):
+                    code_val = result.get("code") if isinstance(result, dict) else response.status
                     error_msg = result.get("msg", str(result)) if isinstance(result, dict) else f"HTTP {response.status}"
-                    raise RuntimeError(f"Bitunix API Error [{response.status}]: {error_msg}")
+                    if code_val in (100007, "100007"):
+                        error_msg = f"{error_msg} (Kode 100007: API Key/Secret tidak valid atau IP terblokir IP Restriction Bitunix. Ubah ke 'No IP restriction' di API Management Bitunix)."
+                    raise RuntimeError(f"Bitunix API Error [{code_val}]: {error_msg}")
                 return result
         except Exception as e:
             log_error(f"BITUNIX_REQ_{endpoint}", str(e))
@@ -392,28 +397,38 @@ class BitunixAdapter(BaseExchange):
             for pos in pos_list:
                 qty = float(pos.get("qty", pos.get("positionAmt", 0.0)))
                 if abs(qty) > 0:
-                    side_str = str(pos.get("side", "")).upper()
-                    if not side_str:
-                        side_str = "LONG" if qty > 0 else "SHORT"
+                    raw_side = str(pos.get("side", pos.get("positionSide", ""))).upper().strip()
+                    if raw_side in ("BUY", "LONG", "OPEN_LONG", "1"):
+                        normalized_side = "LONG"
+                        pos_amt = abs(qty)
+                    elif raw_side in ("SELL", "SHORT", "OPEN_SHORT", "2"):
+                        normalized_side = "SHORT"
+                        pos_amt = -abs(qty)
+                    else:
+                        normalized_side = "LONG" if qty >= 0 else "SHORT"
+                        pos_amt = qty
 
                     entry_p = float(pos.get("avgOpenPrice", pos.get("entryPrice", pos.get("avgPrice", 0.0))))
                     unreal_pnl = float(pos.get("unrealizedPNL", pos.get("unrealizedProfit", pos.get("unrealizedPnl", 0.0))))
+                    margin_val = float(pos.get("margin", 0.0))
+                    entry_val = float(pos.get("entryValue", 0.0))
+                    lev = int(pos.get("leverage", 1))
 
                     active_positions.append({
                         "position_id": str(pos.get("positionId", "")),
                         "symbol": str(pos.get("symbol", "")).upper(),
-                        "side": side_str,
-                        "position_amt": qty if side_str == "LONG" else -qty,
-                        "qty": qty,
+                        "side": normalized_side,
+                        "position_amt": pos_amt,
+                        "qty": abs(qty),
                         "entry_price": entry_p,
-                        "entry_value": float(pos.get("entryValue", 0.0)),
+                        "entry_value": entry_val,
+                        "margin": margin_val if margin_val > 0 else (entry_val / lev if lev > 0 else entry_val),
                         "mark_price": float(pos.get("markPrice", pos.get("lastPrice", entry_p))),
                         "unrealized_pnl": unreal_pnl,
-                        "leverage": int(pos.get("leverage", 1)),
+                        "leverage": lev,
                         "margin_mode": pos.get("marginMode", "ISOLATION"),
                         "position_mode": pos.get("positionMode", "HEDGE"),
                         "liquidation_price": float(pos.get("liqPrice", pos.get("liquidationPrice", 0.0))),
-                        "margin": float(pos.get("margin", 0.0)),
                         "fee": float(pos.get("fee", 0.0)),
                         "funding": float(pos.get("funding", 0.0)),
                         "ctime": int(pos.get("ctime", 0)),
@@ -421,6 +436,89 @@ class BitunixAdapter(BaseExchange):
             return active_positions
         except Exception as e:
             log_error("BITUNIX_POSITIONS", str(e))
+            return []
+
+    async def get_history_positions(self, symbol: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Mengambil riwayat posisi yang sudah selesai (closed positions) dari Bitunix OpenAPI.
+        Endpoint resmi: GET /api/v1/futures/position/get_history_positions
+        """
+        try:
+            params = {"limit": limit}
+            if symbol:
+                params["symbol"] = symbol.upper()
+            res = await self._request("GET", "/api/v1/futures/position/get_history_positions", params=params, auth_required=True)
+            raw_list = res.get("data", {}).get("positionList", []) if isinstance(res, dict) else []
+            if not isinstance(raw_list, list):
+                raw_list = []
+
+            history = []
+            for p in raw_list:
+                raw_side = str(p.get("side", "")).upper().strip()
+                side = "LONG" if raw_side in ("BUY", "LONG", "OPEN_LONG", "1") else "SHORT"
+                entry_p = float(p.get("entryPrice", 0.0) or 0.0)
+                close_p = float(p.get("closePrice", 0.0) or 0.0)
+                pnl = float(p.get("realizedPNL", 0.0) or 0.0)
+                fee = float(p.get("fee", 0.0) or 0.0)
+                funding = float(p.get("funding", 0.0) or 0.0)
+                net_pnl = pnl - fee + funding
+                qty = float(p.get("qty", p.get("maxQty", 0.0)) or 0.0)
+                lev = int(p.get("leverage", 1) or 1)
+                margin = (qty * entry_p / lev) if lev > 0 else (qty * entry_p)
+                ctime = int(p.get("ctime", 0) or 0)
+                mtime = int(p.get("mtime", 0) or 0)
+                duration_m = round((mtime - ctime) / 60000.0, 1) if (mtime > ctime and ctime > 0) else 0.0
+                closed_at_dt = datetime.fromtimestamp(mtime / 1000.0) if mtime > 0 else datetime.now()
+
+                history.append({
+                    "position_id": str(p.get("positionId", "")),
+                    "symbol": str(p.get("symbol", "")).upper(),
+                    "side": side,
+                    "entry_price": entry_p,
+                    "exit_price": close_p,
+                    "qty": qty,
+                    "realized_pnl": pnl,
+                    "fee": fee,
+                    "commission": fee,
+                    "funding_fee": funding,
+                    "net_pnl": net_pnl,
+                    "leverage": lev,
+                    "margin_usdt": margin,
+                    "duration_minutes": duration_m,
+                    "closed_at": closed_at_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "order_type": "EXCHANGE_TP_SL",
+                    "result": "WIN" if net_pnl > 0 else ("LOSS" if net_pnl < 0 else "BREAKEVEN"),
+                    "exchange": "BITUNIX_REAL",
+                })
+            return history
+        except Exception as e:
+            log_error("BITUNIX_HISTORY_POSITIONS", str(e))
+            return []
+
+
+    async def get_position_tiers(self, symbol: str) -> List[Dict[str, Any]]:
+        """
+        Mengambil tingkatan posisi (Position Tiers), batas leverage, dan maintenance margin rate untuk koin tertentu.
+        Endpoint resmi: GET /api/v1/futures/position/get_position_tiers?symbol=BTCUSDT
+        """
+        try:
+            res = await self._request("GET", "/api/v1/futures/position/get_position_tiers", params={"symbol": symbol.upper()})
+            tiers_list = res.get("data", []) if isinstance(res, dict) else []
+            if not isinstance(tiers_list, list):
+                return []
+            return [
+                {
+                    "symbol": str(t.get("symbol", symbol)).upper(),
+                    "level": int(t.get("level", 1)),
+                    "start_value": float(t.get("startValue", 0.0)),
+                    "end_value": float(t.get("endValue", 0.0)),
+                    "max_leverage": int(t.get("leverage", 1)),
+                    "maintenance_margin_rate": float(t.get("maintenanceMarginRate", 0.0)),
+                }
+                for t in tiers_list
+            ]
+        except Exception as e:
+            log_error(f"BITUNIX_TIERS_{symbol}", str(e))
             return []
 
     async def set_leverage(self, symbol: str, leverage: int) -> int:

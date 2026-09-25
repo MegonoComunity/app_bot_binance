@@ -687,68 +687,144 @@
     .pos-label { color: var(--text-dim); }
     .pos-val { font-weight: 600; text-align: right; }
 
-    /* Chart Section */
-    .chart-section {
+    /* AI Deep Scanner & Manual Coin Analyzer Terminal */
+    .analyzer-section {
       background: var(--bg-card);
       border: 1px solid var(--border-color);
       border-radius: 16px;
-      padding: 20px 24px;
+      padding: 24px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 20px;
       backdrop-filter: blur(14px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      position: relative;
+      overflow: hidden;
     }
-    .chart-header {
+    .analyzer-section::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue), var(--accent-purple));
+    }
+    .analyzer-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
       flex-wrap: wrap;
-      gap: 12px;
+      gap: 16px;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 16px;
     }
-    .chart-title-area {
+    .analyzer-search-box {
       display: flex;
       align-items: center;
-      gap: 12px;
-    }
-    .symbol-select {
-      background: #111827;
-      border: 1px solid var(--border-color);
-      color: #fff;
+      gap: 10px;
+      background: rgba(10, 15, 26, 0.85);
+      border: 1px solid rgba(0, 242, 254, 0.35);
       padding: 8px 14px;
-      border-radius: 8px;
-      font-size: 0.95rem;
-      font-weight: 700;
-      outline: none;
-      cursor: pointer;
+      border-radius: 10px;
+      flex: 1;
+      max-width: 420px;
+      box-shadow: 0 0 16px rgba(0, 242, 254, 0.1);
     }
-    .tf-tabs {
-      display: flex;
-      background: rgba(255, 255, 255, 0.04);
-      padding: 4px;
-      border-radius: 8px;
-      border: 1px solid var(--border-color);
-      gap: 4px;
-    }
-    .tf-btn {
+    .analyzer-search-box input {
       background: transparent;
       border: none;
+      outline: none;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      width: 100%;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .analyzer-search-box input::placeholder {
+      color: var(--text-dim);
+      text-transform: none;
+      font-weight: 400;
+      letter-spacing: 0;
+      font-size: 0.88rem;
+    }
+    .btn-analyze {
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+      color: #000;
+      border: none;
+      padding: 10px 22px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 0.92rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+      box-shadow: 0 0 20px rgba(0, 242, 254, 0.3);
+    }
+    .btn-analyze:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 28px rgba(0, 242, 254, 0.55);
+    }
+    .quick-coin-pills {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .coin-pill {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-color);
       color: var(--text-muted);
-      padding: 6px 12px;
+      padding: 5px 11px;
       border-radius: 6px;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.2s ease;
     }
-    .tf-btn.active, .tf-btn:hover {
+    .coin-pill:hover, .coin-pill.active {
       background: rgba(0, 242, 254, 0.15);
+      border-color: var(--accent-cyan);
       color: var(--accent-cyan);
     }
-    #tv-chart-container {
-      width: 100%;
-      height: 480px;
-      border-radius: 8px;
-      overflow: hidden;
+    .analysis-card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+    }
+    .analyzer-panel {
+      background: rgba(10, 15, 26, 0.65);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .analyzer-verdict-hero {
+      background: linear-gradient(135deg, rgba(0, 242, 254, 0.08), rgba(157, 78, 221, 0.08));
+      border: 1px solid rgba(0, 242, 254, 0.3);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    .pillar-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      font-size: 0.88rem;
+    }
+    .pillar-row:last-child {
+      border-bottom: none;
     }
 
     /* PnL Growth Curve Section */
@@ -1359,25 +1435,177 @@
       </div>
     </section>
 
-    <!-- Candlestick Chart Area (TradingView Lightweight Charts) -->
-    <section class="chart-section">
-      <div class="chart-header">
-        <div class="chart-title-area">
-          <i data-lucide="activity" style="color: var(--accent-cyan); width: 22px;"></i>
-          <span class="font-heading" style="font-size: 1.15rem; font-weight: 700;">Candlestick OHLCV Live</span>
-          <select id="select-symbol" class="symbol-select" onchange="onSymbolChange(this.value)">
-            <option value="BTCUSDT">BTCUSDT</option>
-          </select>
+    <!-- AI Deep Scanner & Manual Coin Analyzer Terminal -->
+    <section class="analyzer-section">
+      <div class="analyzer-header">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="width: 36px; height: 36px; background: rgba(0, 242, 254, 0.12); border: 1px solid rgba(0, 242, 254, 0.3); border-radius: 10px; display: flex; align-items: center; justify-content: center; color: var(--accent-cyan);">
+            <i data-lucide="search-check" style="width: 20px;"></i>
+          </div>
+          <div>
+            <h2 class="font-heading" style="font-size: 1.2rem; font-weight: 700; color: #fff;">AI Deep Scanner & Manual Coin Analyzer</h2>
+            <p style="font-size: 0.82rem; color: var(--text-dim);">Analisis instan multi-indikator live (5M & 1H), konfluensi, dan database memory AI.</p>
+          </div>
         </div>
 
-        <div class="tf-tabs">
-          <button class="tf-btn active" data-tf="1d" onclick="setChartTf('1d', this)">1D</button>
-          <button class="tf-btn" data-tf="1h" onclick="setChartTf('1h', this)">1H</button>
-          <button class="tf-btn" data-tf="5m" onclick="setChartTf('5m', this)">5M</button>
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; max-width: 620px;">
+          <div class="analyzer-search-box">
+            <i data-lucide="search" style="color: var(--accent-cyan); width: 18px;"></i>
+            <input type="text" id="analyze-coin-input" placeholder="Ketik nama koin (cth: LTCUSDT, BTCUSDT, SOLUSDT)..." value="BTCUSDT" onkeydown="if(event.key==='Enter') runCoinAnalysis()" />
+          </div>
+          <button class="btn-analyze" id="btn-run-analysis" onclick="runCoinAnalysis()">
+            <i data-lucide="sparkles" style="width: 18px;"></i>
+            <span>Analisa AI Live</span>
+          </button>
         </div>
       </div>
 
-      <div id="tv-chart-container"></div>
+      <!-- Quick Select Popular Coins -->
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <span style="font-size: 0.78rem; color: var(--text-dim); font-weight: 600;">Koin Populer:</span>
+        <div class="quick-coin-pills">
+          <span class="coin-pill active" onclick="setAnalyzeSymbol('BTCUSDT', this)">BTC</span>
+          <span class="coin-pill" onclick="setAnalyzeSymbol('ETHUSDT', this)">ETH</span>
+          <span class="coin-pill" onclick="setAnalyzeSymbol('SOLUSDT', this)">SOL</span>
+          <span class="coin-pill" onclick="setAnalyzeSymbol('SEIUSDT', this)">SEI</span>
+          <span class="coin-pill" onclick="setAnalyzeSymbol('LTCUSDT', this)">LTC</span>
+          <span class="coin-pill" onclick="setAnalyzeSymbol('DOGEUSDT', this)">DOGE</span>
+          <span class="coin-pill" onclick="setAnalyzeSymbol('PEPEUSDT', this)">PEPE</span>
+          <span class="coin-pill" onclick="setAnalyzeSymbol('ONDOUSDT', this)">ONDO</span>
+          <span class="coin-pill" onclick="setAnalyzeSymbol('XRPUSDT', this)">XRP</span>
+          <span class="coin-pill" onclick="setAnalyzeSymbol('BNBUSDT', this)">BNB</span>
+          <span class="coin-pill" onclick="setAnalyzeSymbol('SUIUSDT', this)">SUI</span>
+          <span class="coin-pill" onclick="setAnalyzeSymbol('NEARUSDT', this)">NEAR</span>
+          <span class="coin-pill" onclick="setAnalyzeSymbol('ADAUSDT', this)">ADA</span>
+        </div>
+      </div>
+
+      <!-- Analysis Results Dynamic Container -->
+      <div id="analyzer-result-card" style="display: flex; flex-direction: column; gap: 16px;">
+        <!-- Loading State Placeholder -->
+        <div id="analyzer-loading" style="display: none; padding: 40px 20px; text-align: center;">
+          <div style="display: inline-block; width: 40px; height: 40px; border: 3px solid rgba(0,242,254,0.2); border-top-color: var(--accent-cyan); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+          <p style="margin-top: 14px; font-size: 0.95rem; font-weight: 600; color: var(--accent-cyan);">Menghitung 5 Pilar Konfluensi & Mengambil Data Live Candle...</p>
+        </div>
+
+        <!-- Content Container -->
+        <div id="analyzer-content" style="display: flex; flex-direction: column; gap: 16px;">
+          <!-- Verdict Hero Banner -->
+          <div class="analyzer-verdict-hero" id="analyzer-verdict-banner">
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span class="font-heading" id="analyzed-symbol-title" style="font-size: 1.4rem; font-weight: 800; color: #fff;">BTCUSDT</span>
+                <span id="analyzed-verdict-badge" class="badge badge-approved" style="font-size: 0.95rem; padding: 6px 14px;">🟢 STRONG BUY / LONG</span>
+              </div>
+              <p id="analyzed-verdict-desc" style="font-size: 0.86rem; color: var(--text-muted);">Skor konfluensi multi-indikator memenuhi kriteria entry dengan rasio win-rate tinggi.</p>
+            </div>
+
+            <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+              <div style="text-align: right;">
+                <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Harga Live</div>
+                <div id="analyzed-live-price" style="font-size: 1.3rem; font-weight: 800; color: var(--accent-cyan);">$84,260.50</div>
+              </div>
+              <div style="text-align: right; border-left: 1px solid var(--border-color); padding-left: 20px;">
+                <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Konfluensi Score</div>
+                <div id="analyzed-confluence-score" style="font-size: 1.3rem; font-weight: 800; color: var(--accent-emerald);">85.0 / 100</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3 Columns Detail Grid -->
+          <div class="analysis-card-grid">
+            <!-- Box 1: Trade Setup & Execution Targets -->
+            <div class="analyzer-panel">
+              <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
+                <span class="font-heading" style="font-weight: 700; font-size: 0.98rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 6px;">
+                  <i data-lucide="crosshair" style="width: 16px;"></i> Trade Setup & Targets
+                </span>
+                <span id="analyzed-rrr-badge" class="badge badge-primary" style="font-size: 0.75rem;">RRR 1 : 1.8</span>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Entry Price Target:</span>
+                <strong id="setup-entry-price" style="color: #fff;">$84,260.50</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Take Profit 1 (Target):</span>
+                <strong id="setup-tp1-price" style="color: var(--accent-emerald);">$86,156.35 (+45.0% ROE)</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Stop Loss (Batas Risiko):</span>
+                <strong id="setup-sl-price" style="color: var(--accent-rose);">$83,207.24 (-25.0% ROE)</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Dynamic Leverage (ATR):</span>
+                <strong id="setup-leverage" style="color: var(--accent-amber);">20x</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Rekomendasi Margin:</span>
+                <strong id="setup-margin" style="color: var(--text-main);">$1.00 USDT</strong>
+              </div>
+            </div>
+
+            <!-- Box 2: 5 Pillars Multi-Indikator Live -->
+            <div class="analyzer-panel">
+              <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
+                <span class="font-heading" style="font-weight: 700; font-size: 0.98rem; color: var(--accent-blue); display: flex; align-items: center; gap: 6px;">
+                  <i data-lucide="layers" style="width: 16px;"></i> 5 Pilar Indikator Live
+                </span>
+                <span id="analyzed-htf-badge" class="badge badge-approved" style="font-size: 0.75rem;">HTF UPTREND</span>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">RSI 14 (5M / 1H):</span>
+                <strong id="pillar-rsi" style="color: #fff;">5M: 32.5 | 1H: 54.2</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Bollinger Band & Zone:</span>
+                <strong id="pillar-bb" style="color: #fff;">LOWER BAND</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Volume Spike (RVOL):</span>
+                <strong id="pillar-rvol" style="color: var(--accent-cyan);">2.99x vs SMA20</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Pola Candlestick:</span>
+                <strong id="pillar-pattern" style="color: var(--accent-emerald);">Tweezer Bottom (Tier-A)</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Pre-Pump / Squeeze:</span>
+                <strong id="pillar-pump" style="color: var(--accent-amber);">PRE_PUMP (Score 85/100)</strong>
+              </div>
+            </div>
+
+            <!-- Box 3: Database Historical Memory AI -->
+            <div class="analyzer-panel">
+              <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
+                <span class="font-heading" style="font-weight: 700; font-size: 0.98rem; color: var(--accent-purple); display: flex; align-items: center; gap: 6px;">
+                  <i data-lucide="database" style="width: 16px;"></i> Memory Database PostgreSQL
+                </span>
+                <span id="analyzed-db-wr-badge" class="badge badge-approved" style="font-size: 0.75rem;">WR 80.0%</span>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Total Trade Tercatat:</span>
+                <strong id="db-total-trades" style="color: #fff;">16 Transaksi</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Win / Loss Ratio:</span>
+                <strong id="db-win-loss" style="color: #fff;"><span style="color: var(--accent-emerald);">12 Win</span> / <span style="color: var(--accent-rose);">4 Loss</span></strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">SMC Market Structure:</span>
+                <strong id="pillar-smc" style="color: var(--accent-cyan);">UPTREND_HEALTHY</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Dynamic AVWAP:</span>
+                <strong id="pillar-avwap" style="color: #fff;">$84,180.20</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Status Bot Pembelajaran:</span>
+                <strong id="db-learner-status" style="color: var(--accent-emerald);">🟢 AKTIF (Terverifikasi)</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Multi-Tab Section: History, AI Brain Patterns & Strategies -->
@@ -1687,61 +1915,20 @@
     let currentTf = '1d';
     let currentExchangeFilter = 'ALL';
 
+    function setExchangeFilter(ex) {
+      currentExchangeFilter = ex;
+      document.querySelectorAll('.tab-pill').forEach(p => p.classList.remove('active'));
+      const btn = document.getElementById('btn-tab-' + ex);
+      if (btn) btn.classList.add('active');
+      const badge = document.getElementById('pnl-curve-filter-badge');
+      if (badge) badge.innerText = ex === 'ALL' ? 'ALL EXCHANGES' : ex;
+      loadOverview();
+      loadTrades();
+    }
+
     // PnL Equity Curve Chart
     let pnlChart = null;
     let pnlAreaSeries = null;
-
-    // Initialize Candlestick Chart
-    function initChart() {
-      const container = document.getElementById('tv-chart-container');
-      chart = LightweightCharts.createChart(container, {
-        layout: {
-          background: { color: '#090d16' },
-          textColor: '#94a3b8',
-        },
-        grid: {
-          vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
-          horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
-        },
-        crosshair: {
-          mode: LightweightCharts.CrosshairMode.Normal,
-        },
-        rightPriceScale: {
-          borderColor: 'rgba(255, 255, 255, 0.08)',
-        },
-        timeScale: {
-          borderColor: 'rgba(255, 255, 255, 0.08)',
-          timeVisible: true,
-          secondsVisible: false,
-        },
-      });
-
-      candleSeries = chart.addCandlestickSeries({
-        upColor: '#00e676',
-        downColor: '#ff3366',
-        borderVisible: false,
-        wickUpColor: '#00e676',
-        wickDownColor: '#ff3366',
-      });
-
-      volumeSeries = chart.addHistogramSeries({
-        color: '#26a69a',
-        priceFormat: { type: 'volume' },
-        priceScaleId: '',
-      });
-      volumeSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0.8, bottom: 0 },
-      });
-
-      window.addEventListener('resize', () => {
-        if (chart && container) {
-          chart.applyOptions({ width: container.clientWidth });
-        }
-        if (pnlChart && document.getElementById('pnl-curve-container')) {
-          pnlChart.applyOptions({ width: document.getElementById('pnl-curve-container').clientWidth });
-        }
-      });
-    }
 
     // Initialize PnL Curve Chart
     function initPnlChart() {
@@ -1771,70 +1958,151 @@
         lineColor: '#00f2fe',
         lineWidth: 2,
       });
-    }
 
-    // Exchange Filter Switcher
-    function setExchangeFilter(ex) {
-      currentExchangeFilter = ex;
-      document.querySelectorAll('.tab-pill').forEach(btn => btn.classList.remove('active'));
-      const activeBtn = document.getElementById('btn-tab-' + ex);
-      if (activeBtn) activeBtn.classList.add('active');
-
-      const badge = document.getElementById('pnl-curve-filter-badge');
-      if (badge) badge.innerText = ex === 'ALL' ? 'ALL EXCHANGES' : ex;
-
-      loadOverview();
-      loadTrades();
-    }
-
-    // Fetch Symbols
-    async function loadSymbols() {
-      try {
-        const res = await fetch('/api/symbols?tf=' + currentTf);
-        const data = await res.json();
-        const select = document.getElementById('select-symbol');
-        select.innerHTML = '';
-        (data.symbols || ['BTCUSDT']).forEach(s => {
-          const opt = document.createElement('option');
-          opt.value = s;
-          opt.innerText = s;
-          if (s === currentSymbol) opt.selected = true;
-          select.appendChild(opt);
-        });
-      } catch (e) {
-        console.error('Error load symbols:', e);
-      }
-    }
-
-    function onSymbolChange(val) {
-      currentSymbol = val;
-      loadCandles();
-    }
-
-    function setChartTf(tf, btn) {
-      currentTf = tf;
-      document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      loadCandles();
-    }
-
-    // Fetch Candlestick Data
-    async function loadCandles() {
-      try {
-        const res = await fetch(`/api/candles/${currentSymbol}?tf=${currentTf}&limit=300`);
-        const data = await res.json();
-        if (data.candles && candleSeries && volumeSeries) {
-          candleSeries.setData(data.candles);
-          const volData = data.candles.map(c => ({
-            time: c.time,
-            value: c.volume,
-            color: c.close >= c.open ? 'rgba(0, 230, 118, 0.3)' : 'rgba(255, 51, 102, 0.3)',
-          }));
-          volumeSeries.setData(volData);
-          chart.timeScale().fitContent();
+      window.addEventListener('resize', () => {
+        if (pnlChart && document.getElementById('pnl-curve-container')) {
+          pnlChart.applyOptions({ width: document.getElementById('pnl-curve-container').clientWidth });
         }
-      } catch (e) {
-        console.error('Error load candles:', e);
+      });
+    }
+
+    // AI Deep Scanner & Manual Coin Analyzer Logic
+    function setAnalyzeSymbol(sym, el) {
+      document.querySelectorAll('.coin-pill').forEach(p => p.classList.remove('active'));
+      if (el) el.classList.add('active');
+      const input = document.getElementById('analyze-coin-input');
+      if (input) input.value = sym;
+      runCoinAnalysis();
+    }
+
+    async function runCoinAnalysis() {
+      const input = document.getElementById('analyze-coin-input');
+      let sym = (input ? input.value : 'BTCUSDT').trim().toUpperCase();
+      if (!sym) sym = 'BTCUSDT';
+      if (!sym.endsWith('USDT') && !sym.endsWith('BUSD')) sym += 'USDT';
+      
+      const loadingEl = document.getElementById('analyzer-loading');
+      const contentEl = document.getElementById('analyzer-content');
+      const btnEl = document.getElementById('btn-run-analysis');
+      
+      if (loadingEl) loadingEl.style.display = 'block';
+      if (contentEl) contentEl.style.opacity = '0.35';
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.innerHTML = '<i data-lucide="loader-2" class="spin" style="width: 18px;"></i> Menganalisis...';
+        lucide.createIcons();
+      }
+
+      try {
+        const res = await fetch(`/api/analyze-coin?symbol=${encodeURIComponent(sym)}`);
+        const data = await res.json();
+        
+        if (!data.success) {
+          showToast(`⚠️ ${data.error || 'Gagal menganalisis koin'}`, true);
+          return;
+        }
+
+        // 1. Update Header & Verdict Banner
+        const titleEl = document.getElementById('analyzed-symbol-title');
+        if (titleEl) titleEl.innerText = data.symbol;
+        
+        const priceEl = document.getElementById('analyzed-live-price');
+        if (priceEl) priceEl.innerText = '$' + Number(data.current_price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6});
+        
+        const verdictBadge = document.getElementById('analyzed-verdict-badge');
+        if (verdictBadge) {
+          verdictBadge.innerText = data.verdict.label;
+          if (data.verdict.side === 'LONG') {
+            verdictBadge.className = 'badge badge-approved';
+          } else if (data.verdict.side === 'SHORT') {
+            verdictBadge.className = 'badge badge-rejected';
+          } else {
+            verdictBadge.className = 'badge badge-pending';
+          }
+        }
+
+        const scoreEl = document.getElementById('analyzed-confluence-score');
+        if (scoreEl) {
+          scoreEl.innerText = `${data.verdict.confluence_score} / 100`;
+          scoreEl.style.color = data.verdict.confluence_score >= 70 ? 'var(--accent-emerald)' : (data.verdict.confluence_score >= 55 ? 'var(--accent-amber)' : 'var(--text-muted)');
+        }
+
+        // 2. Update Trade Setup Box
+        const rrrEl = document.getElementById('analyzed-rrr-badge');
+        if (rrrEl) rrrEl.innerText = `RRR ${data.setup.risk_reward_ratio}`;
+        
+        const entryEl = document.getElementById('setup-entry-price');
+        if (entryEl) entryEl.innerText = '$' + Number(data.setup.entry_price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6});
+        
+        const tp1El = document.getElementById('setup-tp1-price');
+        if (tp1El) tp1El.innerText = '$' + Number(data.setup.tp1_price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6}) + ` (+${data.setup.tp_percent}% ROE)`;
+        
+        const slEl = document.getElementById('setup-sl-price');
+        if (slEl) slEl.innerText = '$' + Number(data.setup.sl_price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6}) + ` (-${data.setup.sl_percent}% ROE)`;
+        
+        const levEl = document.getElementById('setup-leverage');
+        if (levEl) levEl.innerText = `${data.setup.recommended_leverage}x (ATR Adjusted)`;
+        
+        const marginEl = document.getElementById('setup-margin');
+        if (marginEl) marginEl.innerText = `$${Number(data.setup.recommended_margin).toFixed(2)} USDT`;
+
+        // 3. Update 5 Pillars Box
+        const htfBadge = document.getElementById('analyzed-htf-badge');
+        if (htfBadge) {
+          htfBadge.innerText = `HTF ${data.pillars.htf_trend}`;
+          htfBadge.className = data.pillars.htf_trend === 'UPTREND' ? 'badge badge-approved' : (data.pillars.htf_trend === 'DOWNTREND' ? 'badge badge-rejected' : 'badge badge-pending');
+        }
+
+        const rsiEl = document.getElementById('pillar-rsi');
+        if (rsiEl) rsiEl.innerText = `5M: ${data.pillars.rsi_5m} | 1H: ${data.pillars.rsi_1h}`;
+        
+        const bbEl = document.getElementById('pillar-bb');
+        if (bbEl) bbEl.innerText = `${data.pillars.bb_zone} BAND ($${Number(data.pillars.bb_lower).toFixed(2)} - $${Number(data.pillars.bb_upper).toFixed(2)})`;
+        
+        const rvolEl = document.getElementById('pillar-rvol');
+        if (rvolEl) rvolEl.innerText = `${data.pillars.rvol}x vs SMA20`;
+        
+        const patEl = document.getElementById('pillar-pattern');
+        if (patEl) patEl.innerText = data.pillars.candlestick_pattern !== 'NONE' ? `${data.pillars.candlestick_pattern} (${data.pillars.pattern_type})` : 'Tidak ada pola spesifik';
+        
+        const pumpEl = document.getElementById('pillar-pump');
+        if (pumpEl) {
+          const pumpText = data.pillars.pre_pump_tier !== 'NONE' ? `🔥 ${data.pillars.pre_pump_tier} (Score ${data.pillars.pre_pump_score}/100)` : `Squeeze Score: ${data.pillars.squeeze_score}/100`;
+          pumpEl.innerText = pumpText;
+        }
+
+        // 4. Update Database Memory Box
+        const mem = data.db_memory;
+        const wrBadge = document.getElementById('analyzed-db-wr-badge');
+        if (wrBadge) {
+          wrBadge.innerText = `WR ${mem.win_rate}%`;
+          wrBadge.className = mem.win_rate >= 60 ? 'badge badge-approved' : (mem.win_rate >= 45 ? 'badge badge-pending' : 'badge badge-rejected');
+        }
+        
+        const totTradesEl = document.getElementById('db-total-trades');
+        if (totTradesEl) totTradesEl.innerText = `${mem.total_trades} Transaksi`;
+        
+        const winLossEl = document.getElementById('db-win-loss');
+        if (winLossEl) winLossEl.innerHTML = `<span style="color: var(--accent-emerald); font-weight:700;">${mem.wins} Win</span> / <span style="color: var(--accent-rose); font-weight:700;">${mem.losses} Loss</span>`;
+        
+        const smcEl = document.getElementById('pillar-smc');
+        if (smcEl) smcEl.innerText = data.pillars.smc_market_structure;
+        
+        const avwapEl = document.getElementById('pillar-avwap');
+        if (avwapEl) avwapEl.innerText = '$' + Number(data.pillars.avwap_fair_value).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6});
+        
+        lucide.createIcons();
+      } catch (err) {
+        console.error('Error analyzing coin:', err);
+        showToast(`❌ Error analisis: ${err.message}`, true);
+      } finally {
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (contentEl) contentEl.style.opacity = '1';
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = '<i data-lucide="sparkles" style="width: 18px;"></i><span>Analisa AI Live</span>';
+          lucide.createIcons();
+        }
       }
     }
 
@@ -2147,48 +2415,58 @@
       positions.forEach(pos => {
         const card = document.createElement('div');
         card.className = 'position-card';
-        const isLong = pos.side === 'LONG';
+        const isLong = (pos.side || '').toUpperCase() === 'LONG';
         const pnl = pos.unrealized_pnl || 0;
         const pnlPct = pos.unrealized_pnl_pct || 0;
+        const entry = pos.entry_price || 0;
+        const mark = pos.mark_price || entry;
+        const entryStr = entry < 1 ? entry.toFixed(6) : (entry < 10 ? entry.toFixed(4) : entry.toFixed(2));
+        const markStr = mark < 1 ? mark.toFixed(6) : (mark < 10 ? mark.toFixed(4) : mark.toFixed(2));
 
         let exBadge = '<span class="badge badge-ex-binance">BINANCE</span>';
-        if (pos.exchange && pos.exchange.includes('BITUNIX')) {
-          exBadge = '<span class="badge badge-ex-bitunix-sim">BITUNIX</span>';
+        if (pos.exchange) {
+          const exUpper = pos.exchange.toUpperCase();
+          if (exUpper.includes('REAL')) {
+            exBadge = '<span class="badge badge-ex-bitunix-real">🟢 BITUNIX REAL</span>';
+          } else if (exUpper.includes('BITUNIX')) {
+            exBadge = '<span class="badge badge-ex-bitunix-sim">🔵 BITUNIX SIM</span>';
+          }
         }
 
         card.innerHTML = `
           <div class="pos-header">
             <div style="display: flex; align-items: center; gap: 8px;">
               <span class="pos-symbol">${pos.symbol}</span>
-              <span class="badge ${isLong ? 'badge-long' : 'badge-short'}">${pos.side} ${pos.leverage}x</span>
+              <span class="badge ${isLong ? 'badge-long' : 'badge-short'}">${isLong ? '🟢 LONG' : '🔴 SHORT'} ${pos.leverage || 10}x</span>
               ${exBadge}
             </div>
-            <div style="font-weight: 700; font-size: 0.95rem;" class="${pnl >= 0 ? 'val-positive' : 'val-negative'}">
-              ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USDT (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)
+            <div style="font-weight: 800; font-size: 1.02rem; font-family: 'Outfit', sans-serif;" class="${pnl >= 0 ? 'val-positive' : 'val-negative'}">
+              ${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)} USDT (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)
             </div>
           </div>
 
           <div class="pos-details-grid">
             <div><span class="pos-label">Entry / Mark:</span></div>
-            <div class="pos-val">${pos.entry_price.toFixed(4)} → ${pos.mark_price.toFixed(4)}</div>
+            <div class="pos-val" style="font-family: monospace;">$${entryStr} → $${markStr}</div>
 
-            <div><span class="pos-label">Margin Alokasi:</span></div>
+            <div><span class="pos-label">Margin Modal:</span></div>
             <div class="pos-val">${pos.margin_usdt ? pos.margin_usdt.toFixed(2) : '0.00'} USDT</div>
 
             <div><span class="pos-label">MFE (Peak Profit):</span></div>
-            <div class="pos-val val-positive">+${(pos.mfe || 0).toFixed(2)} USDT</div>
+            <div class="pos-val val-positive">+${(pos.mfe || 0).toFixed(4)} USDT</div>
 
             <div><span class="pos-label">Durasi Hold:</span></div>
             <div class="pos-val">${pos.duration_minutes || 0} menit</div>
 
-            <div><span class="pos-label">Metode Entry:</span></div>
+            <div><span class="pos-label">Alasan Sinyal:</span></div>
             <div class="pos-val" style="color: #93c5fd; font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-              ${pos.alasan || '-'}
+              ${escapeHtml(pos.alasan || 'Sinyal Algoritmik AI')}
             </div>
           </div>
         `;
         container.appendChild(card);
       });
+      if (window.lucide) lucide.createIcons();
     }
 
     // Render Strategies Table
@@ -2561,9 +2839,8 @@
 
     // Initial Startup
     document.addEventListener('DOMContentLoaded', () => {
-      initChart();
       initPnlChart();
-      loadSymbols();
+      runCoinAnalysis();
       loadOverview();
       loadPatterns();
       loadTrades();

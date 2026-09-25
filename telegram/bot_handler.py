@@ -682,7 +682,8 @@ async def status_handler(message: types.Message):
             )
 
                       
-            if amt > 0:
+            pos_side = str(p.get("side", "")).upper()
+            if pos_side in ("LONG", "BUY") or amt > 0:
                 longs.append(p_info)
             else:
                 shorts.append(p_info)

@@ -11,6 +11,7 @@ BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
 
 BITUNIX_API_KEY = os.getenv("BITUNIX_API_KEY", "")
 BITUNIX_API_SECRET = os.getenv("BITUNIX_API_SECRET", "")
+BITUNIX_UID_USER = os.getenv("BITUNIX_UID_USER", "").strip()
 BITUNIX_BASE_URL = os.getenv("BITUNIX_BASE_URL", "https://fapi.bitunix.com").strip()
 BITUNIX_PROXY = os.getenv("BITUNIX_PROXY", "").strip() or None
 
@@ -79,7 +80,7 @@ SIMULATED_MODAL_ENV = float(os.getenv("SIMULATED_MODAL", "0.0"))
 # Fitur Pro: Confluence Matrix & Auto Break-Even (Risk-Free)
 MIN_CONFLUENCE_SCORE_ENV = float(os.getenv("MIN_CONFLUENCE_SCORE", "60.0"))
 USE_AUTO_BREAKEVEN_ENV = os.getenv("USE_AUTO_BREAKEVEN", "True").lower() == "true"
-AUTO_BREAKEVEN_ROI_PERCENT_ENV = float(os.getenv("AUTO_BREAKEVEN_ROI_PERCENT", "8.0"))
+AUTO_BREAKEVEN_ROI_PERCENT_ENV = float(os.getenv("AUTO_BREAKEVEN_ROI_PERCENT", "25.0"))
 
 # Validasi API key sesuai exchange aktif
 if ACTIVE_EXCHANGE == "BINANCE":

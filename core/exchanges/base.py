@@ -135,3 +135,10 @@ class BaseExchange(ABC):
         Menutup seluruh posisi aktif untuk suatu koin secara instan (Market Close).
         """
         pass
+
+    async def get_history_positions(self, symbol: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Mengambil riwayat posisi yang sudah selesai (closed positions / trades) dari exchange.
+        """
+        return []
+

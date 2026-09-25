@@ -22,12 +22,29 @@ from database.trade_repo import (
     get_pnl_growth_curve,
     get_monthly_trade_stats,
     get_daily_trade_stats,
+    sync_exchange_trades_to_db,
 )
 from database.pattern_repo import get_all_patterns, get_top_patterns
 from database.ohlcv_repo import get_candles, get_available_symbols, get_ohlcv_stats
 from core.exchanges.base import BaseExchange
+from core.exchanges.binance_adapter import BinanceAdapter
+from core.exchanges.bitunix_adapter import BitunixAdapter
+from core.confluence_engine import calculate_confluence_score
+from core.risk_manager import calculate_volatility_adjusted_leverage
+from indicators.market_structure import analyze_market_structure, calculate_dynamic_swing_avwap, detect_ema21_pullback
+from indicators.dormant_breakout import calculate_dormant_breakout_score
+from indicators.pre_pump_detector import detect_explosive_pre_pump
+from indicators.rsi import calculate_rsi
+from indicators.bollinger import calculate_bollinger_bands
+from indicators.patterns import detect_candlestick_patterns
+from indicators.trend import get_htf_trend
 from telegram.bot_handler import bot_state
-from config.settings import bot_config
+from config.settings import (
+    bot_config,
+    BINANCE_API_KEY, BINANCE_API_SECRET,
+    BITUNIX_API_KEY, BITUNIX_API_SECRET, BITUNIX_UID_USER,
+    ACTIVE_EXCHANGE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +78,12 @@ async def api_overview(request: web.Request) -> web.Response:
     active_positions = []
     total_floating_pnl = 0.0
     client = bot_state.get("client")
+    if client and hasattr(client, "get_history_positions"):
+        try:
+            await sync_exchange_trades_to_db(client, limit=30)
+        except Exception as e_sync:
+            logger.debug(f"[DASHBOARD] Sync error in overview: {e_sync}")
+
     active_meta = bot_state.get("active_trade_meta", {})
 
     # 1. Masukkan posisi virtual / paper trading yang sedang aktif
@@ -323,6 +346,13 @@ async def api_trades(request: web.Request) -> web.Response:
     exchange_param = request.query.get("exchange", "ALL")
     filter_ex = None if exchange_param.upper() in ("ALL", "*", "") else exchange_param.upper()
 
+    client = bot_state.get("client")
+    if client and hasattr(client, "get_history_positions"):
+        try:
+            await sync_exchange_trades_to_db(client, limit=limit)
+        except Exception as e_sync:
+            logger.debug(f"[DASHBOARD] Sync error in trades: {e_sync}")
+
     real_trades = await get_recent_trades(limit=limit, exchange=filter_ex)
 
     virtual_trades = []
@@ -462,6 +492,281 @@ async def index_handler(request: web.Request) -> web.Response:
     return web.Response(text=content, content_type="text/html")
 
 
+async def api_analyze_coin(request: web.Request) -> web.Response:
+    """
+    Full AI & Database Live Coin Analysis.
+    Parameter query: ?symbol=BTCUSDT
+    """
+    symbol = request.query.get("symbol", "BTCUSDT").upper().strip()
+    if not symbol:
+        symbol = "BTCUSDT"
+    if not symbol.endswith("USDT") and not symbol.endswith("BUSD"):
+        symbol += "USDT"
+
+    client = bot_state.get("client")
+    temp_client = None
+    if not client:
+        # Fallback adapter jika bot scanner utama belum start
+        if ACTIVE_EXCHANGE == "BITUNIX":
+            temp_client = BitunixAdapter(BITUNIX_API_KEY, BITUNIX_API_SECRET)
+        else:
+            temp_client = BinanceAdapter(BINANCE_API_KEY, BINANCE_API_SECRET)
+        await temp_client.init()
+        active_client = temp_client
+    else:
+        active_client = client
+
+    try:
+        # 1. Fetch live klines (5m dan 1h)
+        df_5m = await active_client.fetch_ohlcv(symbol, "5m", limit=100)
+        df_1h = await active_client.fetch_ohlcv(symbol, "1h", limit=50)
+
+        # Fallback jika exchange aktif gagal klines
+        if (df_5m is None or df_5m.empty) and getattr(active_client, "exchange_name", "") != "BINANCE":
+            try:
+                binance_fb = BinanceAdapter(BINANCE_API_KEY, BINANCE_API_SECRET)
+                await binance_fb.init()
+                df_5m = await binance_fb.fetch_ohlcv(symbol, "5m", limit=100)
+                df_1h = await binance_fb.fetch_ohlcv(symbol, "1h", limit=50)
+                await binance_fb.close()
+            except Exception:
+                pass
+
+        if df_5m is None or df_5m.empty:
+            return web.json_response({
+                "success": False,
+                "error": f"Gagal mengambil data candle untuk symbol {symbol}. Pastikan symbol futures valid (contoh: BTCUSDT, LTCUSDT, SOLUSDT)."
+            }, status=400)
+
+        # Hitung indikator 5M
+        df_5m = calculate_bollinger_bands(df_5m)
+        df_5m = calculate_rsi(df_5m, length=14)
+
+        # Hitung indikator 1H
+        if df_1h is not None and not df_1h.empty:
+            df_1h = calculate_rsi(df_1h, length=14)
+            htf_trend = get_htf_trend(df_1h)
+            rsi_1h = round(float(df_1h.iloc[-1].get("RSI", 50.0)), 2)
+        else:
+            htf_trend = "SIDEWAYS"
+            rsi_1h = 50.0
+
+        last_5m = df_5m.iloc[-1]
+        curr_price = float(last_5m["close"])
+        rsi_5m = round(float(last_5m.get("RSI", 50.0)), 2)
+
+        upper_bb = float(last_5m.get("upper_band", last_5m.get("bb_upper", curr_price * 1.02)))
+        lower_bb = float(last_5m.get("lower_band", last_5m.get("bb_lower", curr_price * 0.98)))
+        mid_bb = float(last_5m.get("middle_band", last_5m.get("bb_middle", curr_price)))
+
+        bb_zone = "LOWER" if curr_price <= lower_bb * 1.005 else ("UPPER" if curr_price >= upper_bb * 0.995 else "MID")
+
+        # ATR & Volatilitas
+        high_low = df_5m["high"] - df_5m["low"]
+        atr_val = float(high_low.rolling(14).mean().iloc[-1]) if len(high_low) >= 14 else 0.0
+        atr_pct = round((atr_val / curr_price * 100.0), 2) if curr_price > 0 else 0.0
+
+        # Volume RVOL
+        vol_sma = df_5m["volume"].rolling(20).mean().iloc[-1] if len(df_5m) >= 20 else df_5m["volume"].mean()
+        curr_vol = float(df_5m["volume"].iloc[-1])
+        rvol = round(float(curr_vol / vol_sma), 2) if vol_sma > 0 else 1.0
+
+        # Pola Candlestick & Squeeze
+        breakout = calculate_dormant_breakout_score(df_5m)
+        squeeze_score = round(float(breakout.get("score", 0.0)), 1)
+        pump_intel = detect_explosive_pre_pump(df_5m, symbol=symbol)
+        pattern_info = detect_candlestick_patterns(df_5m)
+
+        pattern_name = pattern_info.get("pattern", "NONE")
+        pattern_type = pattern_info.get("type", "NEUTRAL")
+
+        # SMC Structure & AVWAP
+        smc_res = analyze_market_structure(df_5m)
+        smc_regime = smc_res.get("regime", "SIDEWAYS")
+        avwap_res = calculate_dynamic_swing_avwap(df_5m)
+        ema_res = detect_ema21_pullback(df_5m)
+
+        # Confluence Scores
+        conf_long = calculate_confluence_score(
+            df_5m=df_5m,
+            df_htf=df_1h,
+            side="LONG",
+            pattern_name=pattern_name,
+            pattern_type=pattern_type,
+            near_lower_bb=(curr_price <= lower_bb * 1.005),
+            near_upper_bb=(curr_price >= upper_bb * 0.995),
+            is_oversold=(rsi_5m <= 35),
+            is_overbought=(rsi_5m >= 75),
+            vol_ratio=rvol,
+            breakout_info=breakout,
+            htf_trend=htf_trend,
+            pump_info=pump_intel,
+        )
+
+        conf_short = calculate_confluence_score(
+            df_5m=df_5m,
+            df_htf=df_1h,
+            side="SHORT",
+            pattern_name=pattern_name,
+            pattern_type=pattern_type,
+            near_lower_bb=(curr_price <= lower_bb * 1.005),
+            near_upper_bb=(curr_price >= upper_bb * 0.995),
+            is_oversold=(rsi_5m <= 35),
+            is_overbought=(rsi_5m >= 75),
+            vol_ratio=rvol,
+            breakout_info=breakout,
+            htf_trend=htf_trend,
+            pump_info=pump_intel,
+        )
+
+        score_long = round(float(conf_long.get("total_score", 0.0)), 1)
+        score_short = round(float(conf_short.get("total_score", 0.0)), 1)
+
+        dynamic_lev = calculate_volatility_adjusted_leverage(atr_val, curr_price, base_leverage=int(getattr(bot_config, "leverage", 20) or 20))
+
+        # Keputusan AI
+        if score_long >= 70.0 and score_long >= score_short:
+            verdict = "STRONG_BUY_LONG"
+            verdict_label = "🟢 STRONG BUY / LONG"
+            verdict_side = "LONG"
+            active_conf = conf_long
+            best_score = score_long
+        elif score_short >= 70.0 and score_short > score_long:
+            verdict = "STRONG_SELL_SHORT"
+            verdict_label = "🔴 STRONG SELL / SHORT"
+            verdict_side = "SHORT"
+            active_conf = conf_short
+            best_score = score_short
+        elif score_long >= 55.0 and score_long >= score_short:
+            verdict = "MODERATE_LONG"
+            verdict_label = "🟡 POTENTIAL LONG (WATCH PULLBACK)"
+            verdict_side = "LONG"
+            active_conf = conf_long
+            best_score = score_long
+        elif score_short >= 55.0:
+            verdict = "MODERATE_SHORT"
+            verdict_label = "🟡 POTENTIAL SHORT (WATCH RESISTANCE)"
+            verdict_side = "SHORT"
+            active_conf = conf_short
+            best_score = score_short
+        else:
+            verdict = "NEUTRAL_WAIT"
+            verdict_label = "⚪ NEUTRAL / WAIT CONFIRMATION"
+            verdict_side = "WAIT"
+            active_conf = conf_long if score_long >= score_short else conf_short
+            best_score = max(score_long, score_short)
+
+        # Target TP / SL
+        tp_pct = float(getattr(bot_config, "tp_percent", 45.0) or 45.0)
+        sl_pct = float(getattr(bot_config, "sl_percent", 25.0) or 25.0)
+        tp_dist = (tp_pct / 100.0) / dynamic_lev
+        sl_dist = (sl_pct / 100.0) / dynamic_lev
+
+        if verdict_side == "SHORT":
+            tp1_p = round(curr_price * (1.0 - tp_dist), 6)
+            tp2_p = round(curr_price * (1.0 - (tp_dist * 1.5)), 6)
+            sl_p = round(curr_price * (1.0 + sl_dist), 6)
+        else:
+            tp1_p = round(curr_price * (1.0 + tp_dist), 6)
+            tp2_p = round(curr_price * (1.0 + (tp_dist * 1.5)), 6)
+            sl_p = round(curr_price * (1.0 - sl_dist), 6)
+
+        # 2. Query Memory PostgreSQL Database
+        db_memory = {
+            "total_trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "win_rate": 0.0,
+            "recent_entries": []
+        }
+        pool = await get_pool()
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    tot = await conn.fetchval("SELECT count(*) FROM pattern_entries WHERE symbol = $1", symbol) or 0
+                    w = await conn.fetchval("SELECT count(*) FROM pattern_entries WHERE symbol = $1 AND result = 'WIN'", symbol) or 0
+                    l = await conn.fetchval("SELECT count(*) FROM pattern_entries WHERE symbol = $1 AND result = 'LOSS'", symbol) or 0
+                    wr = round((w / tot * 100.0), 1) if tot > 0 else 0.0
+
+                    recent_rows = await conn.fetch(
+                        "SELECT entry_id, side, entry_price, result, pnl, alasan, entered_at FROM pattern_entries WHERE symbol = $1 ORDER BY id DESC LIMIT 5",
+                        symbol
+                    )
+                    recent_list = []
+                    for r in recent_rows:
+                        recent_list.append({
+                            "entry_id": r["entry_id"],
+                            "side": r["side"],
+                            "entry_price": float(r["entry_price"] or 0),
+                            "result": r["result"] or "OPEN / PENDING",
+                            "pnl": round(float(r["pnl"] or 0), 2) if r["pnl"] is not None else "-",
+                            "alasan": r["alasan"] or "-",
+                            "time": r["entered_at"].strftime("%Y-%m-%d %H:%M:%S") if r.get("entered_at") else "-"
+                        })
+                    db_memory = {
+                        "total_trades": tot,
+                        "wins": w,
+                        "losses": l,
+                        "win_rate": wr,
+                        "recent_entries": recent_list
+                    }
+            except Exception as e_db:
+                logger.warning(f"[ANALYZE COIN] DB memory query error: {e_db}")
+
+        return web.json_response({
+            "success": True,
+            "symbol": symbol,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S WIB"),
+            "current_price": curr_price,
+            "verdict": {
+                "code": verdict,
+                "label": verdict_label,
+                "side": verdict_side,
+                "confluence_score": best_score,
+                "score_long": score_long,
+                "score_short": score_short,
+            },
+            "setup": {
+                "entry_price": curr_price,
+                "tp1_price": tp1_p,
+                "tp2_price": tp2_p,
+                "sl_price": sl_p,
+                "tp_percent": tp_pct,
+                "sl_percent": sl_pct,
+                "recommended_leverage": dynamic_lev,
+                "recommended_margin": float(getattr(bot_config, "margin_usdt", 1.0) or 1.0),
+                "risk_reward_ratio": f"1 : {round(tp_pct / sl_pct, 2)}",
+            },
+            "pillars": {
+                "htf_trend": htf_trend,
+                "smc_market_structure": smc_regime,
+                "rsi_5m": rsi_5m,
+                "rsi_1h": rsi_1h,
+                "bb_zone": bb_zone,
+                "bb_upper": round(upper_bb, 6),
+                "bb_middle": round(mid_bb, 6),
+                "bb_lower": round(lower_bb, 6),
+                "atr_percent": atr_pct,
+                "rvol": rvol,
+                "squeeze_score": squeeze_score,
+                "candlestick_pattern": pattern_name,
+                "pattern_type": pattern_type,
+                "pre_pump_tier": pump_intel.get("tier", "NONE"),
+                "pre_pump_score": round(float(pump_intel.get("score", 0)), 1),
+                "avwap_fair_value": round(float(avwap_res.get("avwap", curr_price)), 6),
+                "is_ema21_pullback": bool(ema_res.get("is_pullback", False)),
+            },
+            "confluence_breakdown": active_conf.get("breakdown", {}),
+            "db_memory": db_memory,
+        })
+    except Exception as exc:
+        logger.error(f"[ANALYZE COIN] Gagal analisis {symbol}: {exc}", exc_info=True)
+        return web.json_response({"success": False, "error": f"Error menganalisis {symbol}: {str(exc)}"}, status=500)
+    finally:
+        if temp_client:
+            await temp_client.close()
+
+
 def create_dashboard_app() -> web.Application:
     """Factory untuk instance aiohttp web application."""
     app = web.Application()
@@ -470,6 +775,7 @@ def create_dashboard_app() -> web.Application:
     app.router.add_get("/api/patterns", api_patterns)
     app.router.add_get("/api/symbols", api_symbols)
     app.router.add_get("/api/candles/{symbol}", api_candles)
+    app.router.add_get("/api/analyze-coin", api_analyze_coin)
     app.router.add_get("/api/trades", api_trades)
     app.router.add_get("/api/pnl-chart", api_pnl_chart)
     app.router.add_get("/api/scanner/logs", api_scanner_logs)
