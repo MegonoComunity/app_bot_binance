@@ -466,11 +466,12 @@ async def scanner_loop():
                                 )
                                 print(f"[HASIL LATIHAN] {symbol} {v_side}: {exit_label} ({roi_pct:+.2f}% ROE) | Setup: {v_trade.get('alasan')}")
                                 
-                                # Kirim hasil simulasi ke channel Telegram
+                                # Kirim hasil simulasi ke admin dan channel Telegram
                                 try:
-                                    sim_channel = TELEGRAM_ERROR_CHAT_ID if TELEGRAM_ERROR_CHAT_ID else TELEGRAM_ADMIN_CHAT_ID
-                                    if sim_channel:
-                                        await safe_send_message(bot, sim_channel, msg)
+                                    if TELEGRAM_ADMIN_CHAT_ID:
+                                        await safe_send_message(bot, TELEGRAM_ADMIN_CHAT_ID, msg)
+                                    if TELEGRAM_ERROR_CHAT_ID and TELEGRAM_ERROR_CHAT_ID != TELEGRAM_ADMIN_CHAT_ID:
+                                        await safe_send_message(bot, TELEGRAM_ERROR_CHAT_ID, msg)
                                 except Exception as e_res:
                                     print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
                                 
@@ -1626,8 +1627,10 @@ async def profitable_position_monitor_loop():
                                         f"• **Stop Loss Baru:** `{new_sl:.6f}` (Entry + 0.1% Fee Buffer)\n\n"
                                         f"✨ *Trade sekarang 100% Bebas Risiko (Anti Rungkad).* Target TP Statik tetap aktif!"
                                     )
-                                    paper_chat = TELEGRAM_ERROR_CHAT_ID if TELEGRAM_ERROR_CHAT_ID else TELEGRAM_ADMIN_CHAT_ID
-                                    await safe_send_message(bot, paper_chat, be_msg)
+                                    if TELEGRAM_ADMIN_CHAT_ID:
+                                        await safe_send_message(bot, TELEGRAM_ADMIN_CHAT_ID, be_msg)
+                                    if TELEGRAM_ERROR_CHAT_ID and TELEGRAM_ERROR_CHAT_ID != TELEGRAM_ADMIN_CHAT_ID:
+                                        await safe_send_message(bot, TELEGRAM_ERROR_CHAT_ID, be_msg)
                                 except Exception as e_be_msg:
                                     print(f"[TELEGRAM] Gagal kirim notif Auto-BE: {e_be_msg}")
 
@@ -1727,8 +1730,10 @@ async def profitable_position_monitor_loop():
                             }
 
                             try:
-                                paper_chat = TELEGRAM_ERROR_CHAT_ID if TELEGRAM_ERROR_CHAT_ID else TELEGRAM_ADMIN_CHAT_ID
-                                await send_order_filled_notification(bot, paper_chat, o_data)
+                                if TELEGRAM_ADMIN_CHAT_ID:
+                                    await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, o_data)
+                                if TELEGRAM_ERROR_CHAT_ID and TELEGRAM_ERROR_CHAT_ID != TELEGRAM_ADMIN_CHAT_ID:
+                                    await send_order_filled_notification(bot, TELEGRAM_ERROR_CHAT_ID, o_data)
                             except Exception as e_fill_notif:
                                 print(f"[TELEGRAM] Gagal kirim notifikasi closed order paper: {e_fill_notif}")
 
@@ -2101,7 +2106,10 @@ async def profitable_position_monitor_loop():
                                 "order_type": f"AUTO_{reason}",
                             })
                             try:
-                                await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                                if TELEGRAM_ADMIN_CHAT_ID:
+                                    await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                                if TELEGRAM_ERROR_CHAT_ID and TELEGRAM_ERROR_CHAT_ID != TELEGRAM_ADMIN_CHAT_ID:
+                                    await send_order_filled_notification(bot, TELEGRAM_ERROR_CHAT_ID, order_data)
                             except Exception as e_fill_notif:
                                 print(f"[TELEGRAM] Gagal kirim notifikasi closed order monitor: {e_fill_notif}")
                         continue
@@ -2191,7 +2199,10 @@ async def profitable_position_monitor_loop():
                                 "ai_eval_summary": meta.get("ai_eval_summary", time_close_reason),
                             }
                             try:
-                                await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                                if TELEGRAM_ADMIN_CHAT_ID:
+                                    await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                                if TELEGRAM_ERROR_CHAT_ID and TELEGRAM_ERROR_CHAT_ID != TELEGRAM_ADMIN_CHAT_ID:
+                                    await send_order_filled_notification(bot, TELEGRAM_ERROR_CHAT_ID, order_data)
                             except Exception as e_ntf:
                                 print(f"[TELEGRAM] Gagal kirim notifikasi real time exit: {e_ntf}")
                         continue
@@ -2286,7 +2297,13 @@ async def profitable_position_monitor_loop():
                             "alasan_masuk": f"{meta.get('alasan', 'Sinyal AI')} | Auto-close holding profit",
                             "ai_eval_summary": meta.get("ai_eval_summary", ""),
                         }
-                        await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                        try:
+                            if TELEGRAM_ADMIN_CHAT_ID:
+                                await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, order_data)
+                            if TELEGRAM_ERROR_CHAT_ID and TELEGRAM_ERROR_CHAT_ID != TELEGRAM_ADMIN_CHAT_ID:
+                                await send_order_filled_notification(bot, TELEGRAM_ERROR_CHAT_ID, order_data)
+                        except Exception as e_profit_notif:
+                            print(f"[TELEGRAM] Gagal kirim notifikasi profit auto close: {e_profit_notif}")
 
             except Exception as monitor_error:
                 err_str = str(monitor_error)
