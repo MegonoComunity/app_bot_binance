@@ -1635,6 +1635,10 @@
           <i data-lucide="calendar" style="width: 18px;"></i>
           Analisa Winrate Daily & Monthly
         </button>
+        <button class="nav-tab-btn" onclick="switchTab('tab-database', this)" style="border-color: rgba(0, 230, 118, 0.4); color: #69f0ae;">
+          <i data-lucide="database" style="width: 18px;"></i>
+          💾 Database Manager (Backup & Restore)
+        </button>
       </div>
 
       <!-- Tab 1: Trade History Table -->
@@ -1900,6 +1904,154 @@
           </div>
         </div>
 
+      </div>
+
+      <!-- Tab 7: Database Manager (Backup & Restore Engine) -->
+      <div id="tab-database" class="tab-content" style="display: none;">
+        <div style="display: flex; flex-direction: column; gap: 20px;">
+          
+          <!-- Health & Status Banner -->
+          <div style="background: rgba(10, 15, 26, 0.7); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(0, 230, 118, 0.15); display: flex; align-items: center; justify-content: center; color: var(--accent-emerald);">
+                <i data-lucide="database" style="width: 20px;"></i>
+              </div>
+              <div>
+                <div style="font-weight: 700; font-size: 1.05rem; color: #fff;">Status Database PostgreSQL</div>
+                <div style="font-size: 0.8rem; color: var(--text-dim);" id="db-health-status-desc">Mendeteksi koneksi database...</div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span id="badge-db-conn" class="badge badge-approved" style="font-size: 0.85rem; padding: 6px 14px;">
+                🟢 DATABASE TERHUBUNG
+              </span>
+              <button class="btn-ctrl btn-ctrl-mode" onclick="loadDatabaseHealth()" style="padding: 6px 14px; font-size: 0.8rem;">
+                <i data-lucide="refresh-cw" style="width: 14px;"></i> Refresh Status
+              </button>
+            </div>
+          </div>
+
+          <!-- 4 Database Tables Stats Cards -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
+            <div class="metric-card">
+              <div class="metric-header">
+                <span>Riwayat Transaksi</span>
+                <i data-lucide="history" style="width: 16px; color: var(--accent-cyan);"></i>
+              </div>
+              <div class="metric-value" id="db-stat-trades">0</div>
+              <div class="metric-sub">Tabel: <code>trade_history</code></div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-header">
+                <span>Pola Candlestick AI</span>
+                <i data-lucide="brain" style="width: 16px; color: var(--accent-purple);"></i>
+              </div>
+              <div class="metric-value" id="db-stat-patterns">0</div>
+              <div class="metric-sub">Tabel: <code>pattern_memory</code></div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-header">
+                <span>Entri Sinyal Pembelajaran</span>
+                <i data-lucide="target" style="width: 16px; color: var(--accent-amber);"></i>
+              </div>
+              <div class="metric-value" id="db-stat-entries">0</div>
+              <div class="metric-sub">Tabel: <code>pattern_entries</code></div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-header">
+                <span>Candlestick OHLCV Live</span>
+                <i data-lucide="bar-chart-2" style="width: 16px; color: var(--accent-emerald);"></i>
+              </div>
+              <div class="metric-value" id="db-stat-candles">0</div>
+              <div class="metric-sub">Tabel: <code>ohlcv_candles</code></div>
+            </div>
+          </div>
+
+          <!-- Two Main Engine Cards (Backup vs Restore) -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px;">
+            
+            <!-- Card 1: Backup Engine -->
+            <div style="background: rgba(10, 15, 26, 0.7); border: 1px solid var(--border-color); border-radius: 14px; padding: 22px; display: flex; flex-direction: column; gap: 16px;">
+              <div style="display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 12px;">
+                <i data-lucide="download-cloud" style="color: var(--accent-cyan); width: 20px;"></i>
+                <h3 class="font-heading" style="font-size: 1.1rem; color: #fff;">Export & Backup Database</h3>
+              </div>
+              <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5;">
+                Ekspor seluruh data riwayat trading, rekaman memori win rate pola candlestick AI, dan sinyal historis menjadi file SQL & ZIP terkompresi.
+              </p>
+              <div style="background: rgba(0, 242, 254, 0.05); border: 1px solid rgba(0, 242, 254, 0.2); border-radius: 8px; padding: 12px; font-size: 0.8rem; color: var(--text-muted);">
+                Backup terbaru di server: <strong id="db-latest-backup-info" style="color: var(--accent-cyan);">-</strong>
+              </div>
+              <button id="btn-trigger-backup" class="btn-analyze" onclick="triggerDatabaseBackup()" style="justify-content: center; width: 100%;">
+                <i data-lucide="save" style="width: 18px;"></i>
+                <span>Buat & Simpan Backup Baru</span>
+              </button>
+            </div>
+
+            <!-- Card 2: Restore Engine (Smart Upsert) -->
+            <div style="background: rgba(10, 15, 26, 0.7); border: 1px solid rgba(0, 230, 118, 0.25); border-radius: 14px; padding: 22px; display: flex; flex-direction: column; gap: 16px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 12px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <i data-lucide="upload-cloud" style="color: var(--accent-emerald); width: 20px;"></i>
+                  <h3 class="font-heading" style="font-size: 1.1rem; color: #fff;">Restore & Smart Upsert</h3>
+                </div>
+                <span class="badge badge-approved" style="font-size: 0.72rem;">SMART DEDUPLICATION</span>
+              </div>
+              <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5;">
+                Pilih file <code>.sql</code> atau <code>.zip</code>. Bot akan memverifikasi koneksi database dan menyatukan data lama dengan data baru tanpa terjadi duplikasi.
+              </p>
+
+              <!-- File Upload Input Form -->
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="border: 2px dashed rgba(255, 255, 255, 0.15); border-radius: 10px; padding: 16px; text-align: center; cursor: pointer; background: rgba(0,0,0,0.2);" onclick="document.getElementById('db-restore-file-input').click()">
+                  <i data-lucide="file-up" style="width: 24px; color: var(--accent-emerald); margin-bottom: 6px;"></i>
+                  <div style="font-size: 0.85rem; color: #fff; font-weight: 600;" id="db-upload-filename-text">Klik untuk pilih file .sql / .zip</div>
+                  <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 2px;">Atau drag & drop file backup ke area ini</div>
+                  <input type="file" id="db-restore-file-input" accept=".sql,.zip" style="display: none;" onchange="handleRestoreFileSelected(this)">
+                </div>
+
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                  <button id="btn-upload-restore" class="btn-ctrl btn-ctrl-resume" onclick="submitDatabaseRestore()" style="flex: 1; justify-content: center; padding: 10px;">
+                    <i data-lucide="play" style="width: 16px;"></i> Upload & Restore
+                  </button>
+                  <button id="btn-restore-latest" class="btn-ctrl btn-ctrl-mode" onclick="triggerDatabaseRestoreLatest()" style="flex: 1; justify-content: center; padding: 10px;">
+                    <i data-lucide="rotate-ccw" style="width: 16px;"></i> Restore Terbaru Server
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Table of Server Backups -->
+          <div style="background: rgba(10, 15, 26, 0.7); border: 1px solid var(--border-color); border-radius: 14px; padding: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+              <span class="font-heading" style="font-weight: 700; color: #fff; font-size: 1rem; display: flex; align-items: center; gap: 8px;">
+                <i data-lucide="archive" style="width: 18px; color: var(--accent-amber);"></i> Arsip File Backup di Server (Folder <code>database/</code>)
+              </span>
+              <button class="terminal-btn" onclick="loadDatabaseBackupsList()">
+                <i data-lucide="refresh-cw" style="width: 14px;"></i> Refresh Arsip
+              </button>
+            </div>
+            <div class="table-responsive">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Nama File</th>
+                    <th>Ukuran</th>
+                    <th>Waktu Modifikasi</th>
+                    <th>Format</th>
+                    <th style="text-align: right;">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="db-backups-table-body">
+                  <tr><td colspan="5" style="text-align: center; color: var(--text-dim);">Memuat arsip file backup...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
       </div>
     </section>
 
@@ -2633,6 +2785,9 @@
       btn.classList.add('active');
       if (tabId === 'tab-scanner-live') {
         loadScannerLogs();
+      } else if (tabId === 'tab-database') {
+        loadDatabaseHealth();
+        loadDatabaseBackupsList();
       }
     }
 
@@ -2837,6 +2992,246 @@
       }, 3500);
     }
 
+    // ─── Database Manager (Backup & Restore Engine) JS ─────────────────
+    async function loadDatabaseHealth() {
+      try {
+        const res = await fetch('/api/database/health');
+        const data = await res.json();
+
+        const badge = document.getElementById('db-health-badge');
+        const detail = document.getElementById('db-health-detail');
+
+        if (data.connected) {
+          if (badge) {
+            badge.className = 'badge badge-approved';
+            badge.textContent = '🟢 POSTGRESQL ONLINE & TERHUBUNG';
+          }
+          if (detail) {
+            detail.textContent = `Host: ${data.host}:${data.port} | Database: ${data.database} | User: ${data.user}`;
+          }
+        } else {
+          if (badge) {
+            badge.className = 'badge badge-blacklisted';
+            badge.textContent = '🔴 DATABASE OFFLINE / TERPUTUS';
+          }
+          if (detail) {
+            detail.textContent = `Error: ${data.message || 'Gagal koneksi ke database'}`;
+          }
+        }
+
+        const stats = data.stats || {};
+        if (document.getElementById('db-stat-trades')) document.getElementById('db-stat-trades').textContent = (stats.trade_history || 0).toLocaleString();
+        if (document.getElementById('db-stat-patterns')) document.getElementById('db-stat-patterns').textContent = (stats.pattern_memory || 0).toLocaleString();
+        if (document.getElementById('db-stat-entries')) document.getElementById('db-stat-entries').textContent = (stats.pattern_entries || 0).toLocaleString();
+        if (document.getElementById('db-stat-candles')) document.getElementById('db-stat-candles').textContent = (stats.ohlcv_candles || 0).toLocaleString();
+      } catch (e) {
+        console.error('Error load database health:', e);
+      }
+    }
+
+    async function loadDatabaseBackupsList() {
+      try {
+        const res = await fetch('/api/database/backups');
+        const data = await res.json();
+
+        const tbody = document.getElementById('db-backups-table-body');
+        const latestInfo = document.getElementById('db-latest-backup-info');
+
+        const files = data.files || [];
+        if (latestInfo) {
+          if (files.length > 0) {
+            latestInfo.textContent = `${files[0].filename} (${files[0].size_str}, ${files[0].modified})`;
+          } else {
+            latestInfo.textContent = 'Belum ada backup tersimpan di server';
+          }
+        }
+
+        if (!tbody) return;
+
+        if (files.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-dim); padding: 20px;">Belum ada arsip backup di direktori server. Klik "Buat & Simpan Backup Baru" untuk membuat backup pertama.</td></tr>';
+          return;
+        }
+
+        let html = '';
+        files.forEach((f, idx) => {
+          const isLatest = idx === 0;
+          html += `
+            <tr>
+              <td>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <i data-lucide="${f.extension === '.zip' ? 'archive' : 'file-code'}" style="width: 16px; color: ${f.extension === '.zip' ? 'var(--accent-amber)' : 'var(--accent-cyan)'};"></i>
+                  <span style="font-weight: 600; color: #fff;">${f.filename}</span>
+                  ${isLatest ? '<span class="badge badge-approved" style="font-size: 0.65rem; padding: 2px 6px;">LATEST</span>' : ''}
+                </div>
+              </td>
+              <td>${f.size_str}</td>
+              <td style="color: var(--text-muted);">${f.modified}</td>
+              <td><span class="badge" style="background: rgba(255,255,255,0.06);">${f.extension.toUpperCase()}</span></td>
+              <td style="text-align: right;">
+                <button class="terminal-btn" onclick="restoreSpecificServerBackup('${f.filename}')" style="color: #69f0ae; border-color: rgba(0, 230, 118, 0.3);">
+                  <i data-lucide="rotate-ccw" style="width: 12px;"></i> Restore
+                </button>
+              </td>
+            </tr>
+          `;
+        });
+        tbody.innerHTML = html;
+        if (window.lucide) lucide.createIcons();
+      } catch (e) {
+        console.error('Error load database backups:', e);
+      }
+    }
+
+    async function triggerDatabaseBackup() {
+      const btn = document.getElementById('btn-trigger-backup');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="spin-icon" style="width: 18px;"></i> <span>Mengekspor Database...</span>';
+      }
+      try {
+        const res = await fetch('/api/database/backup', { method: 'POST' });
+        const result = await res.json();
+        if (result.success) {
+          showToast(`✅ ${result.message}`);
+          loadDatabaseBackupsList();
+        } else {
+          showToast(`⚠️ ${result.message}`, true);
+        }
+      } catch (e) {
+        showToast(`❌ Gagal backup database: ${e.message}`, true);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i data-lucide="save" style="width: 18px;"></i> <span>Buat & Simpan Backup Baru</span>';
+          if (window.lucide) lucide.createIcons();
+        }
+      }
+    }
+
+    async function triggerDatabaseRestoreLatest() {
+      if (!confirm('Apakah Anda yakin ingin me-restore dari backup TERBARU di server?\n\nSistem akan mendeteksi koneksi database terlebih dahulu, lalu melakukan Smart Upsert data baru ke database tanpa menghapus data unik yang sudah ada.')) {
+        return;
+      }
+
+      const btn = document.getElementById('btn-restore-latest');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Memproses...';
+      }
+
+      try {
+        const res = await fetch('/api/database/restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ use_latest: true })
+        });
+        const result = await res.json();
+        if (result.success) {
+          showToast(`✅ ${result.message}`);
+          alert(`🎉 Restore Berhasil!\n\n${result.message}\nTotal Eksekusi Statement: ${result.executed_statements || 0}`);
+          loadDatabaseHealth();
+          refreshAllData();
+        } else {
+          showToast(`❌ ${result.message}`, true);
+          alert(`⚠️ Restore Gagal:\n${result.message}`);
+        }
+      } catch (e) {
+        showToast(`❌ Gagal restore: ${e.message}`, true);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i data-lucide="rotate-ccw" style="width: 16px;"></i> Restore Terbaru Server';
+          if (window.lucide) lucide.createIcons();
+        }
+      }
+    }
+
+    async function restoreSpecificServerBackup(filename) {
+      if (!confirm(`Restore database dari file server "${filename}"?\n\nSistem akan cek koneksi PostgreSQL lalu timpa/update data kembar dengan data baru.`)) {
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/database/restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: filename })
+        });
+        const result = await res.json();
+        if (result.success) {
+          showToast(`✅ Restore selesai: ${filename}`);
+          alert(`🎉 Restore File Berhasil!\n\nFile: ${filename}\n${result.message}`);
+          loadDatabaseHealth();
+          refreshAllData();
+        } else {
+          showToast(`❌ Gagal: ${result.message}`, true);
+          alert(`⚠️ Gagal Restore:\n${result.message}`);
+        }
+      } catch (e) {
+        showToast(`❌ Gagal restore file: ${e.message}`, true);
+      }
+    }
+
+    function handleRestoreFileSelected(input) {
+      const textElem = document.getElementById('db-upload-filename-text');
+      if (input.files && input.files.length > 0) {
+        const file = input.files[0];
+        if (textElem) {
+          textElem.textContent = `📁 File dipilih: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+          textElem.style.color = '#69f0ae';
+        }
+      }
+    }
+
+    async function submitDatabaseRestore() {
+      const fileInput = document.getElementById('db-restore-file-input');
+      if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+        alert('Silakan pilih file .sql atau .zip terlebih dahulu dengan mengklik kotak upload!');
+        return;
+      }
+
+      const file = fileInput.files[0];
+      if (!confirm(`Mulai proses Restore dari file "${file.name}"?\n\nKoneksi database akan diverifikasi terlebih dahulu, lalu dilakukan Smart Upsert (jika ada data kembar, data baru yang akan diambil).`)) {
+        return;
+      }
+
+      const btn = document.getElementById('btn-upload-restore');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Mengunggah & Memproses...';
+      }
+
+      const formData = new FormData();
+      formData.append('backup_file', file);
+
+      try {
+        const res = await fetch('/api/database/restore', {
+          method: 'POST',
+          body: formData
+        });
+        const result = await res.json();
+        if (result.success) {
+          showToast(`✅ ${result.message}`);
+          alert(`🎉 Restore Berhasil!\n\n${result.message}\nFile: ${file.name}\nTotal Statement: ${result.executed_statements || 0}`);
+          loadDatabaseHealth();
+          loadDatabaseBackupsList();
+          refreshAllData();
+        } else {
+          showToast(`❌ ${result.message}`, true);
+          alert(`⚠️ Restore Gagal:\n${result.message}`);
+        }
+      } catch (e) {
+        showToast(`❌ Gagal unggah file restore: ${e.message}`, true);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i data-lucide="play" style="width: 16px;"></i> Upload & Restore';
+          if (window.lucide) lucide.createIcons();
+        }
+      }
+    }
+
     // Initial Startup
     document.addEventListener('DOMContentLoaded', () => {
       initPnlChart();
@@ -2845,6 +3240,8 @@
       loadPatterns();
       loadTrades();
       loadScannerLogs();
+      loadDatabaseHealth();
+      loadDatabaseBackupsList();
 
       // Auto refresh log scanner setiap 2 detik untuk konsol real-time
       setInterval(() => {

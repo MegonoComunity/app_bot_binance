@@ -1628,6 +1628,65 @@ async def backup_db_handler(message: types.Message):
     except Exception as e:
         await wait_msg.edit_text(f"❌ Error saat backup: {e}")
 
+
+@dp.message(Command("restore_latest"))
+async def restore_latest_handler(message: types.Message):
+    wait_msg = await message.answer("🔄 Sedang mendeteksi koneksi PostgreSQL & me-restore file backup terbaru...")
+    try:
+        from database.restore_service import restore_from_latest_backup
+        result = await restore_from_latest_backup()
+        await wait_msg.edit_text(result["message"], parse_mode="Markdown")
+    except Exception as e:
+        await wait_msg.edit_text(f"❌ Error saat restore: {e}")
+
+
+@dp.message(Command("restore_db"))
+async def restore_db_handler(message: types.Message):
+    text = (
+        "📥 **PANDUAN RESTORE DATABASE POSTGRESQL**\n\n"
+        "Anda dapat me-restore database dengan 2 cara praktis:\n\n"
+        "1️⃣ **Upload File Backup Langsung:**\n"
+        "   Kirimkan file `.sql` atau `.zip` langsung ke bot Telegram ini (sebagai Document).\n"
+        "   Bot akan mengecek koneksi database & otomatis menggabungkan data (*Smart Upsert*).\n\n"
+        "2️⃣ **Restore File Terbaru di Server:**\n"
+        "   Ketik perintah `/restore_latest` untuk langsung me-restore backup terakhir yang ada di server.\n\n"
+        "3️⃣ **Via Web Dashboard:**\n"
+        "   Buka `http://localhost:8000` untuk upload via panel web."
+    )
+    await message.answer(text, parse_mode="Markdown")
+
+
+@dp.message(F.document)
+async def handle_document_upload(message: types.Message):
+    doc = message.document
+    if not doc or not doc.file_name:
+        return
+
+    fn = doc.file_name.lower()
+    if not (fn.endswith(".sql") or fn.endswith(".zip")):
+        return
+
+    wait_msg = await message.answer(f"📥 Mengunduh file `{doc.file_name}` dan memverifikasi koneksi database...")
+    temp_dir = os.path.join("database", "temp_telegram_uploads")
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_file = os.path.join(temp_dir, doc.file_name)
+
+    try:
+        await bot.download(doc, destination=temp_file)
+        await wait_msg.edit_text("⚙️ File terunduh. Menjalankan *Smart Upsert* ke database...")
+
+        from database.restore_service import execute_database_restore
+        result = await execute_database_restore(temp_file)
+        await wait_msg.edit_text(result["message"], parse_mode="Markdown")
+    except Exception as exc:
+        await wait_msg.edit_text(f"❌ Gagal memproses restore file `{doc.file_name}`: {exc}")
+    finally:
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except Exception:
+                pass
+
 @dp.message(F.text == "📊 Status Bot")
 async def btn_status_handler(message: types.Message):
     await status_handler(message)

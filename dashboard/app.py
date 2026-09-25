@@ -767,6 +767,119 @@ async def api_analyze_coin(request: web.Request) -> web.Response:
             await temp_client.close()
 
 
+# ─── Database Backup & Restore Endpoints ─────────────────────────────────────
+
+from database.restore_service import (
+    check_database_health,
+    get_database_stats,
+    get_available_backup_files,
+    execute_database_restore,
+    restore_from_latest_backup,
+)
+from database.send_backup_to_telegram import execute_database_backup
+
+
+async def api_database_health(request: web.Request) -> web.Response:
+    """Mengembalikan status koneksi database & statistik baris tabel."""
+    health = await check_database_health()
+    stats = await get_database_stats() if health.get("connected") else {}
+    backups = get_available_backup_files()
+    return web.json_response({
+        "connected": health.get("connected", False),
+        "error": health.get("error"),
+        "stats": stats,
+        "backups_count": len(backups),
+        "latest_backup": backups[0] if backups else None,
+    })
+
+
+async def api_database_backups(request: web.Request) -> web.Response:
+    """Mengembalikan daftar file backup database yang tersedia."""
+    backups = get_available_backup_files()
+    return web.json_response({"backups": backups, "total": len(backups)})
+
+
+async def api_database_backup(request: web.Request) -> web.Response:
+    """Memicu backup database baru."""
+    try:
+        success = await execute_database_backup()
+        backups = get_available_backup_files()
+        latest = backups[0] if backups else None
+        return web.json_response({
+            "success": success,
+            "message": "✅ Backup database berhasil dibuat." if success else "❌ Gagal membuat backup database.",
+            "latest_backup": latest,
+        })
+    except Exception as exc:
+        logger.error(f"[DB API BACKUP] Error: {exc}")
+        return web.json_response({"success": False, "message": str(exc)}, status=500)
+
+
+async def api_database_restore(request: web.Request) -> web.Response:
+    """
+    Me-restore database dari upload file multipart (.sql / .zip)
+    atau dari backup terbaru di server.
+    """
+    health = await check_database_health()
+    if not health.get("connected"):
+        return web.json_response({
+            "success": False,
+            "message": f"❌ Koneksi database gagal: {health.get('error')}. Pastikan PostgreSQL aktif.",
+            "error": "DB_NOT_CONNECTED"
+        }, status=503)
+
+    if request.content_type == "application/json":
+        try:
+            body = await request.json()
+            if body.get("use_latest"):
+                res = await restore_from_latest_backup()
+                return web.json_response(res)
+            elif body.get("filename"):
+                target_path = os.path.join("database", os.path.basename(body["filename"]))
+                res = await execute_database_restore(target_path)
+                return web.json_response(res)
+        except Exception as e_json:
+            return web.json_response({"success": False, "message": str(e_json)}, status=400)
+
+    # Multipart Form File Upload
+    try:
+        reader = await request.multipart()
+        saved_file_path = None
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if part.name == "backup_file" and part.filename:
+                fn = os.path.basename(part.filename)
+                temp_dir = os.path.join("database", "temp_web_uploads")
+                os.makedirs(temp_dir, exist_ok=True)
+                saved_file_path = os.path.join(temp_dir, fn)
+                with open(saved_file_path, "wb") as f:
+                    while True:
+                        chunk = await part.read_chunk()
+                        if not chunk:
+                            break
+                        f.write(chunk)
+
+        if not saved_file_path or not os.path.exists(saved_file_path):
+            return web.json_response({
+                "success": False,
+                "message": "❌ File backup tidak terlampir dalam request."
+            }, status=400)
+
+        result = await execute_database_restore(saved_file_path)
+        try:
+            if os.path.exists(saved_file_path):
+                os.remove(saved_file_path)
+        except Exception:
+            pass
+
+        return web.json_response(result)
+    except Exception as exc:
+        logger.error(f"[DB API RESTORE] Error: {exc}", exc_info=True)
+        return web.json_response({"success": False, "message": f"Gagal restore: {str(exc)}"}, status=500)
+
+
 def create_dashboard_app() -> web.Application:
     """Factory untuk instance aiohttp web application."""
     app = web.Application()
@@ -780,6 +893,11 @@ def create_dashboard_app() -> web.Application:
     app.router.add_get("/api/pnl-chart", api_pnl_chart)
     app.router.add_get("/api/scanner/logs", api_scanner_logs)
     app.router.add_post("/api/scanner/control", api_scanner_control)
+    # Database Management Routes
+    app.router.add_get("/api/database/health", api_database_health)
+    app.router.add_get("/api/database/backups", api_database_backups)
+    app.router.add_post("/api/database/backup", api_database_backup)
+    app.router.add_post("/api/database/restore", api_database_restore)
     return app
 
 
