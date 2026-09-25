@@ -82,6 +82,11 @@ MIN_CONFLUENCE_SCORE_ENV = float(os.getenv("MIN_CONFLUENCE_SCORE", "60.0"))
 USE_AUTO_BREAKEVEN_ENV = os.getenv("USE_AUTO_BREAKEVEN", "True").lower() == "true"
 AUTO_BREAKEVEN_ROI_PERCENT_ENV = float(os.getenv("AUTO_BREAKEVEN_ROI_PERCENT", "25.0"))
 
+# Fitur Adaptif: Rolling Time-Window Win Rate & Probation Gatekeeper
+WINRATE_EVAL_WINDOW_ENV = os.getenv("WINRATE_EVAL_WINDOW", "DAILY").upper().strip()
+MIN_PATTERN_WINRATE_ENV = float(os.getenv("MIN_PATTERN_WINRATE", "50.0"))
+USE_PROBATION_MODE_ENV = os.getenv("USE_PROBATION_MODE", "True").lower() == "true"
+
 # Validasi API key sesuai exchange aktif
 if ACTIVE_EXCHANGE == "BINANCE":
     if not BINANCE_API_KEY or not BINANCE_API_SECRET:
@@ -143,6 +148,11 @@ class BotSettings:
             cls._instance.use_auto_breakeven = USE_AUTO_BREAKEVEN_ENV
             cls._instance.auto_breakeven_roi_percent = AUTO_BREAKEVEN_ROI_PERCENT_ENV
             
+            # Fitur Adaptif: Rolling Time-Window Win Rate & Probation
+            cls._instance.winrate_eval_window = WINRATE_EVAL_WINDOW_ENV if WINRATE_EVAL_WINDOW_ENV in {"DAILY", "RECENT_10", "RECENT_20", "WEEKLY", "MONTHLY", "ALL_TIME"} else "DAILY"
+            cls._instance.min_pattern_winrate = MIN_PATTERN_WINRATE_ENV
+            cls._instance.use_probation_mode = USE_PROBATION_MODE_ENV
+            
             # Fitur Lanjutan
             cls._instance.daily_loss_limit_percent = DAILY_LOSS_LIMIT_PERCENT_ENV
             cls._instance.min_order_book_depth_usdt = MIN_ORDER_BOOK_DEPTH_USDT_ENV
@@ -151,6 +161,43 @@ class BotSettings:
             cls._instance.limit_order_timeout_seconds = LIMIT_ORDER_TIMEOUT_SECONDS_ENV
         return cls._instance
         
+    def update_winrate_window(self, window: str):
+        w = window.upper().strip()
+        alias_map = {
+            "DAILY": "DAILY",
+            "DAY": "DAILY",
+            "1D": "DAILY",
+            "24H": "DAILY",
+            "RECENT10": "RECENT_10",
+            "RECENT_10": "RECENT_10",
+            "RECENT20": "RECENT_20",
+            "RECENT_20": "RECENT_20",
+            "RECENT": "RECENT_20",
+            "WEEKLY": "WEEKLY",
+            "WEEK": "WEEKLY",
+            "7D": "WEEKLY",
+            "MONTHLY": "MONTHLY",
+            "MONTH": "MONTHLY",
+            "30D": "MONTHLY",
+            "ALL": "ALL_TIME",
+            "ALL_TIME": "ALL_TIME",
+        }
+        if w not in alias_map:
+            raise ValueError("Jendela waktu Win Rate harus: DAILY, RECENT_10, RECENT_20, WEEKLY, MONTHLY, atau ALL_TIME")
+        target_w = alias_map[w]
+        self.winrate_eval_window = target_w
+        self._update_env("WINRATE_EVAL_WINDOW", target_w)
+
+    def update_min_pattern_winrate(self, val: float):
+        if val < 0.0 or val > 100.0:
+            raise ValueError("Min Pattern Win Rate harus antara 0.0% sampai 100.0%")
+        self.min_pattern_winrate = val
+        self._update_env("MIN_PATTERN_WINRATE", str(val))
+
+    def update_probation_mode(self, enabled: bool):
+        self.use_probation_mode = enabled
+        self._update_env("USE_PROBATION_MODE", str(enabled))
+
     def update_confluence_score(self, val: float):
         if val < 50.0 or val > 100.0:
             raise ValueError("Min Confluence Score harus antara 50.0 sampai 100.0")

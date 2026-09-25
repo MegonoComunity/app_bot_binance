@@ -359,17 +359,79 @@ async def api_trades(request: web.Request) -> web.Response:
     if os.path.exists("virtual_success_log.csv"):
         try:
             import csv
-            with open("virtual_success_log.csv", "r", encoding="utf-8") as f:
+            import re
+            with open("virtual_success_log.csv", "r", encoding="utf-8", errors="replace") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    virtual_trades.append(row)
-        except Exception:
-            pass
+                    time_val = row.get("Time") or row.get("time") or ""
+                    symbol_val = row.get("Symbol") or row.get("symbol") or ""
+                    side_val = (row.get("Tipe") or row.get("Side") or row.get("side") or "LONG").upper()
+                    try:
+                        entry_p = float(row.get("Entry Price") or row.get("entry_price") or 0.0)
+                    except Exception:
+                        entry_p = 0.0
+                    try:
+                        tp_or_exit_p = float(row.get("TP Price") or row.get("Exit Price") or row.get("exit_price") or 0.0)
+                    except Exception:
+                        tp_or_exit_p = 0.0
+                    alasan_val = row.get("Alasan") or row.get("alasan") or ""
+                    status_val = row.get("Status") or row.get("status") or ""
+
+                    # Extract PnL % if present in status string
+                    pnl_pct = 0.0
+                    pnl_match = re.search(r"PnL:\s*([+-]?\d+(?:\.\d+)?)%", status_val)
+                    if pnl_match:
+                        try:
+                            pnl_pct = float(pnl_match.group(1))
+                        except Exception:
+                            pnl_pct = 0.0
+                    elif entry_p > 0 and tp_or_exit_p > 0:
+                        # Estimasi fallback dengan leverage 20x
+                        price_diff = ((tp_or_exit_p - entry_p) / entry_p) if side_val == "LONG" else ((entry_p - tp_or_exit_p) / entry_p)
+                        pnl_pct = price_diff * 100.0 * 20.0
+
+                    status_upper = status_val.upper()
+                    is_win = "WIN" in status_upper or "SUCCESS" in status_upper or "TARGET" in status_upper or "TP" in status_upper or (pnl_pct > 0 and "LOSS" not in status_upper)
+                    is_breakeven = "BREAKEVEN" in status_upper or "BREAK-EVEN" in status_upper or abs(pnl_pct) < 0.2
+                    is_time_exit = "TIME" in status_upper or "SAFETY_CUT_LOSS" in status_upper or "SAFETY_PROFIT_LOCK" in status_upper
+
+                    # Kategori strategi / alasan
+                    reason_cat = "OTHER"
+                    alasan_upper = alasan_val.upper()
+                    if "PRE-PUMP" in alasan_upper or "PUMP" in alasan_upper or "ATH" in alasan_upper:
+                        reason_cat = "PRE_PUMP"
+                    elif "BOLLINGER" in alasan_upper or "BB" in alasan_upper:
+                        reason_cat = "BOLLINGER"
+                    elif "RSI" in alasan_upper:
+                        reason_cat = "RSI"
+                    elif "MORNING STAR" in alasan_upper or "HAMMER" in alasan_upper or "ENGULFING" in alasan_upper or "CANDLE" in alasan_upper or "POLA" in alasan_upper:
+                        reason_cat = "PATTERN"
+                    elif "VOLUME" in alasan_upper or "RVOL" in alasan_upper:
+                        reason_cat = "VOLUME"
+                    elif "SUPPORT" in alasan_upper or "RESISTANCE" in alasan_upper:
+                        reason_cat = "SR_ZONE"
+
+                    virtual_trades.append({
+                        "Time": time_val,
+                        "Symbol": symbol_val,
+                        "Tipe": side_val,
+                        "Entry Price": entry_p,
+                        "TP Price": tp_or_exit_p,
+                        "Alasan": alasan_val,
+                        "Status": status_val,
+                        "pnl_percent": round(pnl_pct, 2),
+                        "is_win": bool(is_win),
+                        "is_breakeven": bool(is_breakeven),
+                        "is_time_exit": bool(is_time_exit),
+                        "reason_category": reason_cat,
+                    })
+        except Exception as e_v:
+            logger.debug(f"[DASHBOARD] Error parsing virtual trades: {e_v}")
 
     return web.json_response({
         "exchange_filter": exchange_param.upper(),
         "real_trades": real_trades,
-        "virtual_trades": list(reversed(virtual_trades[-50:])),
+        "virtual_trades": list(reversed(virtual_trades[-500:])),
     })
 
 

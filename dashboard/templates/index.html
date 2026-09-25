@@ -1708,25 +1708,148 @@
         </div>
       </div>
 
-      <!-- Tab 4: Virtual Paper Signals Table -->
+      <!-- Tab 4: Virtual Paper Signals & Simulation Intelligence Hub -->
       <div id="tab-virtual" class="tab-content" style="display: none;">
-        <div class="table-responsive">
-          <table>
-            <thead>
-              <tr>
-                <th>Waktu Sinyal</th>
-                <th>Symbol</th>
-                <th>Tipe</th>
-                <th>Harga Entry</th>
-                <th>Target TP</th>
-                <th>Alasan Sinyal Valid</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="virtual-table-body">
-              <tr><td colspan="7" style="text-align: center; color: var(--text-dim);">Memuat log sinyal virtual...</td></tr>
-            </tbody>
-          </table>
+        <div style="display: flex; flex-direction: column; gap: 20px;">
+          
+          <!-- Virtual Intelligence Summary KPI Cards -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
+            
+            <!-- 1. Win Rate & Sinyal Selesai -->
+            <div class="metric-card" style="border-color: rgba(0, 242, 254, 0.3);">
+              <div class="metric-header">
+                <span>Win Rate Simulasi</span>
+                <i data-lucide="target" style="width: 16px; color: var(--accent-cyan);"></i>
+              </div>
+              <div class="metric-value" id="val-virt-winrate" style="color: var(--accent-cyan);">0.0%</div>
+              <div class="metric-sub" id="val-virt-counts">0 Win / 0 Loss / 0 BE</div>
+            </div>
+
+            <!-- 2. Estimasi Net PnL & Total ROI -->
+            <div class="metric-card" style="border-color: rgba(0, 230, 118, 0.3);">
+              <div class="metric-header">
+                <span>Total Estimasi PnL (ROI)</span>
+                <i data-lucide="trending-up" style="width: 16px; color: var(--accent-emerald);"></i>
+              </div>
+              <div class="metric-value" id="val-virt-net-pnl" style="color: var(--accent-emerald);">+0.00%</div>
+              <div class="metric-sub" id="val-virt-pnl-sub">Gross: +0% | -0%</div>
+            </div>
+
+            <!-- 3. Koin Terbanyak Sinyal & Ter-Profit -->
+            <div class="metric-card" style="border-color: rgba(243, 186, 47, 0.3);">
+              <div class="metric-header">
+                <span>Koin Ter-Profit (Top Gainer)</span>
+                <i data-lucide="crown" style="width: 16px; color: var(--accent-amber);"></i>
+              </div>
+              <div class="metric-value" id="val-virt-top-coin" style="color: var(--accent-amber); font-size: 1.25rem;">-</div>
+              <div class="metric-sub" id="val-virt-top-coin-sub">0 sinyal | Winrate: 0%</div>
+            </div>
+
+            <!-- 4. Koin Paling Sering Loss -->
+            <div class="metric-card" style="border-color: rgba(255, 51, 102, 0.3);">
+              <div class="metric-header">
+                <span>Koin Sering Loss (Top Loser)</span>
+                <i data-lucide="alert-triangle" style="width: 16px; color: #ff3366;"></i>
+              </div>
+              <div class="metric-value" id="val-virt-loss-coin" style="color: #ff3366; font-size: 1.25rem;">-</div>
+              <div class="metric-sub" id="val-virt-loss-coin-sub">0 loss tercatat</div>
+            </div>
+
+            <!-- 5. Strategi / Alasan Sinyal Terbaik -->
+            <div class="metric-card" style="border-color: rgba(168, 85, 247, 0.3);">
+              <div class="metric-header">
+                <span>Alasan Sinyal Terbaik</span>
+                <i data-lucide="sparkles" style="width: 16px; color: var(--accent-purple);"></i>
+              </div>
+              <div class="metric-value" id="val-virt-best-reason" style="color: var(--accent-purple); font-size: 1.15rem;">-</div>
+              <div class="metric-sub" id="val-virt-best-reason-sub">Winrate Tertinggi</div>
+            </div>
+
+          </div>
+
+          <!-- Multi-Filter Toolbar -->
+          <div style="background: rgba(10, 15, 26, 0.85); border: 1px solid var(--border-color); border-radius: 12px; padding: 14px 18px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;">
+            
+            <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center; flex: 1;">
+              <!-- Search Symbol Input -->
+              <div style="position: relative; min-width: 180px;">
+                <input type="text" id="input-virt-search" placeholder="🔍 Cari Koin / Keyword..." oninput="filterVirtualTrades()" style="width: 100%; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.15); color: #fff; border-radius: 8px; padding: 7px 12px; font-size: 0.85rem; outline: none;">
+              </div>
+
+              <!-- Filter Status (Win / Loss / All) -->
+              <div>
+                <select id="select-virt-status" onchange="filterVirtualTrades()" style="background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.15); color: #fff; border-radius: 8px; padding: 7px 10px; font-size: 0.85rem; outline: none; cursor: pointer;">
+                  <option value="ALL">🎯 Semua Status</option>
+                  <option value="WIN">✅ Hanya WIN / Take Profit</option>
+                  <option value="LOSS">❌ Hanya LOSS / Stop Loss</option>
+                  <option value="BREAKEVEN">🛡️ Auto Break-Even</option>
+                  <option value="TIME_EXIT">⏳ Safety Time-Stop</option>
+                </select>
+              </div>
+
+              <!-- Filter Alasan Sinyal (Strategy Reason) -->
+              <div>
+                <select id="select-virt-category" onchange="filterVirtualTrades()" style="background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.15); color: #fff; border-radius: 8px; padding: 7px 10px; font-size: 0.85rem; outline: none; cursor: pointer;">
+                  <option value="ALL">📊 Semua Alasan Sinyal</option>
+                  <option value="PRE_PUMP">🔥 Pre-Pump Radar / ATH Breakout</option>
+                  <option value="BOLLINGER">🌊 Bollinger Bands Reversal</option>
+                  <option value="RSI">📉 RSI Oversold / Overbought</option>
+                  <option value="PATTERN">🕯️ Pola Candlestick (Morning Star, Hammer, dll)</option>
+                  <option value="VOLUME">🚀 Volume Spike / RVOL Konfluensi</option>
+                  <option value="SR_ZONE">🛡️ Support / Resistance Zone</option>
+                </select>
+              </div>
+
+              <!-- Filter Sisi (LONG / SHORT) -->
+              <div>
+                <select id="select-virt-side" onchange="filterVirtualTrades()" style="background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.15); color: #fff; border-radius: 8px; padding: 7px 10px; font-size: 0.85rem; outline: none; cursor: pointer;">
+                  <option value="ALL">Semua Sisi (LONG & SHORT)</option>
+                  <option value="LONG">🟢 Hanya LONG</option>
+                  <option value="SHORT">🔴 Hanya SHORT</option>
+                </select>
+              </div>
+
+              <!-- Urutkan Berdasarkan (Sorting) -->
+              <div>
+                <select id="select-virt-sort" onchange="filterVirtualTrades()" style="background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.15); color: #fff; border-radius: 8px; padding: 7px 10px; font-size: 0.85rem; outline: none; cursor: pointer;">
+                  <option value="NEWEST">⏱️ Waktu Terbaru</option>
+                  <option value="PNL_DESC">💰 PnL Tertinggi (Top Win)</option>
+                  <option value="PNL_ASC">🛑 Loss Terbesar (Biggest Loss)</option>
+                  <option value="OLDEST">⏳ Waktu Terlama</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Filter Badge & Reset Button -->
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span id="virt-filtered-count-badge" class="badge badge-approved" style="font-size: 0.78rem;">0 / 0 Sinyal</span>
+              <button onclick="resetVirtualFilters()" class="terminal-btn" style="padding: 6px 12px; font-size: 0.8rem;">
+                <i data-lucide="rotate-ccw" style="width: 13px;"></i> Reset Filter
+              </button>
+            </div>
+
+          </div>
+
+          <!-- Virtual Trades Table -->
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Waktu Sinyal</th>
+                  <th>Symbol</th>
+                  <th>Tipe</th>
+                  <th>Harga Entry ➔ Exit</th>
+                  <th>PnL / ROE (%)</th>
+                  <th>Alasan Sinyal Valid & Konfluensi</th>
+                  <th>Status & Eksekusi</th>
+                </tr>
+              </thead>
+              <tbody id="virtual-table-body">
+                <tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 24px;">Memuat riwayat latihan simulasi virtual...</td></tr>
+              </tbody>
+            </table>
+          </div>
+
         </div>
       </div>
 
@@ -2751,31 +2874,292 @@
           });
         }
 
-        // Virtual trades
-        const tbodyVirt = document.getElementById('virtual-table-body');
-        tbodyVirt.innerHTML = '';
-        if (!data.virtual_trades || data.virtual_trades.length === 0) {
-          tbodyVirt.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-dim);">Belum ada virtual trade.</td></tr>';
-        } else {
-          data.virtual_trades.forEach(v => {
-            const tr = document.createElement('tr');
-            const statusUpper = (v.Status || '').toUpperCase();
-            const isSuccess = statusUpper.includes('SUCCESS') || statusUpper.includes('SESUAI TARGET') || statusUpper.includes('TP');
-            tr.innerHTML = `
-              <td style="color: var(--text-dim); font-size: 0.8rem;">${v.Time || '-'}</td>
-              <td><strong>${v.Symbol || '-'}</strong></td>
-              <td><span class="badge ${v.Tipe === 'LONG' ? 'badge-long' : 'badge-short'}">${v.Tipe || '-'}</span></td>
-              <td>${v['Entry Price'] || '-'}</td>
-              <td>${v['TP Price'] || '-'}</td>
-              <td style="color: #93c5fd; font-size: 0.8rem;">${v.Alasan || '-'}</td>
-              <td><span class="badge ${isSuccess ? 'badge-approved' : 'badge-blacklisted'}">${v.Status || 'COMPLETED'}</span></td>
-            `;
-            tbodyVirt.appendChild(tr);
-          });
-        }
+        // Virtual trades dataset & intelligence
+        rawVirtualTrades = data.virtual_trades || [];
+        computeVirtualSummaryStats(rawVirtualTrades);
+        filterVirtualTrades();
       } catch (e) {
         console.error('Error load trades:', e);
       }
+    }
+
+    // ─── Virtual Simulation Intelligence & Multi-Filter Logic ────────
+    let rawVirtualTrades = [];
+
+    function computeVirtualSummaryStats(trades) {
+      if (!trades || trades.length === 0) {
+        if (document.getElementById('val-virt-winrate')) document.getElementById('val-virt-winrate').textContent = '0.0%';
+        if (document.getElementById('val-virt-counts')) document.getElementById('val-virt-counts').textContent = '0 Win / 0 Loss / 0 BE';
+        if (document.getElementById('val-virt-net-pnl')) document.getElementById('val-virt-net-pnl').textContent = '+0.00%';
+        if (document.getElementById('val-virt-pnl-sub')) document.getElementById('val-virt-pnl-sub').textContent = 'Gross: +0% | -0%';
+        if (document.getElementById('val-virt-top-coin')) document.getElementById('val-virt-top-coin').textContent = '-';
+        if (document.getElementById('val-virt-top-coin-sub')) document.getElementById('val-virt-top-coin-sub').textContent = '0 sinyal | Winrate: 0%';
+        if (document.getElementById('val-virt-loss-coin')) document.getElementById('val-virt-loss-coin').textContent = '-';
+        if (document.getElementById('val-virt-loss-coin-sub')) document.getElementById('val-virt-loss-coin-sub').textContent = '0 loss tercatat';
+        if (document.getElementById('val-virt-best-reason')) document.getElementById('val-virt-best-reason').textContent = '-';
+        if (document.getElementById('val-virt-best-reason-sub')) document.getElementById('val-virt-best-reason-sub').textContent = 'Belum ada data';
+        return;
+      }
+
+      let wins = 0;
+      let losses = 0;
+      let breakevens = 0;
+      let totalPnl = 0.0;
+      let grossWinPnl = 0.0;
+      let grossLossPnl = 0.0;
+
+      const coinMap = {};
+      const catMap = {};
+
+      trades.forEach(t => {
+        const pnl = Number(t.pnl_percent) || 0.0;
+        totalPnl += pnl;
+
+        if (t.is_breakeven) {
+          breakevens++;
+        } else if (t.is_win || pnl > 0) {
+          wins++;
+          grossWinPnl += pnl;
+        } else {
+          losses++;
+          grossLossPnl += Math.abs(pnl);
+        }
+
+        // Coin aggregator
+        const sym = t.Symbol || 'UNKNOWN';
+        if (!coinMap[sym]) {
+          coinMap[sym] = { count: 0, wins: 0, losses: 0, totalPnl: 0.0 };
+        }
+        coinMap[sym].count++;
+        coinMap[sym].totalPnl += pnl;
+        if (t.is_win || pnl > 0) coinMap[sym].wins++;
+        else if (!t.is_breakeven) coinMap[sym].losses++;
+
+        // Category aggregator
+        const cat = t.reason_category || 'OTHER';
+        if (!catMap[cat]) {
+          catMap[cat] = { count: 0, wins: 0, losses: 0, totalPnl: 0.0 };
+        }
+        catMap[cat].count++;
+        catMap[cat].totalPnl += pnl;
+        if (t.is_win || pnl > 0) catMap[cat].wins++;
+        else if (!t.is_breakeven) catMap[cat].losses++;
+      });
+
+      const totalCompleted = wins + losses + breakevens;
+      const wr = totalCompleted > 0 ? (wins / (wins + losses)) * 100.0 : 0.0;
+
+      // Update Win Rate Card
+      const wrElem = document.getElementById('val-virt-winrate');
+      if (wrElem) {
+        wrElem.textContent = isNaN(wr) ? '0.0%' : `${wr.toFixed(1)}%`;
+        wrElem.style.color = wr >= 55 ? 'var(--accent-emerald)' : (wr >= 45 ? 'var(--accent-cyan)' : 'var(--accent-rose)');
+      }
+      if (document.getElementById('val-virt-counts')) {
+        document.getElementById('val-virt-counts').textContent = `${wins} Win / ${losses} Loss / ${breakevens} BE (Total: ${trades.length})`;
+      }
+
+      // Update PnL & Total ROI Card
+      const pnlElem = document.getElementById('val-virt-net-pnl');
+      if (pnlElem) {
+        const sign = totalPnl >= 0 ? '+' : '';
+        pnlElem.textContent = `${sign}${totalPnl.toFixed(2)}% ROI`;
+        pnlElem.style.color = totalPnl >= 0 ? 'var(--accent-emerald)' : '#ff3366';
+      }
+      if (document.getElementById('val-virt-pnl-sub')) {
+        document.getElementById('val-virt-pnl-sub').textContent = `Gross Win: +${grossWinPnl.toFixed(1)}% | Loss: -${grossLossPnl.toFixed(1)}%`;
+      }
+
+      // Find Top Gainer Coin
+      let topCoin = null;
+      let topCoinPnl = -Infinity;
+      let lossCoin = null;
+      let maxLossCount = -1;
+
+      Object.entries(coinMap).forEach(([sym, data]) => {
+        if (data.totalPnl > topCoinPnl) {
+          topCoinPnl = data.totalPnl;
+          topCoin = { symbol: sym, ...data };
+        }
+        if (data.losses > maxLossCount || (data.losses === maxLossCount && data.totalPnl < (lossCoin ? lossCoin.totalPnl : 0))) {
+          maxLossCount = data.losses;
+          lossCoin = { symbol: sym, ...data };
+        }
+      });
+
+      if (topCoin && document.getElementById('val-virt-top-coin')) {
+        const tSign = topCoin.totalPnl >= 0 ? '+' : '';
+        document.getElementById('val-virt-top-coin').textContent = `${topCoin.symbol} (${tSign}${topCoin.totalPnl.toFixed(1)}%)`;
+        const topWr = topCoin.count > 0 ? ((topCoin.wins / topCoin.count) * 100).toFixed(0) : 0;
+        document.getElementById('val-virt-top-coin-sub').textContent = `${topCoin.count} Sinyal | ${topCoin.wins}W / ${topCoin.losses}L (${topWr}% WR)`;
+      }
+
+      if (lossCoin && document.getElementById('val-virt-loss-coin')) {
+        const lSign = lossCoin.totalPnl >= 0 ? '+' : '';
+        document.getElementById('val-virt-loss-coin').textContent = `${lossCoin.symbol} (${lSign}${lossCoin.totalPnl.toFixed(1)}%)`;
+        document.getElementById('val-virt-loss-coin-sub').textContent = `${lossCoin.losses} kali SL/Cut Loss dari ${lossCoin.count} sinyal`;
+      }
+
+      // Find Best Strategy Reason
+      const catNames = {
+        'PRE_PUMP': '🔥 Pre-Pump Radar',
+        'BOLLINGER': '🌊 Bollinger Bands',
+        'RSI': '📉 RSI Oversold',
+        'PATTERN': '🕯️ Pola Candlestick',
+        'VOLUME': '🚀 Volume Spike RVOL',
+        'SR_ZONE': '🛡️ S/R Support Zone',
+        'OTHER': '⚙️ Setup Indikator AI'
+      };
+
+      let bestCat = null;
+      let bestCatWr = -1;
+
+      Object.entries(catMap).forEach(([cat, data]) => {
+        const catTotal = data.wins + data.losses;
+        if (catTotal >= 2) {
+          const cWr = (data.wins / catTotal) * 100.0;
+          if (cWr > bestCatWr) {
+            bestCatWr = cWr;
+            bestCat = { name: catNames[cat] || cat, wr: cWr, count: data.count, wins: data.wins, pnl: data.totalPnl };
+          }
+        }
+      });
+
+      if (bestCat && document.getElementById('val-virt-best-reason')) {
+        document.getElementById('val-virt-best-reason').textContent = bestCat.name;
+        document.getElementById('val-virt-best-reason-sub').textContent = `Win Rate: ${bestCat.wr.toFixed(1)}% (${bestCat.count} Sinyal | PnL: ${bestCat.pnl >= 0 ? '+' : ''}${bestCat.pnl.toFixed(1)}%)`;
+      } else if (document.getElementById('val-virt-best-reason')) {
+        document.getElementById('val-virt-best-reason').textContent = '🔥 Multi-Konfluensi AI';
+        document.getElementById('val-virt-best-reason-sub').textContent = 'Akurasi sinyal stabil';
+      }
+    }
+
+    function filterVirtualTrades() {
+      const searchQuery = (document.getElementById('input-virt-search')?.value || '').toUpperCase().trim();
+      const statusFilter = document.getElementById('select-virt-status')?.value || 'ALL';
+      const catFilter = document.getElementById('select-virt-category')?.value || 'ALL';
+      const sideFilter = document.getElementById('select-virt-side')?.value || 'ALL';
+      const sortOrder = document.getElementById('select-virt-sort')?.value || 'NEWEST';
+
+      let filtered = [...rawVirtualTrades];
+
+      // 1. Search Query (Symbol or Reason Keyword)
+      if (searchQuery) {
+        filtered = filtered.filter(t => {
+          const sym = (t.Symbol || '').toUpperCase();
+          const al = (t.Alasan || '').toUpperCase();
+          const st = (t.Status || '').toUpperCase();
+          return sym.includes(searchQuery) || al.includes(searchQuery) || st.includes(searchQuery);
+        });
+      }
+
+      // 2. Status Filter
+      if (statusFilter !== 'ALL') {
+        filtered = filtered.filter(t => {
+          if (statusFilter === 'WIN') return t.is_win && !t.is_breakeven;
+          if (statusFilter === 'LOSS') return !t.is_win && !t.is_breakeven;
+          if (statusFilter === 'BREAKEVEN') return t.is_breakeven;
+          if (statusFilter === 'TIME_EXIT') return t.is_time_exit;
+          return true;
+        });
+      }
+
+      // 3. Category Filter
+      if (catFilter !== 'ALL') {
+        filtered = filtered.filter(t => (t.reason_category || 'OTHER') === catFilter);
+      }
+
+      // 4. Side Filter
+      if (sideFilter !== 'ALL') {
+        filtered = filtered.filter(t => (t.Tipe || 'LONG').toUpperCase() === sideFilter);
+      }
+
+      // 5. Sort Order
+      if (sortOrder === 'NEWEST') {
+        // already newest first
+      } else if (sortOrder === 'OLDEST') {
+        filtered.reverse();
+      } else if (sortOrder === 'PNL_DESC') {
+        filtered.sort((a, b) => (Number(b.pnl_percent) || 0) - (Number(a.pnl_percent) || 0));
+      } else if (sortOrder === 'PNL_ASC') {
+        filtered.sort((a, b) => (Number(a.pnl_percent) || 0) - (Number(b.pnl_percent) || 0));
+      }
+
+      // Update Badge Counter
+      const badge = document.getElementById('virt-filtered-count-badge');
+      if (badge) {
+        badge.textContent = `${filtered.length} / ${rawVirtualTrades.length} Sinyal`;
+      }
+
+      // Render Table
+      const tbodyVirt = document.getElementById('virtual-table-body');
+      if (!tbodyVirt) return;
+      tbodyVirt.innerHTML = '';
+
+      if (filtered.length === 0) {
+        tbodyVirt.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 30px;">Tidak ada sinyal simulasi yang cocok dengan filter yang dipilih.</td></tr>';
+        return;
+      }
+
+      filtered.forEach(v => {
+        const tr = document.createElement('tr');
+        const pnl = Number(v.pnl_percent) || 0.0;
+        const isWin = v.is_win || pnl > 0;
+        const isBE = v.is_breakeven;
+        const pnlSign = pnl >= 0 ? '+' : '';
+
+        let statusBadgeClass = 'badge-approved';
+        let statusIcon = '🎯';
+        let statusLabel = 'WIN (TP)';
+
+        const rawStatus = (v.Status || '').toUpperCase();
+        if (isBE) {
+          statusBadgeClass = 'badge-learning';
+          statusIcon = '🛡️';
+          statusLabel = 'BREAKEVEN';
+        } else if (v.is_time_exit) {
+          statusBadgeClass = isWin ? 'badge-approved' : 'badge-blacklisted';
+          statusIcon = isWin ? '⏳' : '🛑';
+          statusLabel = isWin ? 'PROFIT LOCK 4H' : 'CUT LOSS 2H';
+        } else if (!isWin) {
+          statusBadgeClass = 'badge-blacklisted';
+          statusIcon = '🛑';
+          statusLabel = 'STOP LOSS (SL)';
+        }
+
+        const entryStr = v['Entry Price'] ? Number(v['Entry Price']).toFixed(4) : '-';
+        const exitStr = v['TP Price'] ? Number(v['TP Price']).toFixed(4) : '-';
+
+        tr.innerHTML = `
+          <td style="color: var(--text-dim); font-size: 0.82rem; white-space: nowrap;">${v.Time || '-'}</td>
+          <td><strong style="color: #fff; font-size: 0.92rem;">${v.Symbol || '-'}</strong></td>
+          <td><span class="badge ${v.Tipe === 'LONG' ? 'badge-long' : 'badge-short'}">${v.Tipe || 'LONG'}</span></td>
+          <td style="font-size: 0.84rem; font-family: monospace;">${entryStr} ➔ ${exitStr}</td>
+          <td>
+            <span class="badge ${pnl >= 0 ? 'badge-approved' : 'badge-blacklisted'}" style="font-weight: 700; font-size: 0.82rem;">
+              ${pnlSign}${pnl.toFixed(2)}%
+            </span>
+          </td>
+          <td style="color: #93c5fd; font-size: 0.82rem; max-width: 320px; line-height: 1.4;">${escapeHtml(v.Alasan || '-')}</td>
+          <td>
+            <span class="badge ${statusBadgeClass}" style="white-space: nowrap;">
+              ${statusIcon} ${statusLabel}
+            </span>
+          </td>
+        `;
+        tbodyVirt.appendChild(tr);
+      });
+
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function resetVirtualFilters() {
+      if (document.getElementById('input-virt-search')) document.getElementById('input-virt-search').value = '';
+      if (document.getElementById('select-virt-status')) document.getElementById('select-virt-status').value = 'ALL';
+      if (document.getElementById('select-virt-category')) document.getElementById('select-virt-category').value = 'ALL';
+      if (document.getElementById('select-virt-side')) document.getElementById('select-virt-side').value = 'ALL';
+      if (document.getElementById('select-virt-sort')) document.getElementById('select-virt-sort').value = 'NEWEST';
+      filterVirtualTrades();
     }
 
     function switchTab(tabId, btn) {
@@ -2788,6 +3172,8 @@
       } else if (tabId === 'tab-database') {
         loadDatabaseHealth();
         loadDatabaseBackupsList();
+      } else if (tabId === 'tab-virtual') {
+        if (window.lucide) lucide.createIcons();
       }
     }
 

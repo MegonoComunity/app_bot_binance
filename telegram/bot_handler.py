@@ -171,12 +171,18 @@ async def help_handler(message: types.Message):
         f"• `/pause` — Jeda sementara scanning koin\n"
         f"• `/resume` — Lanjutkan kembali scanning\n"
         f"• `/close_all` — Tutup darurat semua posisi aktif di exchange\n\n"
+        f"🔹 **WIN RATE & GATEKEEPER AI:**\n"
+        f"• `/winrate` — Rekap Win Rate Multi-Timeframe (Daily, Weekly, Monthly)\n"
+        f"• `/set_wr_window <daily|recent20|weekly|all>` — Atur jendela waktu hitung win rate\n"
+        f"• `/set_min_wr <persen>` — Atur batas minimal Win Rate (contoh: `/set_min_wr 50`)\n"
+        f"• `/reset_blacklist` — Reset status blokir pola secara instan\n\n"
         f"🔹 **MONITORING & KEUANGAN:**\n"
         f"• `/status` — Cek Saldo Wallet, Floating PnL, & Posisi Terbuka\n"
         f"• `/hitung_margin` — Kalkulator perhitungan margin aman sesuai modal\n"
         f"• `/reset_demo` — Reset saldo simulasi ($100) & riwayat winrate\n"
         f"• `/analisa <koin>` — Analisa teknikal & AI instan (contoh: `/analisa BTCUSDT`)\n"
-        f"• `/backup_db` — Export dan kirim backup database ke Telegram\n\n"
+        f"• `/backup_db` — Export dan kirim backup database ke Telegram\n"
+        f"• `/restore_db` — Panduan & eksekusi restore database\n\n"
         f"🔹 **PENGATURAN PARAMETER:**\n"
         f"• `/set_exchange <binance|bitunix>` — Ganti exchange aktif (Binance / Bitunix)\n"
         f"• `/set_modal <nominal>` — Set modal awal simulasi (contoh: `/set_modal 500`)\n"
@@ -1687,6 +1693,131 @@ async def handle_document_upload(message: types.Message):
             except Exception:
                 pass
 
+@dp.message(Command("winrate", "wr", "wr_stats"))
+async def winrate_command_handler(message: types.Message):
+    """Laporan performa Win Rate multi-timeframe & status gatekeeper."""
+    try:
+        from core.learner import get_multi_timeframe_summary
+        summary = get_multi_timeframe_summary()
+        
+        g = summary.get("global", {})
+        d = g.get("daily", {})
+        w = g.get("weekly", {})
+        m = g.get("monthly", {})
+        a = g.get("all_time", {})
+        
+        active_window = getattr(bot_config, "winrate_eval_window", "DAILY")
+        min_wr = getattr(bot_config, "min_pattern_winrate", 50.0)
+        probation = "AKTIF 🛡️ (1x Uji Coba Harian)" if getattr(bot_config, "use_probation_mode", True) else "OFF"
+        
+        text = (
+            "📊 **REKAP PERFORMA WIN RATE & GATEKEEPER AI** 📊\n\n"
+            "⚙️ **Konfigurasi Gatekeeper Saat Ini:**\n"
+            f"• 🪟 Jendela Evaluasi : `{active_window}`\n"
+            f"• 🎯 Target Min WR    : `{min_wr:.0f}%` (Pola di bawah ini ditolak dari Real)\n"
+            f"• 🛡️ Probation Mode  : `{probation}`\n\n"
+            "📈 **Statistik Win Rate Multi-Timeframe:**\n"
+            f"• 📅 **Hari Ini (Daily 24H) :** `{d.get('win_rate', 0):.1f}%` ({d.get('win', 0)}W / {d.get('loss', 0)}L) | PnL: `{d.get('total_pnl', 0):+.2f}%`\n"
+            f"• 🗓️ **Mingguan (Weekly 7D) :** `{w.get('win_rate', 0):.1f}%` ({w.get('win', 0)}W / {w.get('loss', 0)}L) | PnL: `{w.get('total_pnl', 0):+.2f}%`\n"
+            f"• 📆 **Bulanan (Monthly 30D):** `{m.get('win_rate', 0):.1f}%` ({m.get('win', 0)}W / {m.get('loss', 0)}L) | PnL: `{m.get('total_pnl', 0):+.2f}%`\n"
+            f"• 🌐 **All-Time Akumulasi   :** `{a.get('win_rate', 0):.1f}%` ({a.get('win', 0)}W / {a.get('loss', 0)}L) | PnL: `{a.get('total_pnl', 0):+.2f}%`\n\n"
+            "🧠 **Performa Pola & Setup Teratas:**\n"
+        )
+        
+        cats = summary.get("categories", [])[:6]
+        if not cats:
+            text += "• _Belum ada transaksi terekam di AI Learner._\n"
+        else:
+            for c in cats:
+                w_info = c.get("daily", {}) if active_window == "DAILY" else (c.get("weekly", {}) if active_window == "WEEKLY" else c.get("all_time", {}))
+                c_wr = w_info.get("win_rate", 0)
+                status_icon = "🟢" if c_wr >= min_wr or w_info.get("total", 0) < 2 else "🔴"
+                text += (
+                    f"• {status_icon} **{c['name']}**\n"
+                    f"  └ `{active_window}`: `{c_wr:.1f}%` ({w_info.get('win', 0)}W/{w_info.get('loss', 0)}L) | Total: {c['total_all']}x\n"
+                )
+                
+        text += (
+            "\n──────────────\n"
+            "💡 **Perintah Cepat Telegram:**\n"
+            "• `/set_wr_window daily` (Hanya nilai 24 jam terakhir)\n"
+            "• `/set_wr_window recent20` (Hanya nilai 20 trade terakhir)\n"
+            "• `/set_wr_window weekly` (Nilai 7 hari terakhir)\n"
+            "• `/set_min_wr 50` (Atur batas minimal Win Rate %)\n"
+            "• `/reset_blacklist` (Reset blokir semua pola secara instan)"
+        )
+        await message.answer(text, parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Gagal memuat statistik winrate: {e}")
+
+@dp.message(Command("set_wr_window", "set_window"))
+async def set_wr_window_command_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip().lower()
+    if not arg:
+        cur_w = getattr(bot_config, "winrate_eval_window", "DAILY")
+        await message.answer(
+            f"ℹ️ **Jendela Waktu Evaluasi Win Rate Saat Ini:** `{cur_w}`\n\n"
+            "**Pilihan Jendela Waktu:**\n"
+            "• `/set_wr_window daily` (Hanya hitung 24 jam terakhir - Fresh harian)\n"
+            "• `/set_wr_window recent10` (Hanya 10 trade terakhir)\n"
+            "• `/set_wr_window recent20` (Hanya 20 trade terakhir)\n"
+            "• `/set_wr_window weekly` (Hitung 7 hari terakhir)\n"
+            "• `/set_wr_window all` (Hitung seluruh histori All-Time)",
+            parse_mode="Markdown"
+        )
+        return
+        
+    try:
+        bot_config.update_winrate_window(arg)
+        await message.answer(
+            f"✅ **Jendela Waktu Win Rate Berhasil Diubah!**\n"
+            f"• Mode Aktif: `{bot_config.winrate_eval_window}`\n"
+            f"• Pola dengan Win Rate < `{bot_config.min_pattern_winrate}%` pada jendela ini akan otomatis dialihkan ke Latihan Simulasi.",
+            parse_mode="Markdown"
+        )
+    except ValueError as ve:
+        await message.answer(f"❌ {ve}")
+
+@dp.message(Command("set_min_wr", "set_min_winrate"))
+async def set_min_wr_command_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg:
+        cur_min = getattr(bot_config, "min_pattern_winrate", 50.0)
+        await message.answer(
+            f"ℹ️ **Batas Minimal Win Rate Saat Ini:** `{cur_min:.1f}%`\n\n"
+            "**Contoh Penggunaan:**\n"
+            "• `/set_min_wr 50` (Pola butuh minimal 50% WR)\n"
+            "• `/set_min_wr 55` (Pola butuh minimal 55% WR)",
+            parse_mode="Markdown"
+        )
+        return
+        
+    try:
+        val = float(arg)
+        bot_config.update_min_pattern_winrate(val)
+        await message.answer(
+            f"✅ **Batas Minimal Win Rate Berhasil Diubah!**\n"
+            f"• Target Min Win Rate: `{val:.1f}%`\n"
+            f"• Evaluasi Jendela: `{bot_config.winrate_eval_window}`",
+            parse_mode="Markdown"
+        )
+    except ValueError:
+        await message.answer("❌ Format salah. Masukkan angka persentase (misal: `/set_min_wr 50`).", parse_mode="Markdown")
+
+@dp.message(Command("reset_blacklist", "unblock_patterns"))
+async def reset_blacklist_command_handler(message: types.Message):
+    try:
+        from core.learner import reset_pattern_blacklist
+        count = reset_pattern_blacklist()
+        await message.answer(
+            f"✅ **Status Blokir Pola Berhasil Direset!**\n"
+            f"• Total `{count}` kategori pola telah di-refresh.\n"
+            f"• Semua pola kini memiliki kesempatan segar untuk dievaluasi pada market hari ini.",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await message.answer(f"❌ Gagal reset blacklist: {e}")
+
 @dp.message(F.text == "📊 Status Bot")
 async def btn_status_handler(message: types.Message):
     await status_handler(message)
@@ -1705,6 +1836,8 @@ async def btn_pengaturan_handler(message: types.Message):
     scan_target_desc = "Semua Altcoin Futures (ALL)" if bot_config.scan_target == "ALL" else f"Top {bot_config.scan_target}"
     scan_sort_desc = "Volume Terbesar 📊" if bot_config.scan_sort == "VOLUME_DESC" else ("Change % 🔥" if bot_config.scan_sort == "CHANGE_DESC" else ("Gainers 🚀" if bot_config.scan_sort == "GAINERS" else "Losers 🔻"))
     min_conf = getattr(bot_config, "min_confluence_score", 80.0)
+    eval_win = getattr(bot_config, "winrate_eval_window", "DAILY")
+    min_wr = getattr(bot_config, "min_pattern_winrate", 50.0)
 
     text = (
         "⚙️ **PENGATURAN BOT LENGKAP** ⚙️\n\n"
@@ -1718,40 +1851,41 @@ async def btn_pengaturan_handler(message: types.Message):
         f"• Stop Loss   : `{bot_config.sl_percent}%` ROI\n"
         f"• Auto Break-Even : `{be_status}` (Risk-Free Mode 🛡️)\n"
         f"• Trailing Stop   : `{ts_status}` (Act: `{bot_config.ts_activation_percent}%`, Call: `{bot_config.ts_callback_rate}%`)\n\n"
-        "⚡ **3. EKSEKUSI & SCANNER PRO**\n"
+        "🧠 **3. ADAPTIVE WIN RATE GATEKEEPER**\n"
+        f"• Jendela Waktu : `{eval_win}` (Rolling Window)\n"
+        f"• Min Win Rate  : `{min_wr:.0f}%` (Ambang batas Real vs Latihan)\n"
+        f"• Probation Mode: `{'AKTIF (1x Test Harian)' if bot_config.use_probation_mode else 'OFF'}`\n\n"
+        "⚡ **4. EKSEKUSI & SCANNER PRO**\n"
         f"• Exchange    : `{bot_config.active_exchange}` | Mode: `{bot_config.trading_mode}`\n"
         f"• Confluence Matrix : Min `{min_conf:.0f}/100` Poin (5-Pillar Pro Setup)\n"
         f"• Target Scan : `{scan_target_desc}`\n"
         f"• Urutan Scan : `{scan_sort_desc}`\n"
         f"• Leverage    : `{bot_config.leverage}x`\n"
         f"• Max Posisi  : `{bot_config.max_open_positions} koin bersamaan`\n"
-        f"• RSI Filter  : `{bot_config.rsi_length}` (Oversold: `{bot_config.rsi_oversold:g}` / Overbought: `{bot_config.rsi_overbought:g}`)\n"
-        f"• Scanner Mode: `{bot_config.scanner_mode}`\n"
+        f"• RSI Filter  : `{bot_config.rsi_length}` (Oversold: `{bot_config.rsi_oversold:g}` / Overbought: `{bot_config.rsi_overbought:g}`)\n\n"
         "──────────────\n"
         "📝 **DAFTAR PERINTAH PENGATURAN:**\n"
+        "📊 **Win Rate & Evaluasi AI:**\n"
+        "• `/winrate` (Cek rekap Win Rate Daily / Weekly / Monthly)\n"
+        "• `/set_wr_window daily` (Hanya nilai 24 jam terakhir)\n"
+        "• `/set_wr_window recent20` (Hanya nilai 20 trade terakhir)\n"
+        "• `/set_min_wr 50` (Atur minimal 50% Win Rate)\n"
+        "• `/reset_blacklist` (Reset blokir pola)\n\n"
         "🎯 **Pro Matrix & Proteksi:**\n"
         "• `/set_confluence 80` (Min skor konfluensi 80/100)\n"
-        "• `/set_breakeven on 8.0` (Auto geser SL ke Entry saat ROI $\\ge +8\%$)\n"
+        "• `/set_breakeven on 8.0` (Auto geser SL ke Entry)\n"
         "• `/set_tp 30` (Take profit 30%)\n"
-        "• `/set_sl 25` (Stop loss 25%)\n"
-        "• `/set_ts_use True` / `/set_ts_use False`\n\n"
+        "• `/set_sl 25` (Stop loss 25%)\n\n"
         "🌐 **Scanner & Target Koin:**\n"
         "• `/set_scan` (Buka Panel Tombol Target & Urutan Scan)\n"
         "• `/set_scan_target all` (Scan seluruh altcoin futures)\n"
-        "• `/set_scan_target 200` (Batasi top 200 koin)\n"
         "• `/set_scan_sort volume` | `/set_scan_sort change`\n\n"
         "💵 **Modal & Sizing:**\n"
-        "• `/set_modal 100` (Atur modal uji coba $100)\n"
-        "• `/set_modal auto` (Gunakan saldo real)\n"
-        "• `/reset_modal` (Reset modal uji ke $100)\n"
-        "• `/reset_stats` (Reset rekap winrate/histori)\n"
+        "• `/set_modal 100` | `/set_modal auto` | `/reset_modal`\n"
         "• `/set_margin auto` atau `/set_margin 25`\n"
-        "• `/set_risk 1.0` (Risk per trade 1% saldo)\n"
-        "• `/set_max_ratio 15` (Max 15% saldo per posisi)\n"
-        "• `/hitung_margin` (Kalkulator margin aman)\n\n"
+        "• `/set_risk 1.0` | `/set_max_ratio 15`\n\n"
         "⚡ **Eksekusi & Filter:**\n"
-        "• `/set_leverage 10` (Ubah leverage)\n"
-        "• `/set_max_positions 3` (Max 3 posisi)\n"
+        "• `/set_leverage 10` | `/set_max_positions 3`\n"
         "• `/set_rsi_oversold 30` | `/set_rsi_overbought 70`"
     )
     await message.answer(text, parse_mode="Markdown")

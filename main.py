@@ -50,6 +50,8 @@ from indicators.patterns import (
     check_consecutive_red_candles,
 )
 from indicators.trend import get_htf_trend
+from indicators.sniper_volume import calculate_smc_sniper_volume
+from indicators.smc_snr_channel import calculate_smc_structure_v2
 from core.confluence_engine import calculate_confluence_score
 from core.learner import is_pattern_reliable, record_trade_result
 from core.scanner_logger import add_scanner_log, update_scanner_progress
@@ -567,11 +569,13 @@ async def scanner_loop():
                         vol_ratio = pattern_info.get('volume_ratio', 1.0)
                         has_volume_surge = vol_ratio >= 1.25
 
-                        # Hitung Volatilitas ATR
+                        # Hitung Volatilitas ATR, SMC Sniper Volume, & LnSNRCH.v2 Smart Structure
                         atr_val = calculate_atr(df, period=14)
                         dynamic_leverage = calculate_volatility_adjusted_leverage(
                             atr_val, current_price, base_leverage=bot_config.leverage
                         )
+                        sniper_intel = calculate_smc_sniper_volume(df, lookback=100, current_price=current_price)
+                        smc_v2_intel = calculate_smc_structure_v2(df, swing_length=50, internal_length=5)
                         
                         # Deteksi Pre-Pump & Momentum Aktif
                         pump_is_active = bool(pump_intel.get("is_alert", False) or pump_intel.get("score", 0) >= 60)
@@ -581,6 +585,25 @@ async def scanner_loop():
                                 htf_trend in ["UPTREND", "SIDEWAYS"]
                                 or pump_intel.get("score", 0) >= 65.0
                             )
+                        )
+                        
+                        # Skenario LnSNRCH.v2 Quasimodo (QML) Bullish Reversal
+                        qml_data = smc_v2_intel.get("quasimodo", {})
+                        syarat_qml_long = (
+                            bool(qml_data.get("is_detected") and qml_data.get("pattern_type") == "BULLISH_QUASIMODO")
+                            and htf_trend in ["UPTREND", "SIDEWAYS"]
+                        )
+                        
+                        # Skenario SMC Sniper Elite V17 (Volume Zone & Institutional Accumulation)
+                        syarat_sniper_long = (
+                            bool(
+                                sniper_intel.get("is_in_sniper_buy_zone")
+                                or (
+                                    sniper_intel.get("market_state") == "ACCUMULATION_READY"
+                                    and (near_lower_bb or near_support or is_oversold or last_row['close'] > last_row['open'])
+                                )
+                            )
+                            and htf_trend in ["UPTREND", "SIDEWAYS"]
                         )
                         
                         # Skenario Tier-A Reversal & Breakout untuk LONG (High Win-Rate)
@@ -606,14 +629,31 @@ async def scanner_loop():
                         is_bullish_momentum = (
                             pump_is_active
                             or vol_ratio >= 1.5
+                            or sniper_intel.get("market_state") == "ACCUMULATION_READY"
                             or (last_row["close"] > last_row["open"] and last_row.get('RSI', 50) > 55)
                             or htf_trend == "UPTREND"
                         )
                         if is_bullish_momentum:
+                            syarat_qml_short = False
+                            syarat_sniper_short = False
                             syarat_teknikal_short = False
                             syarat_pola_short = False
                             syarat_breakout_short = False
                         else:
+                            syarat_qml_short = (
+                                bool(qml_data.get("is_detected") and qml_data.get("pattern_type") == "BEARISH_QUASIMODO")
+                                and htf_trend in ["DOWNTREND", "SIDEWAYS"]
+                            )
+                            syarat_sniper_short = (
+                                bool(
+                                    sniper_intel.get("is_in_sniper_sell_zone")
+                                    or (
+                                        sniper_intel.get("market_state") == "DISTRIBUTION"
+                                        and (near_upper_bb or near_resistance or is_overbought)
+                                    )
+                                )
+                                and htf_trend in ["DOWNTREND", "SIDEWAYS"]
+                            )
                             syarat_teknikal_short = (
                                 (near_upper_bb and near_resistance and is_overbought and htf_trend in ["DOWNTREND", "SIDEWAYS"]) or
                                 (two_red_at_resistance and (near_upper_bb or is_overbought or near_resistance) and htf_trend in ["DOWNTREND", "SIDEWAYS"])
@@ -640,6 +680,16 @@ async def scanner_loop():
                                 f"🔥 Pre-Pump Radar ({pump_intel.get('tier', 'TIER_1')} - "
                                 f"Score: {pump_intel.get('score', 0)}/100, RVOL: {pump_intel.get('rvol', 1.0)}x, HTF: {htf_trend})"
                             )
+                        elif syarat_qml_long:
+                            alasan_long = (
+                                f"👑 Quasimodo QML Buy (Left Shoulder: {qml_data.get('entry_level')}, "
+                                f"TP: {qml_data.get('take_profit_level')}, HTF: {htf_trend})"
+                            )
+                        elif syarat_sniper_long:
+                            alasan_long = (
+                                f"🎯 SMC Sniper Buy Vol (POC: {sniper_intel.get('poc_price')}, "
+                                f"{sniper_intel.get('market_state_label')}, Buy: {sniper_intel.get('buy_power_pct')}%, HTF: {htf_trend})"
+                            )
                         elif syarat_breakout_long:
                             alasan_long = (
                                 f"Dormant breakout score {breakout['score']:.1f} "
@@ -657,7 +707,17 @@ async def scanner_loop():
                         else:
                             alasan_long = f"RSI Oversold ({rsi_value:.2f}) di Lower BB (HTF: {htf_trend})"
 
-                        if syarat_breakout_short:
+                        if syarat_qml_short:
+                            alasan_short = (
+                                f"👑 Quasimodo QML Sell (Left Shoulder: {qml_data.get('entry_level')}, "
+                                f"TP: {qml_data.get('take_profit_level')}, HTF: {htf_trend})"
+                            )
+                        elif syarat_sniper_short:
+                            alasan_short = (
+                                f"🎯 SMC Sniper Sell Vol (POC: {sniper_intel.get('poc_price')}, "
+                                f"{sniper_intel.get('market_state_label')}, Sell: {sniper_intel.get('sell_power_pct')}%, HTF: {htf_trend})"
+                            )
+                        elif syarat_breakout_short:
                             alasan_short = (
                                 f"Dormant breakout score {breakout['score']:.1f} "
                                 f"(vol {breakout['volume_spike']:.2f}x, HTF: {htf_trend})"
@@ -670,8 +730,8 @@ async def scanner_loop():
                             alasan_short = f"RSI Overbought ({rsi_value:.2f}) di Upper BB (HTF: {htf_trend})"
                         
                         # Evaluasi Keandalan dari Learner
-                        raw_long = (syarat_pump_long or syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or syarat_breakout_long)
-                        raw_short = (syarat_teknikal_short or syarat_pola_short or syarat_breakout_short)
+                        raw_long = (syarat_pump_long or syarat_qml_long or syarat_sniper_long or syarat_teknikal_long or syarat_pola_long or syarat_smart_buy_long or syarat_breakout_long)
+                        raw_short = (syarat_qml_short or syarat_sniper_short or syarat_teknikal_short or syarat_pola_short or syarat_breakout_short)
 
                         reliable_long = is_pattern_reliable(alasan_long) if raw_long else True
                         reliable_short = is_pattern_reliable(alasan_short) if raw_short else True
@@ -704,6 +764,8 @@ async def scanner_loop():
                                     "squeeze_score": float(breakout.get("score", 0)),
                                     "volume_ratio": round(vol_ratio, 2),
                                     "atr_percent": round((atr_val / current_price * 100), 2) if current_price > 0 else 0.0,
+                                    "sniper_state": sniper_intel.get("market_state", "MONITORING"),
+                                    "sniper_poc": sniper_intel.get("poc_price"),
                                 }
                                 p_entry_id_v = record_pattern_entry(
                                     symbol=symbol,
@@ -743,6 +805,8 @@ async def scanner_loop():
                                 "squeeze_score": float(breakout.get("score", 0)),
                                 "volume_ratio": round(vol_ratio, 2),
                                 "atr_percent": round((atr_val / current_price * 100), 2) if current_price > 0 else 0.0,
+                                "sniper_state": sniper_intel.get("market_state", "MONITORING"),
+                                "sniper_poc": sniper_intel.get("poc_price"),
                             }
 
                             # Hitung Pilar 1: Smart Confluence Scoring Matrix (Institutional-Grade Setup)
@@ -766,6 +830,8 @@ async def scanner_loop():
                                 pump_info=pump_intel,
                                 near_smart_buy=bool(syarat_smart_buy_long),
                                 two_consecutive_candles=bool(two_green_at_support or two_red_at_resistance),
+                                sniper_info=sniper_intel,
+                                smc_v2_info=smc_v2_intel,
                             )
                             confluence_score = confluence_res["score"]
                             confluence_approved = confluence_res["is_approved"]
@@ -809,13 +875,17 @@ async def scanner_loop():
                                     print(f"📚 [LATIHAN SIMULASI] Sinyal {trade_type} {symbol} (Skor {confluence_score}/100) dialihkan ke memory AI.")
                                 continue
 
-                            # Evaluasi Pattern Memory: tolak jika pola terbukti buruk (>= 3 sample, WR < 45%)
-                            if is_pattern_memory_blacklisted(conditions_snapshot):
-                                print(f"🚫 [PATTERN MEMORY] Sinyal {trade_type} pada {symbol} DITOLAK karena pola historis memiliki Win Rate rendah!")
+                            # Evaluasi AI Pattern Learner & Gatekeeper (Rolling Window + Probation)
+                            is_reliable, reason_eval, cur_wr = is_pattern_reliable(alasan)
+                            is_fp_blacklisted = is_pattern_memory_blacklisted(conditions_snapshot)
+                            
+                            if not is_reliable or is_fp_blacklisted:
+                                rej_msg = reason_eval if not is_reliable else "Fingerprint WR Rendah (<50%)"
+                                print(f"🚫 [LEARNER GATEKEEPER] Sinyal {trade_type} pada {symbol} DITOLAK ({rej_msg})! Dialihkan ke simulasi.")
                                 add_scanner_log(
                                     "FILTERED",
                                     symbol,
-                                    f"🚫 [PATTERN MEMORY] Sinyal {trade_type} Ditolak (WR rendah pada riwayat)",
+                                    f"🚫 [GATEKEEPER] Sinyal {trade_type} Ditolak ({rej_msg})",
                                     tag="PATTERN_BLACKLIST"
                                 )
                                 if symbol not in virtual_trades:
@@ -1039,7 +1109,7 @@ async def scanner_loop():
                                         stop_price=planned_sl_price,
                                         leverage=dynamic_leverage,
                                         risk_percent=bot_config.risk_per_trade_percent,
-                                        min_margin=1.0,
+                                        min_margin=0.5,
                                         max_position_equity_ratio=bot_config.max_position_equity_ratio,
                                     )
 
@@ -1053,12 +1123,16 @@ async def scanner_loop():
                                         f"Margin={current_margin:.2f} USDT | Lev={dynamic_leverage}x (Risk: {bot_config.risk_per_trade_percent}%)"
                                     )
                                 else:
-                                    # Mode FIXED dengan safety cap
+                                    # Mode FIXED dengan safety cap fleksibel (Support Margin $0.5 - $1.0)
                                     fixed_margin = bot_config.margin_usdt
-                                    max_allowed = modal * bot_config.max_position_equity_ratio
-                                    current_margin = min(fixed_margin, max_allowed)
-                                    if current_margin < 1.0:
-                                        print(f"[RISK] {symbol}: Margin FIXED ({current_margin:.2f} USDT) di bawah minimum 1 USDT")
+                                    if modal < 30.0:
+                                        current_margin = min(fixed_margin, modal * 0.95)
+                                    else:
+                                        max_allowed = max(modal * bot_config.max_position_equity_ratio, fixed_margin)
+                                        current_margin = min(fixed_margin, max_allowed)
+                                    
+                                    if current_margin < 0.5:
+                                        print(f"[RISK] {symbol}: Margin FIXED ({current_margin:.2f} USDT) terlalu kecil (< 0.5 USDT)")
                                         continue
                                     print(
                                         f"[FIXED SIZING] {symbol}: Modal={modal:.2f} USDT | "

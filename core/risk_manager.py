@@ -177,7 +177,7 @@ def calculate_computed_position_size(
     stop_price: float,
     leverage: int,
     risk_percent: float = 1.5,
-    min_margin: float = 1.0,
+    min_margin: float = 0.5,
     max_position_equity_ratio: float = 0.20,
 ) -> dict:
     """
@@ -207,19 +207,18 @@ def calculate_computed_position_size(
     notional_value = quantity * current_price
     required_margin = notional_value / leverage
 
-    # 3. Batasi alokasi margin maksimal (misal max 20% dari total equity per trade)
-    max_allowed_margin = equity * max_position_equity_ratio
+    # 3. Batasi alokasi margin maksimal (misal max 20% dari total equity per trade jika modal besar)
+    max_allowed_margin = equity if equity < 20.0 else max(equity * max_position_equity_ratio, min_margin)
     final_margin = min(required_margin, max_allowed_margin)
 
     # Jika margin di-cap oleh max_allowed_margin, sesuaikan ulang quantity
     if final_margin < required_margin:
         quantity = (final_margin * leverage) / current_price
 
-    # 4. Validasi batas minimal margin (Binance min notional biasanya $5, margin min $1)
+    # 4. Validasi batas minimal margin
     if final_margin < min_margin:
-        # Jika modal sangat kecil, gunakan alokasi proporsional minimal yang aman jika equity memadai
-        if equity >= min_margin * 2:
-            final_margin = min_margin
+        if equity >= min_margin:
+            final_margin = min(min_margin, equity * 0.95)
             quantity = (final_margin * leverage) / current_price
         else:
             return {

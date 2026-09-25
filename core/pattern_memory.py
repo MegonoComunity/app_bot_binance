@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 MEMORY_FILE = "data/pattern_memory.json"
 MIN_SAMPLES_TO_LEARN = 3     # Butuh minimal 3 data sebelum pattern dianggap valid
-MIN_WIN_RATE_TO_USE  = 0.45  # Pattern hanya dipakai jika win rate >= 45%
+MIN_WIN_RATE_TO_USE  = 0.50  # Pattern hanya dipakai jika win rate >= 50% (50.0%)
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────

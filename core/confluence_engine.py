@@ -22,6 +22,8 @@ from indicators.market_structure import (
     calculate_dynamic_swing_avwap,
     detect_ema21_pullback,
 )
+from indicators.sniper_volume import calculate_smc_sniper_volume
+from indicators.smc_snr_channel import calculate_smc_structure_v2
 
 
 def calculate_confluence_score(
@@ -44,6 +46,8 @@ def calculate_confluence_score(
     pump_info: Optional[Dict[str, Any]] = None,
     near_smart_buy: bool = False,
     two_consecutive_candles: bool = False,
+    sniper_info: Optional[Dict[str, Any]] = None,
+    smc_v2_info: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Menghitung skor konfluensi teknikal dan memberikan rincian pilar poin.
@@ -66,6 +70,33 @@ def calculate_confluence_score(
     avwap_info = calculate_dynamic_swing_avwap(df_5m, window=2)
     ema21_info = detect_ema21_pullback(df_5m)
 
+    # Evaluasi SMC Sniper Elite V17 - Volume Profile & Institutional Accumulation
+    if sniper_info is None and df_5m is not None and len(df_5m) >= 15:
+        sniper_info = calculate_smc_sniper_volume(df_5m)
+    elif sniper_info is None:
+        sniper_info = {}
+
+    # Evaluasi LnSNRCH.v2 - Quasimodo (QML), FVG, & Premium/Discount Zones
+    if smc_v2_info is None and df_5m is not None and len(df_5m) >= 20:
+        smc_v2_info = calculate_smc_structure_v2(df_5m)
+    elif smc_v2_info is None:
+        smc_v2_info = {}
+
+    is_sniper_buy = bool(sniper_info.get("is_in_sniper_buy_zone", False))
+    is_sniper_sell = bool(sniper_info.get("is_in_sniper_sell_zone", False))
+    market_state = sniper_info.get("market_state", "MONITORING")
+    buy_power = float(sniper_info.get("buy_power_pct", 50.0))
+    sell_power = float(sniper_info.get("sell_power_pct", 50.0))
+
+    qml_data = smc_v2_info.get("quasimodo", {})
+    is_qml_buy = bool(qml_data.get("is_detected") and qml_data.get("pattern_type") == "BULLISH_QUASIMODO")
+    is_qml_sell = bool(qml_data.get("is_detected") and qml_data.get("pattern_type") == "BEARISH_QUASIMODO")
+    zone_data = smc_v2_info.get("zones", {})
+    is_discount = bool(zone_data.get("is_discount", False))
+    is_premium = bool(zone_data.get("is_premium", False))
+    fvg_data = smc_v2_info.get("fvg", {})
+    in_fvg = bool(fvg_data.get("in_fvg_zone", False))
+
     market_regime = struct_info.get("regime", "SIDEWAYS")
     is_ema21_pullback = ema21_info.get("is_pullback", False)
     ema21_type = ema21_info.get("type")
@@ -75,17 +106,17 @@ def calculate_confluence_score(
     if side == "LONG":
         if htf_trend == "UPTREND" or market_regime == "UPTREND_HEALTHY":
             htf_points = 25.0
-        elif htf_trend == "SIDEWAYS" or struct_info.get("is_compression"):
-            htf_points = 20.0 if is_pump_alert else 15.0
+        elif htf_trend == "SIDEWAYS" or struct_info.get("is_compression") or is_discount:
+            htf_points = 20.0 if (is_pump_alert or is_qml_buy) else 15.0
         else: # DOWNTREND
-            htf_points = 15.0 if is_pump_alert and pump_score >= 65 else 5.0
+            htf_points = 15.0 if (is_pump_alert and pump_score >= 65) or is_qml_buy else 5.0
     else: # SHORT
         if htf_trend == "DOWNTREND" or market_regime == "DOWNTREND_HEALTHY":
             htf_points = 25.0
-        elif htf_trend == "SIDEWAYS" or struct_info.get("is_compression"):
+        elif htf_trend == "SIDEWAYS" or struct_info.get("is_compression") or is_premium:
             htf_points = 15.0
         else: # UPTREND
-            htf_points = 5.0
+            htf_points = 15.0 if is_qml_sell else 5.0
 
     breakdown["htf_alignment"] = {
         "points": htf_points,
@@ -97,13 +128,17 @@ def calculate_confluence_score(
     }
     total_score += htf_points
 
-    # ─── PILAR 2: Candlestick Pattern, S/R, AVWAP, Smart Buy & EMA21 Pullback (Maks 25 Poin) ─────────
+    # ─── PILAR 2: Candlestick Pattern, Quasimodo, S/R, AVWAP, Sniper Zone & EMA21 (Maks 25 Poin) ──
     sr_pattern_points = 0.0
     has_valid_pattern = bool(pattern_name and pattern_name not in ("NONE", "None", ""))
     
     if side == "LONG":
         if is_pump_alert:
             sr_pattern_points = 25.0  # Pump breakout mengonfirmasi momentum kuat di atas struktur
+        elif is_qml_buy:
+            sr_pattern_points = 25.0  # LnSNRCH.v2 Bullish Quasimodo (QML Left Shoulder Reversal)
+        elif is_sniper_buy:
+            sr_pattern_points = 25.0  # SMC Sniper Buy Volume Zone (POC Reversal)
         elif near_smart_buy:
             sr_pattern_points = 25.0  # Level Smart Buy institusional 20D
         elif two_consecutive_candles:
@@ -116,7 +151,7 @@ def calculate_confluence_score(
             sr_pattern_points = 25.0  # Konfluensi sempurna: pola reversal persis di support
         elif near_support and near_lower_bb:
             sr_pattern_points = 20.0  # Support ganda: Lower BB + Price Support
-        elif near_support or avwap_info.get("position_to_avwap") == "BULLISH_ABOVE_AVWAP":
+        elif near_support or avwap_info.get("position_to_avwap") == "BULLISH_ABOVE_AVWAP" or in_fvg:
             sr_pattern_points = 16.0
         elif has_valid_pattern and pattern_type == "LONG":
             sr_pattern_points = 15.0
@@ -125,7 +160,11 @@ def calculate_confluence_score(
         else:
             sr_pattern_points = 8.0
     else: # SHORT
-        if two_consecutive_candles:
+        if is_qml_sell:
+            sr_pattern_points = 25.0  # LnSNRCH.v2 Bearish Quasimodo (QML Left Shoulder Resistance)
+        elif is_sniper_sell:
+            sr_pattern_points = 25.0  # SMC Sniper Sell Volume Zone (POC Resistance)
+        elif two_consecutive_candles:
             sr_pattern_points = 25.0  # Reversal 2x candle merah di area resistance
         elif is_ema21_pullback and ema21_type == "BEARISH_PULLBACK":
             sr_pattern_points = 25.0  # Golden Pullback EMA21 pada tren impulsif turun
@@ -135,7 +174,7 @@ def calculate_confluence_score(
             sr_pattern_points = 25.0
         elif near_resistance and near_upper_bb:
             sr_pattern_points = 20.0
-        elif near_resistance or avwap_info.get("position_to_avwap") == "BEARISH_BELOW_AVWAP":
+        elif near_resistance or avwap_info.get("position_to_avwap") == "BEARISH_BELOW_AVWAP" or in_fvg:
             sr_pattern_points = 16.0
         elif has_valid_pattern and pattern_type == "SHORT":
             sr_pattern_points = 15.0
@@ -144,23 +183,25 @@ def calculate_confluence_score(
         else:
             sr_pattern_points = 8.0
 
-    pattern_desc = pattern_name or ("PUMP_BREAKOUT" if is_pump_alert else ("SMART_BUY" if near_smart_buy else ("2X_CANDLE_REVERSAL" if two_consecutive_candles else ("EMA21_PULLBACK" if is_ema21_pullback else "NONE"))))
+    pattern_desc = pattern_name or ("PUMP_BREAKOUT" if is_pump_alert else ("QUASIMODO_BUY" if (side == "LONG" and is_qml_buy) else ("QUASIMODO_SELL" if (side == "SHORT" and is_qml_sell) else ("SNIPER_BUY_VOL" if (side == "LONG" and is_sniper_buy) else ("SNIPER_SELL_VOL" if (side == "SHORT" and is_sniper_sell) else ("SMART_BUY" if near_smart_buy else ("2X_CANDLE_REVERSAL" if two_consecutive_candles else ("EMA21_PULLBACK" if is_ema21_pullback else "NONE"))))))))
     breakdown["sr_and_pattern"] = {
         "points": sr_pattern_points,
         "max": 25.0,
         "pattern": pattern_desc,
         "avwap_bias": avwap_info.get("position_to_avwap"),
-        "detail": f"Pattern: {pattern_desc}, S/R/AVWAP/SmartBuy: {'YES' if (near_support or near_resistance or is_pump_alert or is_ema21_pullback or near_smart_buy or two_consecutive_candles) else 'NO'}"
+        "detail": f"Pattern: {pattern_desc}, S/R/QML/Sniper: {'YES' if (near_support or near_resistance or is_qml_buy or is_qml_sell or is_sniper_buy or is_sniper_sell or is_pump_alert or is_ema21_pullback or near_smart_buy or two_consecutive_candles) else 'NO'}"
     }
     total_score += sr_pattern_points
 
-    # ─── PILAR 3: Volume Spike & Orderflow Pressure (Maks 20 Poin) ───────────
+    # ─── PILAR 3: Volume Spike & Orderflow / Institutional Delta (Maks 20 Poin) ──
     vol_points = 0.0
     if is_pump_alert or vol_ratio >= 3.0:
         vol_points = 20.0
-    elif vol_ratio >= 2.0:
+    elif (side == "LONG" and market_state == "ACCUMULATION_READY") or (side == "SHORT" and market_state == "DISTRIBUTION"):
+        vol_points = 20.0  # Institutional Smart Money Imbalance terdeteksi
+    elif vol_ratio >= 2.0 or (side == "LONG" and buy_power >= 60.0) or (side == "SHORT" and sell_power >= 60.0):
         vol_points = 16.0
-    elif vol_ratio >= 1.5:
+    elif vol_ratio >= 1.5 or (side == "LONG" and buy_power >= 53.0) or (side == "SHORT" and sell_power >= 53.0):
         vol_points = 12.0
     elif vol_ratio >= 1.2:
         vol_points = 8.0
@@ -171,14 +212,18 @@ def calculate_confluence_score(
         "points": vol_points,
         "max": 20.0,
         "vol_ratio": round(vol_ratio, 2),
-        "detail": f"RVOL 5M: {vol_ratio:.2f}x SMA20"
+        "orderflow_delta": f"Buy: {buy_power}% | Sell: {sell_power}%",
+        "market_state": market_state,
+        "detail": f"RVOL 5M: {vol_ratio:.2f}x | Flow: {sniper_info.get('market_state_label', market_state)}"
     }
     total_score += vol_points
 
-    # ─── PILAR 4: Volatility Squeeze & Pre-Pump Compression (Maks 15 Poin) ───
+    # ─── PILAR 4: Volatility Squeeze & Discount/Premium Zones (Maks 15 Poin) ───
     squeeze_points = 0.0
     if is_pump_alert:
         squeeze_points = 15.0
+    elif (side == "LONG" and is_discount) or (side == "SHORT" and is_premium):
+        squeeze_points = 15.0  # Zona Diskon/Premium SMC Optimal
     elif breakout_info and isinstance(breakout_info, dict):
         b_score = float(breakout_info.get("score", 0.0))
         is_ready = bool(breakout_info.get("ready", False))
@@ -194,7 +239,7 @@ def calculate_confluence_score(
     breakdown["volatility_squeeze"] = {
         "points": squeeze_points,
         "max": 15.0,
-        "detail": f"Squeeze Breakout Score: {100.0 if is_pump_alert else (breakout_info.get('score', 0) if breakout_info else 0):.1f}/100"
+        "detail": f"Zone: {zone_data.get('current_zone', 'EQUILIBRIUM')} | Squeeze Score: {100.0 if is_pump_alert else (breakout_info.get('score', 0) if breakout_info else 0):.1f}/100"
     }
     total_score += squeeze_points
 
@@ -224,6 +269,29 @@ def calculate_confluence_score(
     }
     total_score += rsi_points
 
+    # SMC Sniper Volume Dedicated Breakdown
+    breakdown["smc_sniper_volume"] = {
+        "poc_price": sniper_info.get("poc_price"),
+        "sniper_buy_price": sniper_info.get("sniper_buy_price"),
+        "sniper_sell_price": sniper_info.get("sniper_sell_price"),
+        "is_in_sniper_buy_zone": is_sniper_buy,
+        "is_in_sniper_sell_zone": is_sniper_sell,
+        "market_state": market_state,
+        "market_state_label": sniper_info.get("market_state_label", "MONITORING"),
+        "buy_power_pct": buy_power,
+        "sell_power_pct": sell_power,
+        "score_bonus": sniper_info.get("score_bonus", 0.0),
+    }
+
+    # SMC Structure LnSNRCH.v2 Dedicated Breakdown
+    breakdown["smc_structure_v2"] = {
+        "quasimodo": qml_data,
+        "fvg": fvg_data,
+        "zones": zone_data,
+        "bos_signal": smc_v2_info.get("bos_signal"),
+        "choch_signal": smc_v2_info.get("choch_signal"),
+    }
+
     total_score = min(100.0, round(total_score, 1))
     is_approved = total_score >= min_score_threshold
 
@@ -231,12 +299,29 @@ def calculate_confluence_score(
     summary_reasons = []
     if htf_points >= 20.0:
         summary_reasons.append(f"HTF {htf_trend}")
-    if sr_pattern_points >= 15.0:
+    if is_qml_buy and side == "LONG":
+        summary_reasons.append("👑 Quasimodo QML Buy")
+    elif is_qml_sell and side == "SHORT":
+        summary_reasons.append("👑 Quasimodo QML Sell")
+    elif is_sniper_buy and side == "LONG":
+        summary_reasons.append("🎯 SMC Sniper Buy Vol")
+    elif is_sniper_sell and side == "SHORT":
+        summary_reasons.append("🎯 SMC Sniper Sell Vol")
+    elif sr_pattern_points >= 15.0:
         summary_reasons.append(f"Pola {pattern_name} @ S/R" if has_valid_pattern else "Valid S/R Zone")
-    if vol_points >= 12.0:
+    
+    if market_state == "ACCUMULATION_READY" and side == "LONG":
+        summary_reasons.append("🔥 Akumulasi Smart Money")
+    elif vol_points >= 12.0:
         summary_reasons.append(f"Vol {vol_ratio:.1f}x")
-    if squeeze_points >= 10.0:
+
+    if is_discount and side == "LONG":
+        summary_reasons.append("Discount Zone")
+    elif is_premium and side == "SHORT":
+        summary_reasons.append("Premium Zone")
+    elif squeeze_points >= 10.0:
         summary_reasons.append("Squeeze Breakout")
+
     if rsi_points >= 10.0:
         summary_reasons.append("RSI Optimal")
 
@@ -250,4 +335,6 @@ def calculate_confluence_score(
         "grade": "TIER-A (PRO CONFLUENCE)" if total_score >= 85 else ("TIER-B (SOLID)" if total_score >= 75 else "TIER-C (WEAK)"),
         "summary": confluence_summary,
         "breakdown": breakdown,
+        "sniper_info": sniper_info,
+        "smc_v2_info": smc_v2_info,
     }
