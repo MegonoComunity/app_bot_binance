@@ -24,6 +24,7 @@ from database.trade_repo import (
     get_daily_trade_stats,
     sync_exchange_trades_to_db,
 )
+from core.trade_sync import sync_real_exchange_account
 from database.pattern_repo import get_all_patterns, get_top_patterns
 from database.ohlcv_repo import get_candles, get_available_symbols, get_ohlcv_stats
 from core.exchanges.base import BaseExchange
@@ -497,8 +498,16 @@ async def api_scanner_control(request: web.Request) -> web.Response:
         new_mode = str(data.get("mode", "PAPER_TRADING")).upper().strip()
         if new_mode in ("REAL", "PAPER_TRADING", "SIMULATION", "TESTNET"):
             bot_config.trading_mode = new_mode
-            msg = f"Trading Mode diubah menjadi: {new_mode}"
-            add_scanner_log("INFO", "CONFIG", f"🔧 [WEB CONTROL] Mode Trading diubah ke {new_mode}.")
+            if new_mode in ("REAL", "LIVE"):
+                bot_config.simulated_modal = None
+                client = bot_state.get("client")
+                sync_res = await sync_real_exchange_account(client, sync_history=True, bot_state_ref=bot_state)
+                total_bal = sync_res.get("total_wallet_balance", 0.0)
+                open_pos = sync_res.get("open_positions_count", 0)
+                msg = f"Trading Mode diubah ke REAL. Terdeteksi Saldo: ${total_bal:.2f} USDT | Open Posisi: {open_pos}"
+            else:
+                msg = f"Trading Mode diubah menjadi: {new_mode}"
+            add_scanner_log("INFO", "CONFIG", f"🔧 [WEB CONTROL] {msg}")
         else:
             success = False
             msg = f"Mode '{new_mode}' tidak valid."

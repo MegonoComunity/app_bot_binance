@@ -56,11 +56,27 @@ def calculate_account_pnl_percent(unrealized_pnl: float, total_margin_balance: f
     return unrealized_pnl / total_margin_balance * 100
 
 
-def daily_loss_limit_reached(realized_pnl: float, equity: float, limit_percent: float) -> bool:
-    """Return true when today's realized loss reaches the configured circuit breaker."""
+def daily_loss_limit_reached(
+    realized_pnl: float,
+    equity: float,
+    limit_percent: float,
+    min_loss_usd: float = 1.0,
+) -> bool:
+    """
+    Return True when today's realized loss reaches the configured circuit breaker.
+    Mendukung adaptive threshold nominal untuk modal mikro ($1 - $20 USDT) agar
+    tidak memicu Kill Switch hanya karena loss minor beberapa sen ($0.1 - $0.3 USDT).
+    """
     if equity <= 0 or limit_percent <= 0:
         return False
-    return realized_pnl <= -(equity * limit_percent / 100)
+
+    if equity < 20.0:
+        # Modal mikro: toleransi minimum $1.0 USDT atau 20% modal
+        allowed_loss = max(min_loss_usd, equity * 0.20)
+    else:
+        allowed_loss = max(min_loss_usd, equity * (limit_percent / 100))
+
+    return realized_pnl <= -allowed_loss
 
 
 def total_position_notional(positions: list[dict]) -> float:

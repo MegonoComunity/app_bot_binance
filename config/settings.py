@@ -22,6 +22,8 @@ DB_ENABLED   = bool(DATABASE_URL)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
 TELEGRAM_ERROR_CHAT_ID = os.getenv("TELEGRAM_ERROR_CHAT_ID") or TELEGRAM_ADMIN_CHAT_ID
+TELEGRAM_DEMO_CHAT_ID = os.getenv("TELEGRAM_DEMO_CHAT_ID", "").strip() or None
+NOTIFY_SIMULATION_TRADES_ENV = os.getenv("NOTIFY_SIMULATION_TRADES", "False").lower() in ("true", "1", "yes")
 TELEGRAM_ADMIN_USER_IDS = {
     int(value.strip())
     for value in os.getenv("TELEGRAM_ADMIN_USER_IDS", "").split(",")
@@ -86,6 +88,9 @@ AUTO_BREAKEVEN_ROI_PERCENT_ENV = float(os.getenv("AUTO_BREAKEVEN_ROI_PERCENT", "
 WINRATE_EVAL_WINDOW_ENV = os.getenv("WINRATE_EVAL_WINDOW", "DAILY").upper().strip()
 MIN_PATTERN_WINRATE_ENV = float(os.getenv("MIN_PATTERN_WINRATE", "50.0"))
 USE_PROBATION_MODE_ENV = os.getenv("USE_PROBATION_MODE", "True").lower() == "true"
+
+# Filter Koin: Altcoin Focus (Hindari koin lelet/commodity/kapitalisasi raksasa seperti BTC, ETH & XAU)
+EXCLUDED_COINS_ENV = os.getenv("EXCLUDED_COINS", "BTCUSDT,ETHUSDT,XAUUSDT,PAXGUSDT,BTCDOMUSDT,USDCUSDT,FDUSDUSDT,TUSDUSDT,EURUSDT")
 
 # Validasi API key sesuai exchange aktif
 if ACTIVE_EXCHANGE == "BINANCE":
@@ -159,7 +164,51 @@ class BotSettings:
             cls._instance.max_funding_rate_percent = MAX_FUNDING_RATE_PERCENT_ENV
             cls._instance.atr_multiplier_sl = ATR_MULTIPLIER_SL_ENV
             cls._instance.limit_order_timeout_seconds = LIMIT_ORDER_TIMEOUT_SECONDS_ENV
+
+            # Filter Altcoin (Exclude BTC, XAU, etc)
+            raw_ex = EXCLUDED_COINS_ENV.split(",")
+            cls._instance.excluded_coins = {c.strip().upper() for c in raw_ex if c.strip()}
+
+            # Notifikasi Demo / Simulasi
+            cls._instance.notify_simulation_trades = NOTIFY_SIMULATION_TRADES_ENV
+            cls._instance.telegram_demo_chat_id = TELEGRAM_DEMO_CHAT_ID
         return cls._instance
+
+    def update_notify_simulation_trades(self, enabled: bool):
+        """Mengatur apakah notifikasi trade hasil simulasi/paper dikirim ke Telegram."""
+        self.notify_simulation_trades = bool(enabled)
+        self._update_env("NOTIFY_SIMULATION_TRADES", str(bool(enabled)))
+
+    def update_telegram_demo_chat_id(self, chat_id: Optional[str]):
+        """Mengatur Chat ID khusus untuk notifikasi simulasi/demo."""
+        self.telegram_demo_chat_id = str(chat_id).strip() if chat_id else None
+        self._update_env("TELEGRAM_DEMO_CHAT_ID", self.telegram_demo_chat_id or "")
+
+    def is_coin_excluded(self, symbol: str) -> bool:
+        """
+        Mengecek apakah koin termasuk dalam daftar pengecualian (seperti BTCUSDT, XAUUSDT/Gold,
+        PAXGUSDT, stablecoin pairs, dll) agar bot fokus 100% pada Altcoins.
+        """
+        if not symbol:
+            return True
+        sym = str(symbol).strip().upper()
+        if sym in self.excluded_coins:
+            return True
+        # Cek prefix koin lelet / emas / index / stablecoin / giant cap (BTC, ETH, XAU, dll)
+        for prefix in ("BTC", "ETH", "XAU", "PAXG", "BTCDOM", "USDC", "FDUSD", "TUSD", "EUR"):
+            if sym == f"{prefix}USDT" or sym == prefix or sym.startswith(f"{prefix}_"):
+                return True
+        return False
+
+    def update_excluded_coins(self, coins: str | List[str] | Set[str]):
+        """Mengubah daftar koin yang di-exclude secara dinamis."""
+        if isinstance(coins, str):
+            parsed = {c.strip().upper() for c in coins.split(",") if c.strip()}
+        else:
+            parsed = {str(c).strip().upper() for c in coins if str(c).strip()}
+        self.excluded_coins = parsed
+        self._update_env("EXCLUDED_COINS", ",".join(sorted(self.excluded_coins)))
+
         
     def update_winrate_window(self, window: str):
         w = window.upper().strip()

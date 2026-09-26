@@ -16,6 +16,7 @@ import pandas as pd
 
 from core.exchanges.base import BaseExchange
 from core.logger import log_error
+from config.settings import bot_config
 
 logger = logging.getLogger(__name__)
 
@@ -175,13 +176,15 @@ class BitunixAdapter(BaseExchange):
             if not isinstance(ticker_list, list):
                 ticker_list = []
 
-            # Filter hanya pair USDT yang aktif
+            # Filter hanya pair USDT yang aktif dan BUKAN koin yang di-exclude (Fokus Altcoins)
             usdt_pairs = []
             for t in ticker_list:
                 sym = str(t.get("symbol", "")).upper()
                 if not sym.endswith("USDT"):
                     continue
                 if valid_symbols and sym not in valid_symbols:
+                    continue
+                if hasattr(bot_config, "is_coin_excluded") and bot_config.is_coin_excluded(sym):
                     continue
 
                 quote_vol = float(t.get("quoteVol", t.get("quoteVolume", t.get("amount", t.get("volume", 0)))) or 0)
@@ -218,9 +221,9 @@ class BitunixAdapter(BaseExchange):
             log_error("BITUNIX_TOP_COINS", str(e))
             print(f"[BITUNIX] Warning saat fetch scan coins: {e}")
             fallback_coins = [
-                "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
-                "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "SUIUSDT",
-                "PEPEUSDT", "NEARUSDT", "APTUSDT", "OPUSDT", "ARBUSDT"
+                "SOLUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT", "ADAUSDT",
+                "AVAXUSDT", "LINKUSDT", "SUIUSDT", "PEPEUSDT", "NEARUSDT",
+                "APTUSDT", "OPUSDT", "ARBUSDT", "FTMUSDT", "TIAUSDT"
             ]
             return fallback_coins[:n] if n else fallback_coins
 
@@ -390,8 +393,12 @@ class BitunixAdapter(BaseExchange):
                 params=params if params else None,
                 auth_required=True,
             )
-            pos_list = res.get("data", []) if isinstance(res, dict) else []
-            if not isinstance(pos_list, list):
+            raw_pos_data = res.get("data", []) if isinstance(res, dict) else []
+            if isinstance(raw_pos_data, dict):
+                pos_list = raw_pos_data.get("positionList", raw_pos_data.get("positions", raw_pos_data.get("list", [])))
+            elif isinstance(raw_pos_data, list):
+                pos_list = raw_pos_data
+            else:
                 pos_list = []
 
             active_positions = []
@@ -449,8 +456,12 @@ class BitunixAdapter(BaseExchange):
             if symbol:
                 params["symbol"] = symbol.upper()
             res = await self._request("GET", "/api/v1/futures/position/get_history_positions", params=params, auth_required=True)
-            raw_list = res.get("data", {}).get("positionList", []) if isinstance(res, dict) else []
-            if not isinstance(raw_list, list):
+            raw_data = res.get("data", {}) if isinstance(res, dict) else {}
+            if isinstance(raw_data, dict):
+                raw_list = raw_data.get("positionList", raw_data.get("positions", raw_data.get("list", [])))
+            elif isinstance(raw_data, list):
+                raw_list = raw_data
+            else:
                 raw_list = []
 
             history = []

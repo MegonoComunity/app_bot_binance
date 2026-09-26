@@ -8,6 +8,7 @@ from binance.enums import *
 
 from core.exchanges.base import BaseExchange
 from core.logger import log_error
+from config.settings import bot_config
 
 
 class BinanceAdapter(BaseExchange):
@@ -58,6 +59,8 @@ class BinanceAdapter(BaseExchange):
             for t in tickers:
                 sym = t.get('symbol', '')
                 if sym not in valid_symbols or not sym.isascii():
+                    continue
+                if hasattr(bot_config, "is_coin_excluded") and bot_config.is_coin_excluded(sym):
                     continue
                 quote_vol = float(t.get('quoteVolume', 0) or 0)
                 change_pct = float(t.get('priceChangePercent', 0) or 0)

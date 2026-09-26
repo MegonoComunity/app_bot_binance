@@ -5,6 +5,7 @@ from typing import List, Dict, Union, Optional, Any
 import pandas as pd
 from binance import AsyncClient
 from core.exchanges.base import BaseExchange
+from config.settings import bot_config
 
 
 async def get_top_futures_by_volume(
@@ -32,6 +33,8 @@ async def get_top_futures_by_volume(
         for t in tickers:
             sym = t.get('symbol', '')
             if sym not in valid_symbols or not sym.isascii():
+                continue
+            if hasattr(bot_config, "is_coin_excluded") and bot_config.is_coin_excluded(sym):
                 continue
             quote_vol = float(t.get('quoteVolume', 0) or 0)
             change_pct = float(t.get('priceChangePercent', 0) or 0)

@@ -17,6 +17,34 @@ from database.connection import get_pool
 logger = logging.getLogger(__name__)
 
 
+# ─── Parser Helper ──────────────────────────────────────────────────────────
+
+def _parse_float(val: Any, default: Optional[float] = None) -> Optional[float]:
+    """Mengonversi nilai ke float secara aman, termasuk format string persentase '0.00%' atau '+1.5%'."""
+    if val is None:
+        return default
+    if isinstance(val, (int, float)):
+        return float(val)
+    try:
+        s = str(val).strip().rstrip("%").lstrip("+").lstrip("$").strip()
+        return float(s) if s else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _parse_int(val: Any, default: Optional[int] = None) -> Optional[int]:
+    """Mengonversi nilai ke int secara aman."""
+    if val is None:
+        return default
+    if isinstance(val, int):
+        return val
+    try:
+        s = str(val).strip().split(".")[0].rstrip("%").lstrip("+").lstrip("$").strip()
+        return int(s) if s else default
+    except (ValueError, TypeError):
+        return default
+
+
 # ─── Insert / Query ──────────────────────────────────────────────────────────
 
 async def insert_trade(trade: dict) -> bool:
@@ -26,10 +54,10 @@ async def insert_trade(trade: dict) -> bool:
     """
     try:
         pool = await get_pool()
-        pnl = float(trade.get("realized_pnl", 0) or 0)
-        commission = float(trade.get("commission", 0) or 0)
-        funding_fee = float(trade.get("funding_fee", 0) or 0)
-        net_pnl = float(trade.get("net_pnl", pnl - commission + funding_fee) or 0)
+        pnl = _parse_float(trade.get("realized_pnl"), 0.0) or 0.0
+        commission = _parse_float(trade.get("commission"), 0.0) or 0.0
+        funding_fee = _parse_float(trade.get("funding_fee"), 0.0) or 0.0
+        net_pnl = _parse_float(trade.get("net_pnl"), pnl - commission + funding_fee) or 0.0
         result = "WIN" if net_pnl > 0 else ("LOSS" if net_pnl < 0 else "BREAKEVEN")
         exchange = str(trade.get("exchange", "BINANCE")).upper().strip()
 
@@ -39,6 +67,14 @@ async def insert_trade(trade: dict) -> bool:
             closed_at = datetime.strptime(str(closed_at_raw), "%Y-%m-%d %H:%M:%S") if closed_at_raw else datetime.now()
         except (ValueError, TypeError):
             closed_at = datetime.now()
+
+        entry_p = _parse_float(trade.get("entry_price"))
+        exit_p = _parse_float(trade.get("exit_price"))
+        m_usdt = _parse_float(trade.get("margin_usdt"))
+        lev = _parse_int(trade.get("leverage"))
+        mfe_val = _parse_float(trade.get("mfe"))
+        mae_val = _parse_float(trade.get("mae"))
+        dur_val = _parse_float(trade.get("duration_minutes"))
 
         async with pool.acquire() as conn:
             await conn.execute(
@@ -52,17 +88,17 @@ async def insert_trade(trade: dict) -> bool:
                 """,
                 trade.get("symbol", "UNKNOWN"),
                 trade.get("side", "LONG"),
-                float(trade.get("entry_price", 0) or 0) or None,
-                float(trade.get("exit_price", 0) or 0) or None,
+                entry_p,
+                exit_p,
                 pnl,
                 commission,
                 funding_fee,
                 net_pnl,
-                float(trade.get("margin_usdt", 0) or 0) or None,
-                int(trade.get("leverage", 0) or 0) or None,
-                float(trade.get("mfe", 0) or 0) if trade.get("mfe") is not None else None,
-                float(trade.get("mae", 0) or 0) if trade.get("mae") is not None else None,
-                float(trade.get("duration_minutes", 0) or 0) if trade.get("duration_minutes") is not None else None,
+                m_usdt,
+                lev,
+                mfe_val,
+                mae_val,
+                dur_val,
                 trade.get("order_type", "MARKET"),
                 result,
                 closed_at,
@@ -82,15 +118,15 @@ async def insert_trade(trade: dict) -> bool:
                     f"SESSION_{exchange}",
                     trade.get("symbol", "UNKNOWN"),
                     trade.get("side", "LONG"),
-                    float(trade.get("entry_price", 0) or 0) or None,
-                    float(trade.get("exit_price", 0) or 0) or None,
+                    entry_p,
+                    exit_p,
                     pnl,
                     net_pnl,
-                    float(trade.get("margin_usdt", 0) or 0) or None,
-                    int(trade.get("leverage", 0) or 0) or None,
-                    float(trade.get("mfe", 0) or 0) if trade.get("mfe") is not None else None,
-                    float(trade.get("mae", 0) or 0) if trade.get("mae") is not None else None,
-                    float(trade.get("duration_minutes", 0) or 0) if trade.get("duration_minutes") is not None else None,
+                    m_usdt,
+                    lev,
+                    mfe_val,
+                    mae_val,
+                    dur_val,
                     trade.get("order_type", "MARKET"),
                     result,
                     closed_at,

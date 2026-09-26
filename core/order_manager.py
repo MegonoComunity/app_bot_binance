@@ -93,6 +93,42 @@ async def set_margin_type(client: Union[BaseExchange, AsyncClient], symbol: str,
             log_error(f"MARGIN_{symbol}", str(e))
 
 
+_symbol_order_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _get_symbol_lock(symbol: str) -> asyncio.Lock:
+    """Mengembalikan asyncio.Lock untuk simbol koin tertentu guna mencegah race condition / double order."""
+    sym = symbol.upper().strip()
+    if sym not in _symbol_order_locks:
+        _symbol_order_locks[sym] = asyncio.Lock()
+    return _symbol_order_locks[sym]
+
+
+async def check_exchange_active_position(client: Union[BaseExchange, AsyncClient], symbol: str) -> bool:
+    """
+    Memeriksa langsung ke API Exchange apakah koin ini sudah memiliki posisi aktif terbuka.
+    Mengembalikan True jika sudah ada posisi, False jika bersih.
+    """
+    try:
+        sym_clean = symbol.upper().strip()
+        if hasattr(client, "get_open_positions"):
+            open_positions = await client.get_open_positions()
+            for p in open_positions:
+                p_sym = str(p.get("symbol", "")).upper().strip()
+                amt = float(p.get("position_amt", p.get("positionAmt", p.get("qty", 0))) or 0)
+                if p_sym == sym_clean and abs(amt) > 0:
+                    return True
+        elif hasattr(client, "futures_position_information"):
+            open_positions = await client.futures_position_information(symbol=sym_clean)
+            for p in open_positions:
+                amt = float(p.get("positionAmt", 0) or 0)
+                if abs(amt) > 0:
+                    return True
+    except Exception as e_chk:
+        log_error(f"POS_CHECK_{symbol}", str(e_chk))
+    return False
+
+
 async def place_long_order(
     client: Union[BaseExchange, AsyncClient],
     symbol: str,
@@ -103,68 +139,74 @@ async def place_long_order(
     limit_timeout: int = 30,
 ) -> dict:
     """
-    Membuka posisi Long (Market / Limit Order).
+    Membuka posisi Long (Market / Limit Order) dengan perlindungan Anti-Double Entry tingkat Exchange.
     """
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            actual_leverage = await set_leverage(client, symbol, leverage)
-            await set_margin_type(client, symbol, 'ISOLATED')
-            
-            notional_value = margin_usdt * actual_leverage
-            quantity = notional_value / current_price
-            
-            precision_info = await get_symbol_precision(client, symbol)
-            qty_precision = precision_info['qty']
-            multiplier = 10 ** qty_precision
-            quantity = math.floor(quantity * multiplier) / multiplier
-            
-            order_type = "LIMIT" if use_limit else "MARKET"
-            
-            if isinstance(client, BaseExchange):
-                order = await client.place_order(
-                    symbol=symbol,
-                    side="BUY",
-                    order_type=order_type,
-                    quantity=quantity,
-                    price=current_price if use_limit else None,
-                )
-            else:
-                qty_str = str(int(quantity)) if qty_precision == 0 else f"{quantity:.{qty_precision}f}"
-                if use_limit:
-                    price_str = f"{current_price:.{precision_info['price']}f}"
-                    order = await client.futures_create_order(
-                        symbol=symbol, side=SIDE_BUY, type=ORDER_TYPE_LIMIT,
-                        timeInForce=TIME_IN_FORCE_GTC, quantity=qty_str, price=price_str
-                    )
-                    await asyncio.sleep(limit_timeout)
-                    check_order = await client.futures_get_order(symbol=symbol, orderId=order['orderId'])
-                    if check_order['status'] != 'FILLED':
-                        await client.futures_cancel_order(symbol=symbol, orderId=order['orderId'])
-                        return {"status": "error", "message": "Limit order timeout / Trap avoided"}
-                    order = check_order
-                else:
-                    order = await client.futures_create_order(
-                        symbol=symbol, side=SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=qty_str
-                    )
+    async with _get_symbol_lock(symbol):
+        # 1. Verifikasi langsung ke Exchange sebelum menembak order
+        if await check_exchange_active_position(client, symbol):
+            print(f"🛑 [EXCHANGE LOCK] {symbol} sudah memiliki posisi aktif di exchange. Order LONG dibatalkan (Anti-Double Entry).")
+            return {"status": "error", "message": f"Position already active on exchange for {symbol}"}
 
-            return {
-                "status": "success",
-                "order": order,
-                "quantity": quantity,
-                "price": _get_average_fill_price(order, current_price),
-                "actual_leverage": actual_leverage,
-            }
-        except Exception as e:
-            error_str = str(e).lower()
-            if "timeout" in error_str or "rate limit" in error_str or "connection" in error_str:
-                print(f"[RETRY {attempt+1}/{max_retries}] Long order {symbol}: {e}")
-                await asyncio.sleep(2 ** attempt)
-            else:
-                log_error(f"LONG_ORDER_{symbol}", str(e))
-                print(f"Error placing long order for {symbol}: {e}")
-                return {"status": "error", "message": str(e)}
-    return {"status": "error", "message": "Max retries reached"}
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                actual_leverage = await set_leverage(client, symbol, leverage)
+                await set_margin_type(client, symbol, 'ISOLATED')
+                
+                notional_value = margin_usdt * actual_leverage
+                quantity = notional_value / current_price
+                
+                precision_info = await get_symbol_precision(client, symbol)
+                qty_precision = precision_info['qty']
+                multiplier = 10 ** qty_precision
+                quantity = math.floor(quantity * multiplier) / multiplier
+                
+                order_type = "LIMIT" if use_limit else "MARKET"
+                
+                if isinstance(client, BaseExchange):
+                    order = await client.place_order(
+                        symbol=symbol,
+                        side="BUY",
+                        order_type=order_type,
+                        quantity=quantity,
+                        price=current_price if use_limit else None,
+                    )
+                else:
+                    qty_str = str(int(quantity)) if qty_precision == 0 else f"{quantity:.{qty_precision}f}"
+                    if use_limit:
+                        price_str = f"{current_price:.{precision_info['price']}f}"
+                        order = await client.futures_create_order(
+                            symbol=symbol, side=SIDE_BUY, type=ORDER_TYPE_LIMIT,
+                            timeInForce=TIME_IN_FORCE_GTC, quantity=qty_str, price=price_str
+                        )
+                        await asyncio.sleep(limit_timeout)
+                        check_order = await client.futures_get_order(symbol=symbol, orderId=order['orderId'])
+                        if check_order['status'] != 'FILLED':
+                            await client.futures_cancel_order(symbol=symbol, orderId=order['orderId'])
+                            return {"status": "error", "message": "Limit order timeout / Trap avoided"}
+                        order = check_order
+                    else:
+                        order = await client.futures_create_order(
+                            symbol=symbol, side=SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=qty_str
+                        )
+
+                return {
+                    "status": "success",
+                    "order": order,
+                    "quantity": quantity,
+                    "price": _get_average_fill_price(order, current_price),
+                    "actual_leverage": actual_leverage,
+                }
+            except Exception as e:
+                error_str = str(e).lower()
+                if "timeout" in error_str or "rate limit" in error_str or "connection" in error_str:
+                    print(f"[RETRY {attempt+1}/{max_retries}] Long order {symbol}: {e}")
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    log_error(f"LONG_ORDER_{symbol}", str(e))
+                    print(f"Error placing long order for {symbol}: {e}")
+                    return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": "Max retries reached"}
 
 
 async def place_short_order(
@@ -177,68 +219,74 @@ async def place_short_order(
     limit_timeout: int = 30,
 ) -> dict:
     """
-    Membuka posisi Short (Market / Limit Order).
+    Membuka posisi Short (Market / Limit Order) dengan perlindungan Anti-Double Entry tingkat Exchange.
     """
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            actual_leverage = await set_leverage(client, symbol, leverage)
-            await set_margin_type(client, symbol, 'ISOLATED')
-            
-            notional_value = margin_usdt * actual_leverage
-            quantity = notional_value / current_price
-            
-            precision_info = await get_symbol_precision(client, symbol)
-            qty_precision = precision_info['qty']
-            multiplier = 10 ** qty_precision
-            quantity = math.floor(quantity * multiplier) / multiplier
-            
-            order_type = "LIMIT" if use_limit else "MARKET"
-            
-            if isinstance(client, BaseExchange):
-                order = await client.place_order(
-                    symbol=symbol,
-                    side="SELL",
-                    order_type=order_type,
-                    quantity=quantity,
-                    price=current_price if use_limit else None,
-                )
-            else:
-                qty_str = str(int(quantity)) if qty_precision == 0 else f"{quantity:.{qty_precision}f}"
-                if use_limit:
-                    price_str = f"{current_price:.{precision_info['price']}f}"
-                    order = await client.futures_create_order(
-                        symbol=symbol, side=SIDE_SELL, type=ORDER_TYPE_LIMIT,
-                        timeInForce=TIME_IN_FORCE_GTC, quantity=qty_str, price=price_str
-                    )
-                    await asyncio.sleep(limit_timeout)
-                    check_order = await client.futures_get_order(symbol=symbol, orderId=order['orderId'])
-                    if check_order['status'] != 'FILLED':
-                        await client.futures_cancel_order(symbol=symbol, orderId=order['orderId'])
-                        return {"status": "error", "message": "Limit order timeout / Trap avoided"}
-                    order = check_order
-                else:
-                    order = await client.futures_create_order(
-                        symbol=symbol, side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=qty_str
-                    )
+    async with _get_symbol_lock(symbol):
+        # 1. Verifikasi langsung ke Exchange sebelum menembak order
+        if await check_exchange_active_position(client, symbol):
+            print(f"🛑 [EXCHANGE LOCK] {symbol} sudah memiliki posisi aktif di exchange. Order SHORT dibatalkan (Anti-Double Entry).")
+            return {"status": "error", "message": f"Position already active on exchange for {symbol}"}
 
-            return {
-                "status": "success",
-                "order": order,
-                "quantity": quantity,
-                "price": _get_average_fill_price(order, current_price),
-                "actual_leverage": actual_leverage,
-            }
-        except Exception as e:
-            error_str = str(e).lower()
-            if "timeout" in error_str or "rate limit" in error_str or "connection" in error_str:
-                print(f"[RETRY {attempt+1}/{max_retries}] Short order {symbol}: {e}")
-                await asyncio.sleep(2 ** attempt)
-            else:
-                log_error(f"SHORT_ORDER_{symbol}", str(e))
-                print(f"Error placing short order for {symbol}: {e}")
-                return {"status": "error", "message": str(e)}
-    return {"status": "error", "message": "Max retries reached"}
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                actual_leverage = await set_leverage(client, symbol, leverage)
+                await set_margin_type(client, symbol, 'ISOLATED')
+                
+                notional_value = margin_usdt * actual_leverage
+                quantity = notional_value / current_price
+                
+                precision_info = await get_symbol_precision(client, symbol)
+                qty_precision = precision_info['qty']
+                multiplier = 10 ** qty_precision
+                quantity = math.floor(quantity * multiplier) / multiplier
+                
+                order_type = "LIMIT" if use_limit else "MARKET"
+                
+                if isinstance(client, BaseExchange):
+                    order = await client.place_order(
+                        symbol=symbol,
+                        side="SELL",
+                        order_type=order_type,
+                        quantity=quantity,
+                        price=current_price if use_limit else None,
+                    )
+                else:
+                    qty_str = str(int(quantity)) if qty_precision == 0 else f"{quantity:.{qty_precision}f}"
+                    if use_limit:
+                        price_str = f"{current_price:.{precision_info['price']}f}"
+                        order = await client.futures_create_order(
+                            symbol=symbol, side=SIDE_SELL, type=ORDER_TYPE_LIMIT,
+                            timeInForce=TIME_IN_FORCE_GTC, quantity=qty_str, price=price_str
+                        )
+                        await asyncio.sleep(limit_timeout)
+                        check_order = await client.futures_get_order(symbol=symbol, orderId=order['orderId'])
+                        if check_order['status'] != 'FILLED':
+                            await client.futures_cancel_order(symbol=symbol, orderId=order['orderId'])
+                            return {"status": "error", "message": "Limit order timeout / Trap avoided"}
+                        order = check_order
+                    else:
+                        order = await client.futures_create_order(
+                            symbol=symbol, side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=qty_str
+                        )
+
+                return {
+                    "status": "success",
+                    "order": order,
+                    "quantity": quantity,
+                    "price": _get_average_fill_price(order, current_price),
+                    "actual_leverage": actual_leverage,
+                }
+            except Exception as e:
+                error_str = str(e).lower()
+                if "timeout" in error_str or "rate limit" in error_str or "connection" in error_str:
+                    print(f"[RETRY {attempt+1}/{max_retries}] Short order {symbol}: {e}")
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    log_error(f"SHORT_ORDER_{symbol}", str(e))
+                    print(f"Error placing short order for {symbol}: {e}")
+                    return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": "Max retries reached"}
 
 
 async def place_take_profit_stop_loss(

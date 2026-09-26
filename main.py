@@ -107,6 +107,7 @@ try:
     from database.pattern_repo import migrate_from_json as migrate_patterns
     from database.ohlcv_repo import upsert_candles
     from core.ohlcv_scraper import run_initial_scrape, run_short_term_scraper, run_long_term_scraper
+    from core.trade_sync import sync_real_exchange_account
     DB_MODULES_LOADED = True
 except ImportError as _db_import_err:
     print(f"[WARNING] Modul database tidak tersedia: {_db_import_err}")
@@ -191,6 +192,27 @@ class RateLimiter:
 rate_limiter = RateLimiter(max_requests=120, time_window=60)
 
 
+def get_trade_notification_target(is_paper: bool = False) -> Optional[int | str]:
+    """
+    Menentukan target chat ID untuk notifikasi trade.
+    - Real Trading: Selalu kirim ke TELEGRAM_ADMIN_CHAT_ID.
+    - Paper Trading / Latihan Simulasi: Hanya kirim jika TELEGRAM_DEMO_CHAT_ID diisi khusus atau jika NOTIFY_SIMULATION_TRADES=True.
+      Secara default TIDAK dikirim ke TELEGRAM_ADMIN_CHAT_ID untuk mencegah chat admin penuh dengan hasil latihan/simulasi.
+    """
+    if not is_paper:
+        return TELEGRAM_ADMIN_CHAT_ID
+
+    # Jika Paper / Simulasi Demo
+    demo_chat = getattr(bot_config, "telegram_demo_chat_id", None) or os.getenv("TELEGRAM_DEMO_CHAT_ID", "").strip()
+    if demo_chat:
+        return demo_chat
+
+    if getattr(bot_config, "notify_simulation_trades", False):
+        return TELEGRAM_ADMIN_CHAT_ID
+
+    return None
+
+
 async def scanner_loop():
     """
     Loop utama untuk melakukan scanning market
@@ -246,15 +268,18 @@ async def scanner_loop():
                     effective_equity,
                     bot_config.max_daily_loss_percent,
                 ):
-                    bot_state["is_running"] = False
-                    bot_state["state"] = "KILL_SWITCH"
-                    await send_error_log(
-                        bot,
-                        TELEGRAM_ADMIN_CHAT_ID,
-                        f"DAILY CIRCUIT BREAKER: realized PnL {daily_stats['daily_net_pnl']:+.4f} USDT",
-                    )
-                    await asyncio.sleep(SCAN_INTERVAL_SECONDS)
-                    continue
+                    # Jika user belum meng-override / meng-acknowledge circuit breaker
+                    if not bot_state.get("circuit_breaker_acknowledged", False):
+                        bot_state["is_running"] = False
+                        bot_state["state"] = "KILL_SWITCH"
+                        await send_error_log(
+                            bot,
+                            TELEGRAM_ADMIN_CHAT_ID,
+                            f"🛡️ DAILY CIRCUIT BREAKER: realized PnL {daily_stats['daily_net_pnl']:+.4f} USDT.\n"
+                            f"Bot di-pause untuk proteksi modal. Ketik /resume jika ingin mengabaikan & melanjutkan trading.",
+                        )
+                        await asyncio.sleep(SCAN_INTERVAL_SECONDS)
+                        continue
 
                 # 1. Dapatkan koin sesuai target (ALL / Top N) dan sorting setting
                 scan_limit = bot_config.get_scan_limit_int()
@@ -332,6 +357,15 @@ async def scanner_loop():
                         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Scan tahap ke-{tahap} scan koin urutan {i+1} - {i+len(batch_symbols)}")
                         
                     for idx, symbol in enumerate(batch_symbols):
+                        if hasattr(bot_config, "is_coin_excluded") and bot_config.is_coin_excluded(symbol):
+                            continue
+
+                        # Anti-Double Entry: Lewati scan jika koin sudah memiliki posisi aktif
+                        sym_clean = str(symbol).upper().strip()
+                        active_syms = {str(k).upper().strip() for k in bot_state.get("active_trade_meta", {}).keys()}
+                        if sym_clean in active_syms:
+                            continue
+
                         print(f"Koin urutan {i + idx + 1} {symbol}")
                         update_scanner_progress(
                             current_symbol=symbol,
@@ -466,14 +500,13 @@ async def scanner_loop():
                                 )
                                 print(f"[HASIL LATIHAN] {symbol} {v_side}: {exit_label} ({roi_pct:+.2f}% ROE) | Setup: {v_trade.get('alasan')}")
                                 
-                                # Kirim hasil simulasi ke admin dan channel Telegram
-                                try:
-                                    if TELEGRAM_ADMIN_CHAT_ID:
-                                        await safe_send_message(bot, TELEGRAM_ADMIN_CHAT_ID, msg)
-                                    if TELEGRAM_ERROR_CHAT_ID and TELEGRAM_ERROR_CHAT_ID != TELEGRAM_ADMIN_CHAT_ID:
-                                        await safe_send_message(bot, TELEGRAM_ERROR_CHAT_ID, msg)
-                                except Exception as e_res:
-                                    print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
+                                # Kirim hasil simulasi HANYA jika demo chat dikonfigurasi (tidak spamming Admin)
+                                target_demo_chat = get_trade_notification_target(is_paper=True)
+                                if target_demo_chat:
+                                    try:
+                                        await safe_send_message(bot, target_demo_chat, msg)
+                                    except Exception as e_res:
+                                        print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
                                 
                                 record_trade_result(v_trade.get('alasan', ''), is_profit=is_win)
                                 
@@ -950,27 +983,28 @@ async def scanner_loop():
                                 elif is_paper_trading and modal <= 0:
                                     modal = 100.0  # Default modal 100 USDT untuk simulasi Paper Trading jika saldo akun 0
 
-                                # Cek posisi terbuka
+                                # Cek posisi terbuka (Strict Anti-Double Entry Guard)
+                                sym_clean = str(symbol).upper().strip()
                                 is_position_open = False
+
+                                # 1. Cek dari daftar posisi aktif di Exchange
                                 for pos in positions:
-                                    amt = float(pos.get("position_amt", pos.get("positionAmt", 0)))
-                                    if pos.get("symbol") == symbol and amt != 0:
+                                    p_sym = str(pos.get("symbol", "")).upper().strip()
+                                    amt = float(pos.get("position_amt", pos.get("positionAmt", 0)) or 0)
+                                    if p_sym == sym_clean and abs(amt) > 0:
                                         is_position_open = True
                                         break
 
-                                # Cek juga di antrean active_trade_meta jika paper trading
-                                active_meta_for_sym = bot_state.get("active_trade_meta", {}).get(symbol)
-                                if not is_position_open and active_meta_for_sym:
-                                    if active_meta_for_sym.get("is_paper") or is_paper_trading:
-                                        is_position_open = True
-                                    else:
-                                        # Jika trade real tapi sudah tidak ada di list positions exchange, bersihkan stale entry
-                                        bot_state.get("active_trade_meta", {}).pop(symbol, None)
-                                        bot_state.get("active_trade_reasons", {}).pop(symbol, None)
-                                        bot_state.setdefault("protection_recovery_suppressed", set()).discard(symbol)
+                                # 2. Cek dari active_trade_meta internal bot
+                                active_meta = bot_state.setdefault("active_trade_meta", {})
+                                if not is_position_open:
+                                    for act_k in active_meta.keys():
+                                        if str(act_k).upper().strip() == sym_clean:
+                                            is_position_open = True
+                                            break
 
                                 if is_position_open:
-                                    print(f"⏩ Lewati {symbol}: Sudah ada posisi terbuka.")
+                                    print(f"⏩ [ANTI-DOUBLE ENTRY] Lewati {symbol}: Sudah ada posisi terbuka di Exchange atau Bot Memory.")
                                     continue
 
                                 total_margin_used = total_position_margin(positions, bot_config.leverage)
@@ -1150,6 +1184,12 @@ async def scanner_loop():
                             exchange_name = getattr(client, "exchange_name", getattr(bot_config, "active_exchange", "BINANCE"))
                             exchange_tag = f"{exchange_name}_SIM" if is_paper_trading else (f"{exchange_name}_TESTNET" if curr_trade_mode == "TESTNET" else f"{exchange_name}_REAL")
 
+                            # Strict Anti-Double Entry Guard (Pre-Order Verification)
+                            sym_clean = str(symbol).upper().strip()
+                            if sym_clean in {str(k).upper().strip() for k in bot_state.get("active_trade_meta", {}).keys()}:
+                                print(f"🛑 [ANTI-DOUBLE ENTRY] Pembatalan order {symbol}: Posisi sudah tercatat aktif di bot memory.")
+                                continue
+
                             if is_paper_trading:
                                 quantity = (current_margin * dynamic_leverage) / current_price
                                 order_res = {
@@ -1280,8 +1320,12 @@ async def scanner_loop():
                                     'ai_evaluation': ai_eval_text,
                                     'method': alasan,
                                 }
-                                trade_target_chat = (TELEGRAM_ERROR_CHAT_ID or TELEGRAM_ADMIN_CHAT_ID) if is_paper_trading else TELEGRAM_ADMIN_CHAT_ID
-                                await send_trade_notification(bot, trade_target_chat, trade_data)
+                                trade_target_chat = get_trade_notification_target(is_paper=is_paper_trading)
+                                if trade_target_chat:
+                                    try:
+                                        await send_trade_notification(bot, trade_target_chat, trade_data)
+                                    except Exception as e_notif:
+                                        print(f"[TELEGRAM] Gagal kirim notif order: {e_notif}")
                                 bot_state["active_trade_reasons"][symbol] = alasan
 
                                 # Catat ke Pattern Memory & PostgreSQL
@@ -1618,21 +1662,20 @@ async def profitable_position_monitor_loop():
                                 meta["is_breakeven_set"] = True
                                 ex_tag = meta.get("exchange", "BITUNIX_SIM")
                                 print(f"🛡️ [AUTO BREAK-EVEN (PAPER)] {sym}: ROI {roi_pct:+.2f}% >= +{bot_config.auto_breakeven_roi_percent}%. SL digeser ke Entry+Buffer: {new_sl:.6f} (Risk-Free!)")
-                                try:
-                                    be_msg = (
-                                        f"🛡️ **AUTO BREAK-EVEN ACTIVATED (RISK-FREE) 🛡️**\n\n"
-                                        f"• **Koin:** `[{ex_tag}] {sym}` ({pos_side})\n"
-                                        f"• **Floating ROI:** `{roi_pct:+.2f}%` (Trigger $\ge +{bot_config.auto_breakeven_roi_percent}%$)\n"
-                                        f"• **Entry Price:** `{e_price:.6f}`\n"
-                                        f"• **Stop Loss Baru:** `{new_sl:.6f}` (Entry + 0.1% Fee Buffer)\n\n"
-                                        f"✨ *Trade sekarang 100% Bebas Risiko (Anti Rungkad).* Target TP Statik tetap aktif!"
-                                    )
-                                    if TELEGRAM_ADMIN_CHAT_ID:
-                                        await safe_send_message(bot, TELEGRAM_ADMIN_CHAT_ID, be_msg)
-                                    if TELEGRAM_ERROR_CHAT_ID and TELEGRAM_ERROR_CHAT_ID != TELEGRAM_ADMIN_CHAT_ID:
-                                        await safe_send_message(bot, TELEGRAM_ERROR_CHAT_ID, be_msg)
-                                except Exception as e_be_msg:
-                                    print(f"[TELEGRAM] Gagal kirim notif Auto-BE: {e_be_msg}")
+                                target_demo_chat = get_trade_notification_target(is_paper=True)
+                                if target_demo_chat:
+                                    try:
+                                        be_msg = (
+                                            f"🛡️ **AUTO BREAK-EVEN ACTIVATED (RISK-FREE) 🛡️**\n\n"
+                                            f"• **Koin:** `[{ex_tag}] {sym}` ({pos_side})\n"
+                                            f"• **Floating ROI:** `{roi_pct:+.2f}%` (Trigger $\ge +{bot_config.auto_breakeven_roi_percent}%$)\n"
+                                            f"• **Entry Price:** `{e_price:.6f}`\n"
+                                            f"• **Stop Loss Baru:** `{new_sl:.6f}` (Entry + 0.1% Fee Buffer)\n\n"
+                                            f"✨ *Trade sekarang 100% Bebas Risiko (Anti Rungkad).* Target TP Statik tetap aktif!"
+                                        )
+                                        await safe_send_message(bot, target_demo_chat, be_msg)
+                                    except Exception as e_be_msg:
+                                        print(f"[TELEGRAM] Gagal kirim notif Auto-BE: {e_be_msg}")
 
                         reached_tp = False
                         reached_sl = False
@@ -1729,13 +1772,12 @@ async def profitable_position_monitor_loop():
                                 "ai_eval_summary": meta.get("ai_eval_summary", time_reason if should_close_time else ""),
                             }
 
-                            try:
-                                if TELEGRAM_ADMIN_CHAT_ID:
-                                    await send_order_filled_notification(bot, TELEGRAM_ADMIN_CHAT_ID, o_data)
-                                if TELEGRAM_ERROR_CHAT_ID and TELEGRAM_ERROR_CHAT_ID != TELEGRAM_ADMIN_CHAT_ID:
-                                    await send_order_filled_notification(bot, TELEGRAM_ERROR_CHAT_ID, o_data)
-                            except Exception as e_fill_notif:
-                                print(f"[TELEGRAM] Gagal kirim notifikasi closed order paper: {e_fill_notif}")
+                            target_demo_chat = get_trade_notification_target(is_paper=True)
+                            if target_demo_chat:
+                                try:
+                                    await send_order_filled_notification(bot, target_demo_chat, o_data)
+                                except Exception as e_fill_notif:
+                                    print(f"[TELEGRAM] Gagal kirim notifikasi closed order paper: {e_fill_notif}")
 
                             with open("virtual_success_log.csv", "a", newline="", encoding="utf-8") as vf:
                                 csv.writer(vf).writerow([
@@ -2366,6 +2408,14 @@ async def main():
     # Startup database & OHLCV scraper
     await _startup_database(_startup_client)
 
+    # Deteksi dan sinkronisasi otomatis akun real (Saldo, Posisi Terbuka, dan Riwayat Trade) saat startup
+    try:
+        curr_mode = getattr(bot_config, "trading_mode", TRADING_MODE).upper()
+        print(f"[STARTUP] 🔄 Mendeteksi data akun real di exchange ({_startup_client.exchange_name})...")
+        await sync_real_exchange_account(_startup_client, sync_history=True, bot_state_ref=bot_state)
+    except Exception as _sync_start_err:
+        print(f"[STARTUP] Warning sinkronisasi real account: {_sync_start_err}")
+
     # Startup web dashboard
     dashboard_runner = None
     if DASHBOARD_MODULE_LOADED:
@@ -2382,10 +2432,18 @@ async def main():
     except Exception as _tg_err:
         print(f"[TELEGRAM] Gagal setup commands: {_tg_err}")
 
+    async def _safe_telegram_polling():
+        while True:
+            try:
+                await dp.start_polling(bot, handle_signals=False)
+            except Exception as _poll_err:
+                print(f"[TELEGRAM POLLING] Network/DNS terputus: {_poll_err}. Mencoba menyambung kembali dalam 5 detik...")
+                await asyncio.sleep(5)
+
     try:
         from database.send_backup_to_telegram import daily_backup_scheduler_loop
         await asyncio.gather(
-            dp.start_polling(bot),
+            _safe_telegram_polling(),
             scanner_loop(),
             user_data_stream_loop(),
             profitable_position_monitor_loop(),

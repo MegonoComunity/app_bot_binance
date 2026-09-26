@@ -24,6 +24,7 @@ from core.market_analysis import analyze_daily_market
 from core.risk_manager import calculate_account_pnl_percent, calculate_position_pnl_percent
 from core.trade_stats import trade_summary, reset_trade_stats
 from database.trade_repo import get_trade_summary
+from core.trade_sync import sync_real_exchange_account
 
 # Initialize bot and dispatcher
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -255,31 +256,29 @@ async def fetch_account_balance_info(client_inst, exchange_name: str, mode: str)
             await target_client.init()
             bot_state["client"] = target_client
 
-            if isinstance(target_client, BaseExchange):
-                bal_info = await target_client.get_account_balance()
-                total = float(bal_info.get("total_wallet_balance", 0.0))
-                avail = float(bal_info.get("available_balance", total))
-                unreal = float(bal_info.get("unrealized_pnl", 0.0))
-                positions = await target_client.get_open_positions()
-            else:
-                acc_info = await target_client.futures_account()
-                total = float(acc_info.get("totalMarginBalance", 0.0))
-                avail = float(acc_info.get("availableBalance", total))
-                unreal = float(acc_info.get("totalUnrealizedProfit", 0.0))
-                raw_pos = acc_info.get("positions", [])
-                positions = [p for p in raw_pos if float(p.get("positionAmt", 0)) != 0]
+            sync_res = await sync_real_exchange_account(
+                client=target_client,
+                sync_history=True,
+                history_limit=50,
+                bot_state_ref=bot_state,
+            )
 
-            return {
-                "success": True,
-                "is_real": True,
-                "source": f"{target_ex} Real Account API",
-                "exchange": target_ex,
-                "total_balance": total,
-                "available_balance": avail,
-                "unrealized_pnl": unreal,
-                "positions_count": len(positions),
-                "positions": positions,
-            }
+            if sync_res.get("success"):
+                return {
+                    "success": True,
+                    "is_real": True,
+                    "source": f"{target_ex} Real Account API",
+                    "exchange": target_ex,
+                    "total_balance": sync_res["total_wallet_balance"],
+                    "available_balance": sync_res["available_balance"],
+                    "unrealized_pnl": sync_res["unrealized_pnl"],
+                    "margin_locked": sync_res["margin_locked"],
+                    "positions_count": sync_res["open_positions_count"],
+                    "positions": sync_res["open_positions"],
+                    "synced_history_count": sync_res["synced_history_count"],
+                }
+            else:
+                raise RuntimeError(sync_res.get("error") or "Gagal membaca saldo real dari API.")
         except Exception as err:
             err_str = str(err)
             if "whitelist" in err_str.lower() or "10004" in err_str:
@@ -366,7 +365,7 @@ async def fetch_account_balance_info(client_inst, exchange_name: str, mode: str)
 async def scan_order_real_handler(message: types.Message):
     """
     Mengaktifkan mode REAL Trading: bot akan men-scan market dan mengeksekusi order nyata di exchange,
-    serta otomatis mengecek dan menampilkan saldo akun real via API.
+    serta otomatis mendeteksi akun real via API (Saldo, Open Positions, dan Closed History).
     """
     try:
         bot_config.update_trading_mode("REAL")
@@ -377,26 +376,34 @@ async def scan_order_real_handler(message: types.Message):
         bot_state["is_running"] = True
         bot_state["state"] = "RUNNING"
         
-        # Cek saldo real secara otomatis
+        # Eksekusi sinkronisasi menyeluruh akun real
         client_inst = bot_state.get("client")
-        bal_res = await fetch_account_balance_info(client_inst, active_ex, "REAL")
+        sync_res = await sync_real_exchange_account(client_inst, sync_history=True, history_limit=50, bot_state_ref=bot_state)
         
-        if bal_res.get("success"):
-            total_bal = bal_res.get("total_balance", 0.0)
-            avail_bal = bal_res.get("available_balance", 0.0)
-            unr_pnl = bal_res.get("unrealized_pnl", 0.0)
-            pos_cnt = bal_res.get("positions_count", 0)
-            src_lbl = bal_res.get("source", f"{active_ex} Real API")
+        if sync_res.get("success"):
+            total_bal = sync_res.get("total_wallet_balance", 0.0)
+            avail_bal = sync_res.get("available_balance", 0.0)
+            unr_pnl = sync_res.get("unrealized_pnl", 0.0)
+            pos_cnt = sync_res.get("open_positions_count", 0)
+            hist_cnt = sync_res.get("synced_history_count", 0)
+            src_lbl = f"{active_ex} Real Account API"
             
+            pos_details = ""
+            if pos_cnt > 0:
+                pos_list = sync_res.get("open_positions", [])
+                pos_str_list = [f"• `{p.get('symbol')}` ({p.get('side')}) Entry: `{p.get('entry_price')}` | PnL: `{p.get('unrealized_pnl', 0.0):+.2f}`" for p in pos_list[:5]]
+                pos_details = "\n" + "\n".join(pos_str_list) + "\n"
+
             saldo_text = (
                 f"💰 **Saldo Real Wallet:** `${total_bal:.2f} USDT`\n"
                 f"💵 **Available Margin:** `${avail_bal:.2f} USDT`\n"
                 f"📈 **Floating PnL:** `{unr_pnl:+.2f} USDT`\n"
-                f"📊 **Posisi Real Terbuka:** `{pos_cnt}` posisi\n"
+                f"📊 **Posisi Real Terbuka:** `{pos_cnt}` posisi{pos_details}"
+                f"🔄 **Riwayat Closed Synced:** `{hist_cnt}` trade baru tersimpan ke DB\n"
                 f"🔌 **Sumber Data:** `{src_lbl}`\n"
             )
         else:
-            saldo_text = f"⚠️ **Saldo Real:** Gagal terhubung ke API `{active_ex}` ({bal_res.get('error')})\n"
+            saldo_text = f"⚠️ **Saldo Real:** Gagal terhubung ke API `{active_ex}` ({sync_res.get('error')})\n"
 
         text = (
             f"🚀 **MODE ORDER REAL DIAKTIFKAN!** 🟢\n"
@@ -549,6 +556,10 @@ async def set_exchange_handler(message: types.Message, command: CommandObject):
         await message.answer(f"❌ Gagal mengubah exchange ke {target}: {e}")
 
 @dp.message(Command("status"))
+@dp.message(Command("saldo"))
+@dp.message(Command("balance"))
+@dp.message(F.text == "📊 Status Bot")
+@dp.message(F.text == "💰 Saldo")
 async def status_handler(message: types.Message):
     state = bot_state.get("state", "PAUSED")
     if state == "DEGRADED" and bot_state.get("websocket_connected"):
@@ -986,6 +997,7 @@ async def btn_close_all_handler(message: types.Message):
     await close_all_handler(message)
 
 @dp.message(Command("stop"))
+@dp.message(Command("pause"))
 async def stop_handler(message: types.Message):
     bot_state["is_running"] = False
     bot_state["state"] = "PAUSED"
@@ -995,7 +1007,8 @@ async def stop_handler(message: types.Message):
 async def resume_handler(message: types.Message):
     bot_state["is_running"] = True
     bot_state["state"] = "RUNNING"
-    await message.answer("▶️ Bot Scanner dijalankan kembali.")
+    bot_state["circuit_breaker_acknowledged"] = True
+    await message.answer("▶️ **Bot Scanner Dijalankan Kembali!**\nSistem circuit breaker di-override oleh Admin.", parse_mode="Markdown")
 
 @dp.message(Command("set_tp"))
 async def set_tp_handler(message: types.Message, command: CommandObject):
