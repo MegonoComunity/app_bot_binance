@@ -296,4 +296,70 @@ def evaluate_auto_breakeven(
         "should_move_to_be": True,
         "new_sl_price": round(new_sl_price, 8),
         "reason": f"ROI mencapai +{current_roi_percent:.2f}% >= +{be_activation_roi:.1f}%. Geser SL ke Break-Even ({new_sl_price:.6f})"
-    }
+    }
+
+
+def calculate_dynamic_atr_targets(
+    entry_price: float,
+    atr_value: float,
+    side: str = "LONG",
+    leverage: int = 10,
+    config_tp_percent: float = 40.0,
+    config_sl_percent: float = 25.0,
+    atr_sl_mult: float = 1.8,
+    min_price_sl_pct: float = 0.020,  # Minimal jarak harga 2.0% agar tahan noise/wick 5m
+    max_price_sl_pct: float = 0.045,  # Maksimal jarak harga 4.5% agar risiko terkontrol
+    risk_reward_ratio: float = 1.6,   # Minimal R:R 1 : 1.6
+) -> dict:
+    """
+    Menghitung harga Take Profit & Stop Loss berbasis volatilitas ATR dan Leverage.
+    Mencegah Stop Loss terlalu sempit (wick hunting) pada koin ber-volatilitas tinggi.
+    """
+    if entry_price <= 0:
+        return {
+            "tp_price": entry_price,
+            "sl_price": entry_price,
+            "price_sl_pct": 0.02,
+            "price_tp_pct": 0.035,
+            "sl_distance": 0.0,
+            "tp_distance": 0.0,
+        }
+
+    side = side.upper()
+    
+    # 1. Base SL dari konfigurasi leverage
+    base_sl_pct = (config_sl_percent / 100.0) / max(leverage, 1)
+    
+    # 2. SL berbasis ATR
+    if atr_value > 0:
+        atr_sl_pct = (atr_value * atr_sl_mult) / entry_price
+    else:
+        atr_sl_pct = base_sl_pct
+
+    # 3. Pilih jarak SL yang adaptif: ambil yang lebih protektif terhadap wick
+    dynamic_sl_pct = max(base_sl_pct, atr_sl_pct)
+    # Batasi dalam rentang aman [min_price_sl_pct, max_price_sl_pct]
+    final_sl_pct = max(min_price_sl_pct, min(dynamic_sl_pct, max_price_sl_pct))
+
+    # 4. Hitung Take Profit berdasarkan Risk-to-Reward Ratio (minimal 1:1.6)
+    base_tp_pct = (config_tp_percent / 100.0) / max(leverage, 1)
+    final_tp_pct = max(base_tp_pct, final_sl_pct * risk_reward_ratio)
+
+    # 5. Hitung harga nominal TP dan SL
+    if side in ("LONG", "BUY"):
+        sl_price = entry_price * (1.0 - final_sl_pct)
+        tp_price = entry_price * (1.0 + final_tp_pct)
+    else: # SHORT / SELL
+        sl_price = entry_price * (1.0 + final_sl_pct)
+        tp_price = entry_price * (1.0 - final_tp_pct)
+
+    return {
+        "tp_price": round(tp_price, 8),
+        "sl_price": round(sl_price, 8),
+        "price_sl_pct": round(final_sl_pct * 100, 2),
+        "price_tp_pct": round(final_tp_pct * 100, 2),
+        "sl_distance": abs(entry_price - sl_price),
+        "tp_distance": abs(tp_price - entry_price),
+        "risk_reward_ratio": round(final_tp_pct / max(final_sl_pct, 1e-9), 2),
+    }
+

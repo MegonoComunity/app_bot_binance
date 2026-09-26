@@ -25,6 +25,8 @@ from core.risk_manager import calculate_account_pnl_percent, calculate_position_
 from core.trade_stats import trade_summary, reset_trade_stats
 from database.trade_repo import get_trade_summary
 from core.trade_sync import sync_real_exchange_account
+from core.learner import get_multi_timeframe_summary, get_stats as get_learner_stats, reset_pattern_blacklist
+from core.pattern_memory import _load as load_pattern_memory
 
 # Initialize bot and dispatcher
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -97,6 +99,8 @@ async def setup_bot_commands(bot_instance: Bot) -> None:
     commands = [
         BotCommand(command="start", description="Buka Menu Utama & Keyboard"),
         BotCommand(command="help", description="Panduan & Daftar Perintah Lengkap"),
+        BotCommand(command="ai_stats", description="🧠 Monitoring Berkala AI & Win Rate Pola"),
+        BotCommand(command="winrate", description="📊 Rekap Win Rate Multi-Timeframe"),
         BotCommand(command="scan_order_paper", description="🔵 Mulai Scan & Simulasi Paper Trade"),
         BotCommand(command="scan_order_real", description="🟢 Mulai Scan & Order REAL Account"),
         BotCommand(command="mode", description="Cek / Ganti Mode Trading (REAL/SIMULASI)"),
@@ -130,12 +134,12 @@ async def setup_bot_commands(bot_instance: Bot) -> None:
 def get_main_keyboard():
     kb = [
         [KeyboardButton(text="🔵 Scan Order Paper"), KeyboardButton(text="🟢 Scan Order Real")],
-        [KeyboardButton(text="📊 Status Bot"), KeyboardButton(text="⚙️ Pengaturan")],
-        [KeyboardButton(text="🧮 Hitung Margin"), KeyboardButton(text="🔄 Reset Demo")],
+        [KeyboardButton(text="📊 Status Bot"), KeyboardButton(text="🧠 Monitoring AI")],
+        [KeyboardButton(text="⚙️ Pengaturan"), KeyboardButton(text="🧮 Hitung Margin")],
         [KeyboardButton(text="📈 Histori TP"), KeyboardButton(text="📉 Histori SL")],
-        [KeyboardButton(text="🔎 Analisa Koin"), KeyboardButton(text="⛔ Close ALL")],
+        [KeyboardButton(text="🔎 Analisa Koin"), KeyboardButton(text="🔄 Reset Demo")],
         [KeyboardButton(text="⏯️ Pause / Resume"), KeyboardButton(text="📸 Upload Dataset")],
-        [KeyboardButton(text="📞 Bantuan")],
+        [KeyboardButton(text="⛔ Close ALL"), KeyboardButton(text="📞 Bantuan")],
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -2164,3 +2168,256 @@ async def predict_photo_handler(message: types.Message):
         
     except Exception as e:
         await wait_msg.edit_text(f"❌ Terjadi kesalahan saat prediksi: {e}")
+
+
+# ─── GUI MONITORING BERKALA AI & WIN RATE POLA ──────────────────────────────
+
+def get_ai_monitor_keyboard(active_view: str = "overview") -> InlineKeyboardMarkup:
+    """Membuat tombol navigasi GUI interaktif untuk Dashboard Monitoring AI."""
+    btn_overview = InlineKeyboardButton(
+        text="📊 Overview" if active_view != "overview" else "▶️ 📊 Overview",
+        callback_data="aimon_overview"
+    )
+    btn_top = InlineKeyboardButton(
+        text="🏆 Top Pola" if active_view != "top_patterns" else "▶️ 🏆 Top Pola",
+        callback_data="aimon_top_patterns"
+    )
+    btn_memory = InlineKeyboardButton(
+        text="🧬 Fingerprint" if active_view != "pattern_memory" else "▶️ 🧬 Fingerprint",
+        callback_data="aimon_pattern_memory"
+    )
+    btn_sim = InlineKeyboardButton(
+        text="📚 Simulasi Sukses" if active_view != "virtual_wins" else "▶️ 📚 Simulasi",
+        callback_data="aimon_virtual_wins"
+    )
+    btn_refresh = InlineKeyboardButton(
+        text="🔄 Refresh Data",
+        callback_data=f"aimon_refresh_{active_view}"
+    )
+    btn_train = InlineKeyboardButton(
+        text="🚀 Latih Vision ML",
+        callback_data="aimon_train"
+    )
+    btn_reset = InlineKeyboardButton(
+        text="🗑️ Reset History AI",
+        callback_data="aimon_confirm_reset"
+    )
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [btn_overview, btn_top],
+            [btn_memory, btn_sim],
+            [btn_refresh, btn_train],
+            [btn_reset],
+        ]
+    )
+
+def build_ai_monitor_text(view: str = "overview") -> str:
+    """Menyusun laporan data monitoring AI dalam format markdown menarik."""
+    summary_data = get_multi_timeframe_summary()
+    g_stats = summary_data.get("global", {})
+    categories = summary_data.get("categories", [])
+    mem_data = load_pattern_memory()
+    patterns_map = mem_data.get("patterns", {})
+    entries_list = mem_data.get("entries", [])
+    
+    cfg_window = getattr(bot_config, "winrate_eval_window", "DAILY")
+    cfg_min_wr = getattr(bot_config, "min_pattern_winrate", 50.0)
+    
+    if view == "top_patterns":
+        text = "🏆 **AI PATTERN PERFORMANCE & WIN RATE** 🏆\n"
+        text += f"⚙️ Gatekeeper Window: `{cfg_window}` | Min WR: `{cfg_min_wr:.0f}%`\n"
+        text += "──────────────────────────\n\n"
+        if not categories:
+            text += "ℹ️ _Belum ada histori pola yang tercatat._\n"
+        else:
+            for i, cat in enumerate(categories[:8], 1):
+                name = cat["name"]
+                at = cat["all_time"]
+                d = cat["daily"]
+                tot = at["total"]
+                wr = at["win_rate"]
+                pnl = at["total_pnl"]
+                wr_icon = "🟢" if wr >= 60 else ("🟡" if wr >= 50 else "🔴")
+                status_gate = "✅ ALLOWED" if wr >= cfg_min_wr or tot < 2 else "🚫 BLOCKED"
+                text += (
+                    f"**{i}. {name}**\n"
+                    f"• All-Time: {wr_icon} `{wr:.1f}%` ({at['win']}W/{at['loss']}L | Tot: {tot})\n"
+                    f"• Hari Ini: `{d['win_rate']:.1f}%` ({d['win']}W/{d['loss']}L) | PnL: `{pnl:+.2f} USDT`\n"
+                    f"• Status: `{status_gate}`\n\n"
+                )
+        text += "💡 _Klik tombol di bawah untuk navigasi modul lainnya._"
+        return text
+
+    elif view == "pattern_memory":
+        total_patterns = len(patterns_map)
+        valid_patterns = sum(1 for p in patterns_map.values() if (p.get("win", 0) / max(p.get("total", 1), 1)) >= (cfg_min_wr / 100.0))
+        blocked_patterns = total_patterns - valid_patterns
+        total_entries = len(entries_list)
+        
+        text = "🧬 **AI PATTERN FINGERPRINT MEMORY** 🧬\n"
+        text += "Sistem memori sidik jari kondisi pasar (S/R, BB, RSI, RVOL, Squeeze, ML Vision).\n"
+        text += "──────────────────────────\n\n"
+        text += f"📊 **Total Sidik Jari Unik:** `{total_patterns}` Pola\n"
+        text += f"✅ **Pola Terverifikasi Winrate >= {cfg_min_wr:.0f}%:** `{valid_patterns}` Pola\n"
+        text += f"🚫 **Pola Blacklist / Winrate Rendah:** `{blocked_patterns}` Pola\n"
+        text += f"📝 **Total Trade Snapshot:** `{total_entries}` Entries\n\n"
+        
+        sorted_pat = sorted(patterns_map.items(), key=lambda x: (x[1].get("win", 0) / max(x[1].get("total", 1), 1), x[1].get("total", 0)), reverse=True)
+        if sorted_pat:
+            text += "🌟 **Top 3 Fingerprint Sukses:**\n"
+            for k, (fp, p_info) in enumerate(sorted_pat[:3], 1):
+                p_tot = p_info.get("total", 0)
+                p_win = p_info.get("win", 0)
+                p_wr = (p_win / max(p_tot, 1)) * 100
+                text += f"**{k}.** `{fp[:42]}...`\n   └ Win Rate: `{p_wr:.1f}%` ({p_win}/{p_tot} Trade) | PnL: `{p_info.get('total_pnl', 0.0):+.2f}%`\n"
+        text += "\n💡 _Sidik jari indikator membantu bot memprioritaskan setup terbaik._"
+        return text
+
+    elif view == "virtual_wins":
+        text = "📚 **HISTORI SIMULASI SUKSES (PAPER WINS)** 📚\n"
+        text += "Trade simulasi yang sukses menyentuh TP untuk pembelajaran AI.\n"
+        text += "──────────────────────────\n\n"
+        if not os.path.exists("virtual_success_log.csv"):
+            text += "ℹ️ _Belum ada log simulasi sukses (virtual_success_log.csv)._\n"
+        else:
+            try:
+                wins = []
+                with open("virtual_success_log.csv", "r", encoding="utf-8", errors="replace") as f:
+                    reader = csv.reader(f)
+                    for row in reader:
+                        if len(row) >= 6 and ("SUCCESS" in str(row) or "TP" in str(row)):
+                            wins.append(row)
+                if not wins:
+                    text += "ℹ️ _Belum ada trade simulasi yang berstatus SUCCESS/TP._\n"
+                else:
+                    for row in wins[-6:]:
+                        t_time = row[0] if len(row) > 0 else "-"
+                        t_sym = row[1] if len(row) > 1 else "-"
+                        t_side = row[2] if len(row) > 2 else "LONG"
+                        t_reason = row[5] if len(row) > 5 else "-"
+                        text += f"🎯 **{t_sym}** ({t_side}) - `{t_time}`\n   Setup: _{t_reason[:48]}_\n\n"
+            except Exception as e_csv:
+                text += f"⚠️ Gagal membaca virtual log: {e_csv}\n"
+        text += "💡 _Hasil simulasi otomatis dipelajari oleh Pattern Memory AI._"
+        return text
+
+    else:  # OVERVIEW
+        d = g_stats.get("daily", {})
+        w = g_stats.get("weekly", {})
+        m = g_stats.get("monthly", {})
+        at = g_stats.get("all_time", {})
+        
+        d_wr = d.get("win_rate", 0.0)
+        w_wr = w.get("win_rate", 0.0)
+        at_wr = at.get("win_rate", 0.0)
+        
+        text = (
+            "🧠 **DASHBOARD MONITORING BERKALA AI** 🤖\n"
+            "──────────────────────────\n"
+            f"🎯 **Status Gatekeeper:** `AKTIF 🛡️`\n"
+            f"⏱️ **Jendela Evaluasi:** `{cfg_window}` (Min WR: `{cfg_min_wr:.0f}%`)\n"
+            f"🧬 **Total Pola di Memori:** `{len(patterns_map)}` Sidik Jari\n\n"
+            "📈 **REKAPITULASI WIN RATE GLOBAL:**\n"
+            f"• **Hari Ini (24H):** `{d_wr:.1f}%` ({d.get('win', 0)}W / {d.get('loss', 0)}L | Tot: {d.get('total', 0)})\n"
+            f"• **7 Hari (Weekly):** `{w_wr:.1f}%` ({w.get('win', 0)}W / {w.get('loss', 0)}L | Tot: {w.get('total', 0)})\n"
+            f"• **All-Time:** `{at_wr:.1f}%` ({at.get('win', 0)}W / {at.get('loss', 0)}L | Tot: {at.get('total', 0)})\n"
+            f"• **Estimasi PnL Akumulasi:** `{at.get('total_pnl', 0.0):+.2f} USDT`\n\n"
+            "🤖 **Status Machine Learning Vision:**\n"
+            f"• Model CNN: `Aktif & Terintegrasi`\n"
+            f"• Filter Sinyal: `Strict Confluence + ATR Protective`\n\n"
+            "👇 _Pilih tombol di bawah untuk melihat rincian performa:_"
+        )
+        return text
+
+
+@dp.message(Command("ai_stats"))
+@dp.message(Command("ai_monitor"))
+@dp.message(Command("winrate"))
+@dp.message(F.text == "🧠 Monitoring AI")
+@dp.message(F.text == "🧠 AI Stats")
+async def ai_monitor_message_handler(message: types.Message):
+    """Membuka dashboard GUI monitoring AI berkala."""
+    text = build_ai_monitor_text(view="overview")
+    kb = get_ai_monitor_keyboard(active_view="overview")
+    await message.answer(text, reply_markup=kb, parse_mode="Markdown")
+
+
+@dp.callback_query(F.data.startswith("aimon_"))
+async def ai_monitor_callback_handler(callback: types.CallbackQuery):
+    """Menangani interaksi tombol inline pada dashboard monitoring AI."""
+    data = callback.data
+    
+    if data == "aimon_overview":
+        text = build_ai_monitor_text(view="overview")
+        kb = get_ai_monitor_keyboard(active_view="overview")
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+        await callback.answer("📊 Ringkasan AI ditampilkan.")
+
+    elif data == "aimon_top_patterns":
+        text = build_ai_monitor_text(view="top_patterns")
+        kb = get_ai_monitor_keyboard(active_view="top_patterns")
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+        await callback.answer("🏆 Top Pola ditampilkan.")
+
+    elif data == "aimon_pattern_memory":
+        text = build_ai_monitor_text(view="pattern_memory")
+        kb = get_ai_monitor_keyboard(active_view="pattern_memory")
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+        await callback.answer("🧬 Pattern Memory ditampilkan.")
+
+    elif data == "aimon_virtual_wins":
+        text = build_ai_monitor_text(view="virtual_wins")
+        kb = get_ai_monitor_keyboard(active_view="virtual_wins")
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+        await callback.answer("📚 Simulasi Sukses ditampilkan.")
+
+    elif data.startswith("aimon_refresh_"):
+        active_view = data.replace("aimon_refresh_", "")
+        text = build_ai_monitor_text(view=active_view)
+        kb = get_ai_monitor_keyboard(active_view=active_view)
+        try:
+            await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+            await callback.answer("🔄 Data berhasil diperbarui!")
+        except Exception:
+            await callback.answer("✅ Data sudah yang terbaru.")
+
+    elif data == "aimon_train":
+        await callback.answer("🚀 Memulai proses pelatihan model AI...")
+        await callback.message.answer("🔄 Memulai proses pelatihan ulang model CNN Vision... Mohon tunggu.")
+        loop = asyncio.get_event_loop()
+        try:
+            result = await loop.run_in_executor(None, train_model)
+            await callback.message.answer(f"🧠 **Hasil Pelatihan AI:**\n{result}", parse_mode="Markdown")
+        except Exception as e_tr:
+            await callback.message.answer(f"❌ Terjadi kesalahan saat training: {e_tr}")
+
+    elif data == "aimon_confirm_reset":
+        confirm_kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="⚠️ Ya, Reset Semua", callback_data="aimon_do_reset"),
+                    InlineKeyboardButton(text="❌ Batal", callback_data="aimon_overview")
+                ]
+            ]
+        )
+        await callback.message.edit_text(
+            "⚠️ **Konfirmasi Reset Memory AI**\n\n"
+            "Apakah Anda yakin ingin mereset seluruh histori pembelajaran win rate dan blacklist pola?\n"
+            "Tindakan ini akan memberikan awal baru bagi semua pola teknikal.",
+            reply_markup=confirm_kb,
+            parse_mode="Markdown"
+        )
+        await callback.answer()
+
+    elif data == "aimon_do_reset":
+        reset_count = reset_pattern_blacklist()
+        await callback.answer(f"✅ Reset selesai ({reset_count} kategori di-refresh).")
+        text = build_ai_monitor_text(view="overview")
+        kb = get_ai_monitor_keyboard(active_view="overview")
+        await callback.message.edit_text(
+            f"✅ **Histori AI Telah Direset!** ({reset_count} kategori)\n\n" + text,
+            reply_markup=kb,
+            parse_mode="Markdown"
+        )
+

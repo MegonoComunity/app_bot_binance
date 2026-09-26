@@ -46,6 +46,8 @@ def calculate_confluence_score(
     pump_info: Optional[Dict[str, Any]] = None,
     near_smart_buy: bool = False,
     two_consecutive_candles: bool = False,
+    compression_reversal: bool = False,
+    ml_vision_info: Optional[Dict[str, Any]] = None,
     sniper_info: Optional[Dict[str, Any]] = None,
     smc_v2_info: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -56,7 +58,8 @@ def calculate_confluence_score(
     - Dynamic Swing Anchored VWAP (AVWAP Fair Value)
     - EMA 21 Dynamic Pullback Reversal
     - PUMP RADAR momentum wave
-    - Smart Buy Level & 2x Consecutive Candle Reversal
+    - Smart Buy Level & 2x Consecutive Candle Reversal / Base Compression Breakout
+    - AI Machine Learning Vision (Candlestick CNN Inference)
     """
     breakdown = {}
     total_score = 0.0
@@ -101,6 +104,13 @@ def calculate_confluence_score(
     is_ema21_pullback = ema21_info.get("is_pullback", False)
     ema21_type = ema21_info.get("type")
 
+    # Evaluasi ML Vision Candlestick Recognition
+    ml_label = (ml_vision_info.get("label", "NEUTRAL") if ml_vision_info else "NEUTRAL").upper()
+    ml_confidence = float(ml_vision_info.get("confidence", 0.0) if ml_vision_info else 0.0)
+    is_ml_bullish = (ml_label == "BULLISH" and ml_confidence >= 0.55)
+    is_ml_bearish = (ml_label == "BEARISH" and ml_confidence >= 0.55)
+    is_ml_opposing = (side == "LONG" and is_ml_bearish and ml_confidence >= 0.70) or (side == "SHORT" and is_ml_bullish and ml_confidence >= 0.70)
+
     # ─── PILAR 1: Higher Timeframe (HTF) Alignment & Market Structure (Maks 25 Poin) ─────────────
     htf_points = 0.0
     if side == "LONG":
@@ -128,7 +138,7 @@ def calculate_confluence_score(
     }
     total_score += htf_points
 
-    # ─── PILAR 2: Candlestick Pattern, Quasimodo, S/R, AVWAP, Sniper Zone & EMA21 (Maks 25 Poin) ──
+    # ─── PILAR 2: Candlestick Pattern, ML Vision, S/R, AVWAP & Sniper Zone (Maks 25 Poin) ──
     sr_pattern_points = 0.0
     has_valid_pattern = bool(pattern_name and pattern_name not in ("NONE", "None", ""))
     
@@ -141,8 +151,12 @@ def calculate_confluence_score(
             sr_pattern_points = 25.0  # SMC Sniper Buy Volume Zone (POC Reversal)
         elif near_smart_buy:
             sr_pattern_points = 25.0  # Level Smart Buy institusional 20D
-        elif two_consecutive_candles:
-            sr_pattern_points = 25.0  # Reversal 2x candle hijau di area support
+        elif two_consecutive_candles and (near_support or near_lower_bb):
+            sr_pattern_points = 25.0  # Reversal 2x candle hijau di area support / Lower BB
+        elif compression_reversal and (near_support or near_lower_bb):
+            sr_pattern_points = 25.0  # 3-5 candle kompresi body kecil + breakout hijau solid
+        elif is_ml_bullish and (near_support or near_lower_bb):
+            sr_pattern_points = 25.0  # Konfirmasi ML Vision Candlestick Bullish di Support
         elif is_ema21_pullback and ema21_type == "BULLISH_PULLBACK":
             sr_pattern_points = 25.0  # Golden Pullback EMA21 pada tren impulsif
         elif avwap_info.get("position_to_avwap") == "BULLISH_ABOVE_AVWAP" and near_support:
@@ -151,6 +165,8 @@ def calculate_confluence_score(
             sr_pattern_points = 25.0  # Konfluensi sempurna: pola reversal persis di support
         elif near_support and near_lower_bb:
             sr_pattern_points = 20.0  # Support ganda: Lower BB + Price Support
+        elif two_consecutive_candles or compression_reversal:
+            sr_pattern_points = 18.0
         elif near_support or avwap_info.get("position_to_avwap") == "BULLISH_ABOVE_AVWAP" or in_fvg:
             sr_pattern_points = 16.0
         elif has_valid_pattern and pattern_type == "LONG":
@@ -164,8 +180,10 @@ def calculate_confluence_score(
             sr_pattern_points = 25.0  # LnSNRCH.v2 Bearish Quasimodo (QML Left Shoulder Resistance)
         elif is_sniper_sell:
             sr_pattern_points = 25.0  # SMC Sniper Sell Volume Zone (POC Resistance)
-        elif two_consecutive_candles:
+        elif two_consecutive_candles and (near_resistance or near_upper_bb):
             sr_pattern_points = 25.0  # Reversal 2x candle merah di area resistance
+        elif is_ml_bearish and (near_resistance or near_upper_bb):
+            sr_pattern_points = 25.0  # Konfirmasi ML Vision Candlestick Bearish di Resistance
         elif is_ema21_pullback and ema21_type == "BEARISH_PULLBACK":
             sr_pattern_points = 25.0  # Golden Pullback EMA21 pada tren impulsif turun
         elif avwap_info.get("position_to_avwap") == "BEARISH_BELOW_AVWAP" and near_resistance:
@@ -174,6 +192,8 @@ def calculate_confluence_score(
             sr_pattern_points = 25.0
         elif near_resistance and near_upper_bb:
             sr_pattern_points = 20.0
+        elif two_consecutive_candles:
+            sr_pattern_points = 18.0
         elif near_resistance or avwap_info.get("position_to_avwap") == "BEARISH_BELOW_AVWAP" or in_fvg:
             sr_pattern_points = 16.0
         elif has_valid_pattern and pattern_type == "SHORT":
@@ -183,13 +203,18 @@ def calculate_confluence_score(
         else:
             sr_pattern_points = 8.0
 
-    pattern_desc = pattern_name or ("PUMP_BREAKOUT" if is_pump_alert else ("QUASIMODO_BUY" if (side == "LONG" and is_qml_buy) else ("QUASIMODO_SELL" if (side == "SHORT" and is_qml_sell) else ("SNIPER_BUY_VOL" if (side == "LONG" and is_sniper_buy) else ("SNIPER_SELL_VOL" if (side == "SHORT" and is_sniper_sell) else ("SMART_BUY" if near_smart_buy else ("2X_CANDLE_REVERSAL" if two_consecutive_candles else ("EMA21_PULLBACK" if is_ema21_pullback else "NONE"))))))))
+    # Penalti jika ML Vision mendeteksi arah yang sangat bertentangan
+    if is_ml_opposing:
+        sr_pattern_points = max(0.0, sr_pattern_points - 10.0)
+
+    pattern_desc = pattern_name or ("PUMP_BREAKOUT" if is_pump_alert else ("QUASIMODO_BUY" if (side == "LONG" and is_qml_buy) else ("QUASIMODO_SELL" if (side == "SHORT" and is_qml_sell) else ("SNIPER_BUY_VOL" if (side == "LONG" and is_sniper_buy) else ("SNIPER_SELL_VOL" if (side == "SHORT" and is_sniper_sell) else ("SMART_BUY" if near_smart_buy else ("2X_CANDLE_REVERSAL" if two_consecutive_candles else ("BASE_COMPRESSION_BREAKOUT" if compression_reversal else ("ML_VISION_" + ml_label if ml_confidence >= 0.6 else ("EMA21_PULLBACK" if is_ema21_pullback else "NONE"))))))))))
     breakdown["sr_and_pattern"] = {
         "points": sr_pattern_points,
         "max": 25.0,
         "pattern": pattern_desc,
+        "ml_vision": {"label": ml_label, "confidence": round(ml_confidence, 2)},
         "avwap_bias": avwap_info.get("position_to_avwap"),
-        "detail": f"Pattern: {pattern_desc}, S/R/QML/Sniper: {'YES' if (near_support or near_resistance or is_qml_buy or is_qml_sell or is_sniper_buy or is_sniper_sell or is_pump_alert or is_ema21_pullback or near_smart_buy or two_consecutive_candles) else 'NO'}"
+        "detail": f"Pattern: {pattern_desc} (ML: {ml_label} {ml_confidence:.0%}), S/R/QML/Sniper: {'YES' if (near_support or near_resistance or is_qml_buy or is_qml_sell or is_sniper_buy or is_sniper_sell or is_pump_alert or is_ema21_pullback or near_smart_buy or two_consecutive_candles or compression_reversal) else 'NO'}"
     }
     total_score += sr_pattern_points
 

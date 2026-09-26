@@ -48,6 +48,7 @@ from indicators.patterns import (
     is_bear_trap,
     check_consecutive_green_candles,
     check_consecutive_red_candles,
+    check_small_bodies_followed_by_green,
 )
 from indicators.trend import get_htf_trend
 from indicators.sniper_volume import calculate_smc_sniper_volume
@@ -59,6 +60,7 @@ from core.risk_manager import (
     calculate_risk_margin,
     calculate_volatility_adjusted_leverage,
     calculate_computed_position_size,
+    calculate_dynamic_atr_targets,
     evaluate_auto_breakeven,
     count_open_positions,
     daily_loss_limit_reached,
@@ -587,7 +589,8 @@ async def scanner_loop():
                         )
                         rsi_value = float(last_row.get('RSI', 50))
                         is_oversold = rsi_value < bot_config.rsi_oversold
-                        two_green_at_support = near_support and check_consecutive_green_candles(df, min_candles=2)
+                        two_green_at_support = (near_support or near_lower_bb) and check_consecutive_green_candles(df, min_candles=2)
+                        compression_reversal_long = (near_support or near_lower_bb) and check_small_bodies_followed_by_green(df, min_small_candles=3)
                         
                         # 4. Cek Kondisi Teknikal Entry SHORT
                         upper_band = last_row.get('upper_band', last_row.get('bb_upper'))
@@ -595,13 +598,28 @@ async def scanner_loop():
                         resistance_zones = detect_resistance_zones(df)
                         near_resistance = is_near_resistance(current_price, resistance_zones)
                         is_overbought = rsi_value > bot_config.rsi_overbought
-                        two_red_at_resistance = near_resistance and check_consecutive_red_candles(df, min_candles=2)
+                        two_red_at_resistance = (near_resistance or near_upper_bb) and check_consecutive_red_candles(df, min_candles=2)
                         
                         pattern_detected = pattern_info['detected']
                         pattern_name = pattern_info['pattern']
                         pattern_type = pattern_info['type']
                         vol_ratio = pattern_info.get('volume_ratio', 1.0)
                         has_volume_surge = vol_ratio >= 1.25
+
+                        # Evaluasi AI Machine Learning Vision (Candlestick CNN Inference)
+                        ml_vision_intel = {"label": "NEUTRAL", "confidence": 0.0, "is_confirmed": False}
+                        try:
+                            chart_img = render_ohlcv_to_image(df, n_candles=20)
+                            if chart_img is not None:
+                                processed_chart = preprocess_chart_image(chart_img)
+                                ml_label_pred, ml_conf_pred = predict_candle_pattern(processed_chart, ml_model)
+                                ml_vision_intel = {
+                                    "label": ml_label_pred,
+                                    "confidence": float(ml_conf_pred),
+                                    "is_confirmed": (ml_label_pred == "BULLISH" and ml_conf_pred >= 0.55),
+                                }
+                        except Exception as e_ml_scan:
+                            logger.debug(f"[ML VISION] Scan prediction error: {e_ml_scan}")
 
                         # Hitung Volatilitas ATR, SMC Sniper Volume, & LnSNRCH.v2 Smart Structure
                         atr_val = calculate_atr(df, period=14)
@@ -643,7 +661,8 @@ async def scanner_loop():
                         # Skenario Tier-A Reversal & Breakout untuk LONG (High Win-Rate)
                         syarat_teknikal_long = (
                             (near_lower_bb and near_support and is_oversold and htf_trend in ["UPTREND", "SIDEWAYS"]) or
-                            (two_green_at_support and (near_lower_bb or is_oversold or near_support) and htf_trend in ["UPTREND", "SIDEWAYS"])
+                            (two_green_at_support and htf_trend in ["UPTREND", "SIDEWAYS"]) or
+                            (compression_reversal_long and htf_trend in ["UPTREND", "SIDEWAYS"])
                         )
                         syarat_pola_long = (near_support or near_lower_bb) and pattern_detected and pattern_type == 'LONG' and htf_trend in ["UPTREND", "SIDEWAYS"]
                         syarat_smart_buy_long = (
@@ -731,6 +750,8 @@ async def scanner_loop():
                             )
                         elif syarat_pola_long:
                             alasan_long = f"Pola Tier-A {pattern_name} (Vol: {vol_ratio:.2f}x, HTF: {htf_trend})"
+                        elif compression_reversal_long:
+                            alasan_long = f"Base Compression 3-5 Candle + Breakout Hijau (Vol: {vol_ratio:.2f}x, HTF: {htf_trend})"
                         elif two_green_at_support:
                             alasan_long = f"Reversal 2x Candle Hijau di Support (Vol: {vol_ratio:.2f}x, HTF: {htf_trend})"
                         elif syarat_smart_buy_long:
@@ -783,10 +804,17 @@ async def scanner_loop():
                             sim_side = "LONG" if raw_long else "SHORT"
                             sim_alasan = alasan_long if sim_side == "LONG" else alasan_short
                             if symbol not in virtual_trades:
-                                pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
-                                pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
-                                v_tp = current_price * (1 + pm_tp_v) if sim_side == "LONG" else current_price * (1 - pm_tp_v)
-                                v_sl = current_price * (1 - pm_sl_v) if sim_side == "LONG" else current_price * (1 + pm_sl_v)
+                                v_atr_res = calculate_dynamic_atr_targets(
+                                    entry_price=current_price,
+                                    atr_value=atr_val,
+                                    side=sim_side,
+                                    leverage=dynamic_leverage,
+                                    config_tp_percent=bot_config.tp_percent,
+                                    config_sl_percent=bot_config.sl_percent,
+                                    atr_sl_mult=1.8,
+                                )
+                                v_tp = v_atr_res["tp_price"]
+                                v_sl = v_atr_res["sl_price"]
                                 ex_name = getattr(client, "exchange_name", "BITUNIX")
                                 cond_sim = {
                                     "side": sim_side,
@@ -841,6 +869,8 @@ async def scanner_loop():
                                 "atr_percent": round((atr_val / current_price * 100), 2) if current_price > 0 else 0.0,
                                 "sniper_state": sniper_intel.get("market_state", "MONITORING"),
                                 "sniper_poc": sniper_intel.get("poc_price"),
+                                "ml_vision_label": ml_vision_intel.get("label"),
+                                "ml_vision_confidence": ml_vision_intel.get("confidence"),
                             }
 
                             # Hitung Pilar 1: Smart Confluence Scoring Matrix (Institutional-Grade Setup)
@@ -864,6 +894,8 @@ async def scanner_loop():
                                 pump_info=pump_intel,
                                 near_smart_buy=bool(syarat_smart_buy_long),
                                 two_consecutive_candles=bool(two_green_at_support or two_red_at_resistance),
+                                compression_reversal=bool(compression_reversal_long),
+                                ml_vision_info=ml_vision_intel,
                                 sniper_info=sniper_intel,
                                 smc_v2_info=smc_v2_intel,
                             )
@@ -1096,10 +1128,17 @@ async def scanner_loop():
                                 # ─── JIKA BATASAN SLOT PENUH: ALIKAN KE LATIHAN SIMULASI DI CHANNEL TERPISAH ───
                                 if is_side_full or is_total_full:
                                     if symbol not in virtual_trades:
-                                        pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
-                                        pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
-                                        v_tp = current_price * (1 + pm_tp_v) if trade_type == "LONG" else current_price * (1 - pm_tp_v)
-                                        v_sl = current_price * (1 - pm_sl_v) if trade_type == "LONG" else current_price * (1 + pm_sl_v)
+                                        v_atr_res = calculate_dynamic_atr_targets(
+                                            entry_price=current_price,
+                                            atr_value=atr_val,
+                                            side=trade_type,
+                                            leverage=dynamic_leverage,
+                                            config_tp_percent=bot_config.tp_percent,
+                                            config_sl_percent=bot_config.sl_percent,
+                                            atr_sl_mult=1.8,
+                                        )
+                                        v_tp = v_atr_res["tp_price"]
+                                        v_sl = v_atr_res["sl_price"]
 
                                         # Catat snapshot pola candle ke Pattern Memory & PostgreSQL untuk Latihan Simulasi
                                         ex_name = getattr(client, "exchange_name", "BITUNIX")
@@ -1222,22 +1261,24 @@ async def scanner_loop():
                                     tag="ORDER_SUCCESS"
                                 )
                                 
-                                # Convert configured margin ROI into deterministic price movement.
-                                pm_tp = (bot_config.tp_percent / 100) / actual_leverage
-                                pm_sl = (bot_config.sl_percent / 100) / actual_leverage
+                                # Dynamic Volatility-Based ATR Stop Loss & Take Profit Target
+                                atr_targets = calculate_dynamic_atr_targets(
+                                    entry_price=entry_price,
+                                    atr_value=atr_val,
+                                    side=trade_type,
+                                    leverage=actual_leverage,
+                                    config_tp_percent=bot_config.tp_percent,
+                                    config_sl_percent=bot_config.sl_percent,
+                                    atr_sl_mult=1.8,
+                                )
+                                tp_price = atr_targets["tp_price"]
+                                sl_price = atr_targets["sl_price"]
 
-                                # Jika entry berasal dari PUMP RADAR: Pasang SL Ketat (maksimal 1.5% jarak harga)
+                                # Jika entry berasal dari PUMP RADAR: Pasang SL Maksimal 1.5% jarak harga
                                 if syarat_pump_long:
-                                    pm_sl = min(pm_sl, 0.015)  # SL Ketat Maksimal 1.5% jarak harga (Anti Rungkad saat pump berbalik)
+                                    sl_price = max(sl_price, entry_price * 0.985) if trade_type == "LONG" else min(sl_price, entry_price * 1.015)
                                 
-                                if trade_type == "LONG":
-                                    tp_price = entry_price * (1 + pm_tp)
-                                    sl_price = entry_price * (1 - pm_sl)
-                                    tp_sl_side = 'SELL'
-                                else:
-                                    tp_price = entry_price * (1 - pm_tp)
-                                    sl_price = entry_price * (1 + pm_sl)
-                                    tp_sl_side = 'BUY'
+                                tp_sl_side = 'SELL' if trade_type == "LONG" else 'BUY'
                                 
                                 # Pasang TP / SL (atau bypass di mode simulasi)
                                 if is_paper_trading:
