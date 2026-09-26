@@ -54,13 +54,17 @@ from indicators.trend import get_htf_trend
 from indicators.sniper_volume import calculate_smc_sniper_volume
 from indicators.smc_snr_channel import calculate_smc_structure_v2
 from core.confluence_engine import calculate_confluence_score
-from core.learner import is_pattern_reliable, record_trade_result
+from core.regime_detector import detect_market_regime, validate_regime_strategy_match
+from core.meta_labeler import compute_meta_probability
+from core.learner import is_pattern_reliable, record_trade_result, detect_concept_drift
 from core.scanner_logger import add_scanner_log, update_scanner_progress
 from core.risk_manager import (
     calculate_risk_margin,
     calculate_volatility_adjusted_leverage,
     calculate_computed_position_size,
     calculate_dynamic_atr_targets,
+    check_consecutive_losses_circuit_breaker,
+    check_market_volatility_spike_anomaly,
     evaluate_auto_breakeven,
     count_open_positions,
     daily_loss_limit_reached,
@@ -68,7 +72,7 @@ from core.risk_manager import (
     total_position_margin,
     evaluate_time_based_exit,
 )
-from core.trade_stats import trade_summary, record_closed_trade
+from core.trade_stats import trade_summary, record_closed_trade, record_trade_explainability_snapshot
 from core.pattern_memory import (
     record_entry as record_pattern_entry,
     record_result as record_pattern_result,
@@ -573,6 +577,14 @@ async def scanner_loop():
                         last_row = df.iloc[-1]
                         current_price = last_row['close']
                         
+                        # 4. Deteksi Pilar 1: Market Regime & Anomaly Guard
+                        regime_intel = detect_market_regime(df)
+                        anomaly_guard = check_market_volatility_spike_anomaly(regime_intel.get("relative_atr", 1.0))
+                        if anomaly_guard.get("is_anomaly", False):
+                            print(f"⚠️ [ANOMALY GUARD] Lewati {symbol}: {anomaly_guard['reason']}")
+                            add_scanner_log("FILTERED", symbol, f"⚠️ Anomaly Guard: {anomaly_guard['reason']}", tag="ANOMALY_VOLATILITY")
+                            continue
+
                         # 4. Cek Kondisi Teknikal Entry LONG
                         lower_band = last_row.get('lower_band', last_row.get('bb_lower'))
                         near_lower_bb = last_row.get('is_near_lower_band', False) or (current_price <= lower_band * 1.005 if pd.notnull(lower_band) else False)
@@ -828,6 +840,7 @@ async def scanner_loop():
                                     "atr_percent": round((atr_val / current_price * 100), 2) if current_price > 0 else 0.0,
                                     "sniper_state": sniper_intel.get("market_state", "MONITORING"),
                                     "sniper_poc": sniper_intel.get("poc_price"),
+                                    "market_regime": regime_intel.get("regime", "UNKNOWN"),
                                 }
                                 p_entry_id_v = record_pattern_entry(
                                     symbol=symbol,
@@ -871,6 +884,9 @@ async def scanner_loop():
                                 "sniper_poc": sniper_intel.get("poc_price"),
                                 "ml_vision_label": ml_vision_intel.get("label"),
                                 "ml_vision_confidence": ml_vision_intel.get("confidence"),
+                                "market_regime": regime_intel.get("regime", "UNKNOWN"),
+                                "relative_atr": regime_intel.get("relative_atr", 1.0),
+                                "adx": regime_intel.get("adx", 20.0),
                             }
 
                             # Hitung Pilar 1: Smart Confluence Scoring Matrix (Institutional-Grade Setup)
@@ -898,6 +914,7 @@ async def scanner_loop():
                                 ml_vision_info=ml_vision_intel,
                                 sniper_info=sniper_intel,
                                 smc_v2_info=smc_v2_intel,
+                                regime_info=regime_intel,
                             )
                             confluence_score = confluence_res["score"]
                             confluence_approved = confluence_res["is_approved"]
@@ -983,12 +1000,73 @@ async def scanner_loop():
                                     print(f"📚 [LATIHAN SIMULASI] Sinyal {trade_type} {symbol} dicatat untuk evaluasi memory.")
                                 continue
 
+                            # Evaluasi Pilar 2: Meta-Labeling Model (López de Prado)
+                            meta_intel = compute_meta_probability(
+                                df_5m=df,
+                                side=trade_type,
+                                primary_signal_score=confluence_score,
+                                regime_info=regime_intel,
+                                ml_vision_info=ml_vision_intel,
+                                min_prob_threshold=0.65,
+                            )
+                            if not meta_intel.get("is_meta_approved", False):
+                                win_prob_pct = meta_intel.get("win_probability", 0.0) * 100
+                                meta_rej_msg = f"Meta-Labeler P(WIN) {win_prob_pct:.1f}% < 65% ({meta_intel.get('reason', '')})"
+                                print(f"🧠 [META-LABELER] Sinyal {trade_type} {symbol} DITOLAK: {meta_rej_msg}. Dialihkan ke simulasi.")
+                                add_scanner_log(
+                                    "FILTERED",
+                                    symbol,
+                                    f"🧠 [META-LABELER] {meta_rej_msg}",
+                                    score=confluence_score,
+                                    tag="META_LABEL_REJECT"
+                                )
+                                if symbol not in virtual_trades:
+                                    pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
+                                    pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
+                                    v_tp = current_price * (1 + pm_tp_v) if trade_type == "LONG" else current_price * (1 - pm_tp_v)
+                                    v_sl = current_price * (1 - pm_sl_v) if trade_type == "LONG" else current_price * (1 + pm_sl_v)
+                                    ex_name = getattr(client, "exchange_name", "BITUNIX")
+                                    p_entry_id_v = record_pattern_entry(
+                                        symbol=symbol,
+                                        side=trade_type,
+                                        entry_price=current_price,
+                                        conditions=conditions_snapshot,
+                                        alasan=f"[LATIHAN (Meta P: {win_prob_pct:.1f}%)] {alasan}",
+                                        margin_usdt=0.0,
+                                        leverage=dynamic_leverage,
+                                        exchange=f"{ex_name}_SIM_TRAIN",
+                                    )
+                                    virtual_trades[symbol] = {
+                                        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        "tipe": trade_type,
+                                        "entry_price": current_price,
+                                        "tp_price": v_tp,
+                                        "sl_price": v_sl,
+                                        "alasan": f"{alasan} (Meta: {win_prob_pct:.1f}%)",
+                                        "leverage": dynamic_leverage,
+                                        "pattern_entry_id": p_entry_id_v,
+                                    }
+                                    print(f"📚 [LATIHAN SIMULASI] Sinyal {trade_type} {symbol} (Meta P(WIN): {win_prob_pct:.1f}%) dialihkan ke memory simulasi.")
+                                continue
+
+                            # Evaluasi Pilar 5: Consecutive Losses Circuit Breaker Protection
+                            cb_check = check_consecutive_losses_circuit_breaker(max_consecutive_losses=3, cooldown_minutes=45)
+                            if cb_check.get("is_circuit_broken", False):
+                                print(f"🛑 [CIRCUIT BREAKER] Eksekusi dihentikan sementara: {cb_check.get('reason')}")
+                                add_scanner_log(
+                                    "HALT",
+                                    symbol,
+                                    f"🛑 Circuit Breaker: {cb_check.get('reason')}",
+                                    tag="CIRCUIT_BREAKER_ACTIVE"
+                                )
+                                break
+
                             batch_signal_found = True
-                            print(f"SETUP TEKNIKAL {trade_type} DITEMUKAN PADA {symbol}! [Skor: {confluence_score}/100] Alasan: {alasan}")
+                            print(f"SETUP TEKNIKAL {trade_type} DITEMUKAN PADA {symbol}! [Skor: {confluence_score}/100 | Meta P(WIN): {meta_intel.get('win_probability', 0.0):.1%}] Alasan: {alasan}")
                             add_scanner_log(
                                 "CONFLUENCE",
                                 symbol,
-                                f"✅ SETUP {trade_type} VALID! [Skor: {confluence_score}/100] | Alasan: {alasan}",
+                                f"✅ SETUP {trade_type} VALID! [Skor: {confluence_score}/100 | Meta: {meta_intel.get('win_probability', 0.0):.1%}] | Alasan: {alasan}",
                                 score=confluence_score,
                                 tag="CONFLUENCE_PASS"
                             )
@@ -1169,13 +1247,14 @@ async def scanner_loop():
 
                                     continue
 
-                                # Hitung Sizing Computed Dinamis untuk Modal Kecil / Compounding
+                                # Hitung Pilar 3: Sizing Dinamis Berbasis Half-Kelly & Volatilitas ATR
                                 planned_sl_move = (bot_config.sl_percent / 100) / dynamic_leverage
                                 planned_sl_price = (
                                     current_price * (1 - planned_sl_move)
                                     if trade_type == "LONG"
                                     else current_price * (1 + planned_sl_move)
-                                    )
+                                )
+                                kelly_mult = meta_intel.get("half_kelly_multiplier", 1.0)
                                 if bot_config.margin_mode == "DYNAMIC":
                                     computed_size = calculate_computed_position_size(
                                         equity=modal,
@@ -1185,6 +1264,7 @@ async def scanner_loop():
                                         risk_percent=bot_config.risk_per_trade_percent,
                                         min_margin=0.5,
                                         max_position_equity_ratio=bot_config.max_position_equity_ratio,
+                                        kelly_multiplier=kelly_mult,
                                     )
 
                                     if not computed_size.get("is_valid", False):
@@ -1193,12 +1273,12 @@ async def scanner_loop():
 
                                     current_margin = computed_size["margin_usdt"]
                                     print(
-                                        f"[COMPUTED SIZING] {symbol}: Modal={modal:.2f} USDT | "
+                                        f"[COMPUTED SIZING (Kelly: {kelly_mult:.2f}x)] {symbol}: Modal={modal:.2f} USDT | "
                                         f"Margin={current_margin:.2f} USDT | Lev={dynamic_leverage}x (Risk: {bot_config.risk_per_trade_percent}%)"
                                     )
                                 else:
                                     # Mode FIXED dengan safety cap fleksibel (Support Margin $0.5 - $1.0)
-                                    fixed_margin = bot_config.margin_usdt
+                                    fixed_margin = bot_config.margin_usdt * kelly_mult
                                     if modal < 30.0:
                                         current_margin = min(fixed_margin, modal * 0.95)
                                     else:
@@ -1209,7 +1289,7 @@ async def scanner_loop():
                                         print(f"[RISK] {symbol}: Margin FIXED ({current_margin:.2f} USDT) terlalu kecil (< 0.5 USDT)")
                                         continue
                                     print(
-                                        f"[FIXED SIZING] {symbol}: Modal={modal:.2f} USDT | "
+                                        f"[FIXED SIZING (Kelly: {kelly_mult:.2f}x)] {symbol}: Modal={modal:.2f} USDT | "
                                         f"Margin={current_margin:.2f} USDT | Lev={dynamic_leverage}x"
                                     )
 
@@ -1310,6 +1390,8 @@ async def scanner_loop():
                                 ai_eval_lines = []
                                 grade_label = "INSTITUTIONAL A+ 🏆" if confluence_score >= 90 else "HIGH CONFLUENCE A 🌟"
                                 ai_eval_lines.append(f"• **Smart Confluence Score:** `{confluence_score}/100` ({grade_label})")
+                                ai_eval_lines.append(f"• **Market Regime:** `{regime_intel.get('regime_label', 'Unknown')}` (ADX: {regime_intel.get('adx', 0):.1f})")
+                                ai_eval_lines.append(f"• **Meta-Labeling P(WIN):** `{meta_intel.get('win_probability', 0.0):.1%}` (Kelly Mult: {kelly_mult:.2f}x)")
 
                                 rsi_status = "Oversold 🟢" if is_oversold else ("Overbought 🔴" if is_overbought else "Neutral ⚪")
                                 ai_eval_lines.append(f"• **Indikator RSI ({bot_config.rsi_length}):** `{rsi_value:.1f}` ({rsi_status})")
@@ -1355,7 +1437,7 @@ async def scanner_loop():
                                     'margin': f"{current_margin:.2f} (Modal: {modal:.2f})",
                                     'leverage': actual_leverage,
                                     'tp_sl_info': f"TP: {tp_price:.4f} ({bot_config.tp_percent}%), SL: {sl_price:.4f} ({bot_config.sl_percent}%)",
-                                    'syarat_1': f"Score {signal_score}/100 ({grade_label}) | HTF {HTF_TIMEFRAME}: {htf_trend}",
+                                    'syarat_1': f"Score {signal_score}/100 ({grade_label}) | Meta: {meta_intel.get('win_probability', 0.0):.1%}",
                                     'syarat_2': alasan,
                                     'pola_ml': pattern_name if pattern_detected else "Confluence Matrix",
                                     'ai_evaluation': ai_eval_text,
@@ -1379,6 +1461,26 @@ async def scanner_loop():
                                     margin_usdt=current_margin,
                                     leverage=actual_leverage,
                                     exchange=exchange_tag,
+                                )
+
+                                # Pilar 6: Snapshot Explainability untuk analisis post-mortem & retraining
+                                record_trade_explainability_snapshot(
+                                    symbol=symbol,
+                                    trade_id=f"{symbol}_{int(time.time())}",
+                                    side=trade_type,
+                                    entry_price=entry_price,
+                                    regime_info=regime_intel,
+                                    meta_info=meta_intel,
+                                    confluence_breakdown=confluence_breakdown,
+                                    ml_vision_info=ml_vision_intel,
+                                    risk_info={
+                                        "margin_usdt": current_margin,
+                                        "leverage": actual_leverage,
+                                        "kelly_multiplier": kelly_mult,
+                                        "tp_price": tp_price,
+                                        "sl_price": sl_price,
+                                    },
+                                    notes=alasan,
                                 )
 
                                 bot_state.setdefault("active_trade_meta", {})[symbol] = {
@@ -2483,12 +2585,14 @@ async def main():
 
     try:
         from database.send_backup_to_telegram import daily_backup_scheduler_loop
+        from core.auto_updater import auto_git_sync_background_loop
         await asyncio.gather(
             _safe_telegram_polling(),
             scanner_loop(),
             user_data_stream_loop(),
             profitable_position_monitor_loop(),
             daily_backup_scheduler_loop(bot),
+            auto_git_sync_background_loop(bot, TELEGRAM_ADMIN_CHAT_ID, interval_seconds=300),
             # Background scraper (Daily 1d)
             run_long_term_scraper(_startup_client) if DB_MODULES_LOADED else asyncio.sleep(0),
         )

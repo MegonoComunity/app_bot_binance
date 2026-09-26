@@ -303,3 +303,86 @@ def reset_pattern_blacklist() -> int:
     save_stats(stats)
     return count
 
+
+def detect_concept_drift(
+    trade_history: Any = None,
+    recent_trades_n: int = 10,
+    expected_winrate: float = 60.0,
+    drift_alert_winrate: float = 40.0,
+    **kwargs,
+) -> Dict[str, Any]:
+    """
+    Pilar 4: Concept Drift & Walk-Forward Performance Monitor.
+    Mendeteksi jika performa live bot mengalami 'drift' (penurunan tajam dari ekspektasi),
+    dan memberikan rekomendasi adaptasi threshold secara dinamis.
+    """
+    if isinstance(trade_history, (int, float)):
+        recent_trades_n = int(trade_history)
+        trade_history = None
+
+    if trade_history is not None and isinstance(trade_history, list):
+        all_history = list(trade_history)
+    else:
+        stats = get_stats()
+        all_history = []
+        for cat, d in stats.items():
+            all_history.extend(d.get("history", []))
+
+    if expected_winrate <= 1.0:
+        expected_winrate *= 100.0
+    if drift_alert_winrate <= 1.0:
+        drift_alert_winrate *= 100.0
+
+    if len(all_history) < recent_trades_n:
+        return {
+            "has_drift": False,
+            "is_drift_detected": False,
+            "recent_trades_count": len(all_history),
+            "recent_winrate": 100.0,
+            "recommendation": "Data belum cukup untuk evaluasi drift",
+            "consecutive_losses": 0,
+        }
+
+    # Urutkan berdasarkan waktu jika ada field time
+    try:
+        sorted_hist = sorted(
+            all_history,
+            key=lambda x: datetime.strptime(x["time"], "%Y-%m-%d %H:%M:%S") if "time" in x else datetime.min,
+        )
+    except Exception:
+        sorted_hist = all_history
+
+    recent_sample = sorted_hist[-recent_trades_n:]
+    wins = sum(1 for x in recent_sample if x.get("is_win", x.get("pnl", 0) > 0 or x.get("realized_pnl", 0) > 0))
+    recent_wr = (wins / len(recent_sample)) * 100.0
+
+    # Hitung consecutive losses di ujung histori
+    consecutive_losses = 0
+    for x in reversed(sorted_hist):
+        is_w = bool(x.get("is_win", x.get("pnl", 0) > 0 or x.get("realized_pnl", 0) > 0))
+        if not is_w:
+            consecutive_losses += 1
+        else:
+            break
+
+    has_drift = (recent_wr <= drift_alert_winrate) or (consecutive_losses >= 3)
+
+    if has_drift:
+        recommendation = (
+            f"⚠️ CONCEPT DRIFT DETECTED: Winrate {recent_trades_n} trade terakhir drop ke {recent_wr:.1f}% "
+            f"(Loss beruntun: {consecutive_losses}x). Perketat ambang batas konfluensi & picu Walk-Forward Retraining."
+        )
+    else:
+        recommendation = f"Performa stabil (Rolling {recent_trades_n} trade WR: {recent_wr:.1f}%)."
+
+    return {
+        "has_drift": has_drift,
+        "is_drift_detected": has_drift,
+        "recent_trades_count": len(recent_sample),
+        "recent_winrate": round(recent_wr, 1),
+        "consecutive_losses": consecutive_losses,
+        "expected_winrate": expected_winrate,
+        "recommendation": recommendation,
+    }
+
+

@@ -115,4 +115,75 @@ def reset_trade_stats() -> dict:
     os.makedirs(os.path.dirname(STATS_FILE), exist_ok=True)
     with open(STATS_FILE, "w", encoding="utf-8") as file:
         json.dump({"trades": []}, file, indent=2)
-    return trade_summary()
+    return trade_summary()
+
+
+EXPLAINABILITY_FILE = "data/trade_explainability.json"
+
+def record_trade_explainability_snapshot(
+    symbol: str = "UNKNOWN",
+    side: str = "LONG",
+    entry_price: float = 0.0,
+    features: dict = None,
+    meta_intel: dict = None,
+    regime_intel: dict = None,
+    confluence_breakdown: dict = None,
+    alasan: str = "",
+    trade_id: str = None,
+    meta_info: dict = None,
+    regime_info: dict = None,
+    ml_vision_info: dict = None,
+    risk_info: dict = None,
+    notes: str = "",
+    **kwargs,
+) -> dict:
+    """
+    Pilar 6: Full Logging & Model Explainability.
+    Menyimpan snapshot komprehensif seluruh input fitur, probabilitas meta-labeler,
+    kondisi pasar, dan alasan keputusan trading.
+    """
+    os.makedirs("data", exist_ok=True)
+    meta_data = meta_intel or meta_info or {}
+    regime_data = regime_intel or regime_info or {}
+    exec_reason = alasan or notes or ""
+    
+    try:
+        data = []
+        if os.path.exists(EXPLAINABILITY_FILE):
+            with open(EXPLAINABILITY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if not isinstance(data, list):
+                    data = []
+        
+        snapshot = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "trade_id": trade_id or f"{symbol}_{int(datetime.now().timestamp())}",
+            "symbol": symbol,
+            "side": side,
+            "entry_price": entry_price,
+            "market_regime": regime_data.get("regime", "UNKNOWN"),
+            "adx": regime_data.get("adx"),
+            "relative_atr": regime_data.get("relative_atr"),
+            "meta_probability_win": meta_data.get("win_probability", meta_data.get("probability_win")),
+            "half_kelly_multiplier": meta_data.get("half_kelly_multiplier"),
+            "meta_reason": meta_data.get("reason"),
+            "technical_features": features or {},
+            "ml_vision_info": ml_vision_info or {},
+            "risk_info": risk_info or {},
+            "confluence_breakdown": confluence_breakdown or {},
+            "alasan_eksekusi": exec_reason,
+        }
+        
+        data.append(snapshot)
+        if len(data) > 300:  # Batasi 300 snapshot terakhir
+            data = data[-300:]
+            
+        with open(EXPLAINABILITY_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+        return {"status": "recorded", "trade_id": snapshot["trade_id"]}
+            
+    except Exception as exc:
+        logger.warning(f"[EXPLAINABILITY] Gagal menyimpan explainability snapshot: {exc}")
+        return {"status": "error", "reason": str(exc)}
+

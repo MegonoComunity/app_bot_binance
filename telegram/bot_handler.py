@@ -27,6 +27,7 @@ from database.trade_repo import get_trade_summary
 from core.trade_sync import sync_real_exchange_account
 from core.learner import get_multi_timeframe_summary, get_stats as get_learner_stats, reset_pattern_blacklist
 from core.pattern_memory import _load as load_pattern_memory
+from core.auto_updater import check_for_git_updates, smart_git_pull_and_heal
 
 # Initialize bot and dispatcher
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -101,6 +102,8 @@ async def setup_bot_commands(bot_instance: Bot) -> None:
         BotCommand(command="help", description="Panduan & Daftar Perintah Lengkap"),
         BotCommand(command="ai_stats", description="🧠 Monitoring Berkala AI & Win Rate Pola"),
         BotCommand(command="winrate", description="📊 Rekap Win Rate Multi-Timeframe"),
+        BotCommand(command="update_bot", description="🔄 Auto-Pull & Self-Healing dari GitHub"),
+        BotCommand(command="git_sync", description="🔄 Cek & Tarik Update GitHub"),
         BotCommand(command="scan_order_paper", description="🔵 Mulai Scan & Simulasi Paper Trade"),
         BotCommand(command="scan_order_real", description="🟢 Mulai Scan & Order REAL Account"),
         BotCommand(command="mode", description="Cek / Ganti Mode Trading (REAL/SIMULASI)"),
@@ -2198,6 +2201,10 @@ def get_ai_monitor_keyboard(active_view: str = "overview") -> InlineKeyboardMark
         text="🚀 Latih Vision ML",
         callback_data="aimon_train"
     )
+    btn_sync = InlineKeyboardButton(
+        text="🔄 Auto-Pull GitHub & Heal",
+        callback_data="aimon_git_sync"
+    )
     btn_reset = InlineKeyboardButton(
         text="🗑️ Reset History AI",
         callback_data="aimon_confirm_reset"
@@ -2208,6 +2215,7 @@ def get_ai_monitor_keyboard(active_view: str = "overview") -> InlineKeyboardMark
             [btn_overview, btn_top],
             [btn_memory, btn_sim],
             [btn_refresh, btn_train],
+            [btn_sync],
             [btn_reset],
         ]
     )
@@ -2420,4 +2428,75 @@ async def ai_monitor_callback_handler(callback: types.CallbackQuery):
             reply_markup=kb,
             parse_mode="Markdown"
         )
+
+    elif data == "aimon_git_sync":
+        await callback.answer("🔄 Memeriksa & menyinkronkan pembaruan GitHub...")
+        wait_m = await callback.message.answer("🔍 **Memeriksa pembaruan di GitHub remote...**")
+        
+        upd = await check_for_git_updates(branch="main")
+        if not upd.get("has_update"):
+            await wait_m.edit_text(
+                "✅ **Kode Bot Sudah Versi Terbaru!**\n"
+                f"• Local Commit: `{upd.get('local_hash', 'N/A')}`\n"
+                f"• Remote Commit: `{upd.get('remote_hash', 'N/A')}`\n"
+                "Tidak ada pembaruan baru di GitHub repository.",
+                parse_mode="Markdown"
+            )
+            return
+
+        behind_n = upd.get("behind_count", 1)
+        commit_lines = "\n".join([f"• `{c}`" for c in upd.get("commits", [])])
+        await wait_m.edit_text(
+            f"📦 Ditemukan `{behind_n}` commit baru!\n{commit_lines}\n\n"
+            f"⬇️ Memulai proses Smart Git Pull & Self-Healing...",
+            parse_mode="Markdown"
+        )
+        
+        heal_res = await smart_git_pull_and_heal(branch="main")
+        log_text = "\n".join([f"• {l}" for l in heal_res.get("logs", [])])
+        
+        res_msg = (
+            f"🎉 **PROSES SINKRONISASI & SELF-HEALING SELESAI!** 🔄\n\n"
+            f"🛠️ **Aktivitas:**\n{log_text}\n\n"
+            f"🤖 *Bot telah diperbarui dan berjalan dengan kode & dataset terbaru.*"
+        )
+        await wait_m.edit_text(res_msg, parse_mode="Markdown")
+
+
+@dp.message(Command("update_bot"))
+@dp.message(Command("git_sync"))
+@dp.message(Command("git_pull"))
+async def update_bot_command_handler(message: types.Message):
+    """Command untuk memicu update manual dari GitHub remote."""
+    wait_m = await message.answer("🔍 **Memeriksa pembaruan di GitHub...**")
+    
+    upd = await check_for_git_updates(branch="main")
+    if not upd.get("has_update"):
+        await wait_m.edit_text(
+            "✅ **Kode Bot Sudah Versi Terbaru!**\n"
+            f"• Local Commit: `{upd.get('local_hash', 'N/A')}`\n"
+            f"• Remote Commit: `{upd.get('remote_hash', 'N/A')}`\n"
+            "Tidak ada pembaruan baru di GitHub repository.",
+            parse_mode="Markdown"
+        )
+        return
+
+    behind_n = upd.get("behind_count", 1)
+    commit_lines = "\n".join([f"• `{c}`" for c in upd.get("commits", [])])
+    await wait_m.edit_text(
+        f"📦 Ditemukan `{behind_n}` commit baru!\n{commit_lines}\n\n"
+        f"⬇️ Menjalankan Smart Auto-Pull & Self-Healing...",
+        parse_mode="Markdown"
+    )
+    
+    heal_res = await smart_git_pull_and_heal(branch="main")
+    log_text = "\n".join([f"• {l}" for l in heal_res.get("logs", [])])
+    
+    res_msg = (
+        f"🎉 **SINKRONISASI GITHUB & SELF-HEALING BERHASIL!** 🔄\n\n"
+        f"🛠️ **Log Eksekusi:**\n{log_text}\n\n"
+        f"🤖 *Bot telah diperbarui secara otomatis.*"
+    )
+    await wait_m.edit_text(res_msg, parse_mode="Markdown")
+
 

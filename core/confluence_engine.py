@@ -48,6 +48,7 @@ def calculate_confluence_score(
     two_consecutive_candles: bool = False,
     compression_reversal: bool = False,
     ml_vision_info: Optional[Dict[str, Any]] = None,
+    regime_info: Optional[Dict[str, Any]] = None,
     sniper_info: Optional[Dict[str, Any]] = None,
     smc_v2_info: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -55,6 +56,7 @@ def calculate_confluence_score(
     Menghitung skor konfluensi teknikal dan memberikan rincian pilar poin.
     Mendukung:
     - Smart Money Concepts Market Structure (HH, HL, LH, LL)
+    - Market Regime Detection (Bullish Trend / Bearish Trend / Sideways / Choppy)
     - Dynamic Swing Anchored VWAP (AVWAP Fair Value)
     - EMA 21 Dynamic Pullback Reversal
     - PUMP RADAR momentum wave
@@ -101,6 +103,7 @@ def calculate_confluence_score(
     in_fvg = bool(fvg_data.get("in_fvg_zone", False))
 
     market_regime = struct_info.get("regime", "SIDEWAYS")
+    regime_label = regime_info.get("regime", "RANGING_SIDEWAYS") if regime_info else "RANGING_SIDEWAYS"
     is_ema21_pullback = ema21_info.get("is_pullback", False)
     ema21_type = ema21_info.get("type")
 
@@ -111,19 +114,19 @@ def calculate_confluence_score(
     is_ml_bearish = (ml_label == "BEARISH" and ml_confidence >= 0.55)
     is_ml_opposing = (side == "LONG" and is_ml_bearish and ml_confidence >= 0.70) or (side == "SHORT" and is_ml_bullish and ml_confidence >= 0.70)
 
-    # ─── PILAR 1: Higher Timeframe (HTF) Alignment & Market Structure (Maks 25 Poin) ─────────────
+    # ─── PILAR 1: Higher Timeframe (HTF) Alignment & Market Regime (Maks 25 Poin) ─────────────
     htf_points = 0.0
     if side == "LONG":
-        if htf_trend == "UPTREND" or market_regime == "UPTREND_HEALTHY":
+        if htf_trend == "UPTREND" or regime_label == "TRENDING_BULLISH" or market_regime == "UPTREND_HEALTHY":
             htf_points = 25.0
-        elif htf_trend == "SIDEWAYS" or struct_info.get("is_compression") or is_discount:
+        elif htf_trend == "SIDEWAYS" or regime_label == "RANGING_SIDEWAYS" or struct_info.get("is_compression") or is_discount:
             htf_points = 20.0 if (is_pump_alert or is_qml_buy) else 15.0
         else: # DOWNTREND
             htf_points = 15.0 if (is_pump_alert and pump_score >= 65) or is_qml_buy else 5.0
     else: # SHORT
-        if htf_trend == "DOWNTREND" or market_regime == "DOWNTREND_HEALTHY":
+        if htf_trend == "DOWNTREND" or regime_label == "TRENDING_BEARISH" or market_regime == "DOWNTREND_HEALTHY":
             htf_points = 25.0
-        elif htf_trend == "SIDEWAYS" or struct_info.get("is_compression") or is_premium:
+        elif htf_trend == "SIDEWAYS" or regime_label == "RANGING_SIDEWAYS" or struct_info.get("is_compression") or is_premium:
             htf_points = 15.0
         else: # UPTREND
             htf_points = 15.0 if is_qml_sell else 5.0
@@ -132,9 +135,10 @@ def calculate_confluence_score(
         "points": htf_points,
         "max": 25.0,
         "trend": htf_trend,
+        "regime": regime_label,
         "market_structure": market_regime,
         "structure_seq": struct_info.get("structure_sequence", []),
-        "detail": f"HTF: {htf_trend} | SMC Structure: {market_regime} ({htf_points}/25)"
+        "detail": f"HTF: {htf_trend} | Regime: {regime_label} | SMC: {market_regime} ({htf_points}/25)"
     }
     total_score += htf_points
 

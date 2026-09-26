@@ -1,5 +1,7 @@
+from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
+from typing import Tuple, Dict, Any, Optional, List
 
 
 def calculate_risk_margin(
@@ -195,11 +197,13 @@ def calculate_computed_position_size(
     risk_percent: float = 1.5,
     min_margin: float = 0.5,
     max_position_equity_ratio: float = 0.20,
+    kelly_multiplier: float = 1.0,
 ) -> dict:
     """
-    Sistem Computed Nilai (Dynamic Compounding Sizing):
+    Sistem Computed Nilai (Dynamic Compounding & Kelly Sizing):
     Menghitung ukuran margin dan kuantitas order yang aman dan optimal untuk modal kecil.
     - Menjamin risiko rugi saat Stop Loss terkena tidak melebihi `risk_percent` dari equity.
+    - Mengintegrasikan Half-Kelly fraction multiplier untuk memaksimalkan expectancy.
     - Membatasi margin per posisi maksimal `max_position_equity_ratio` dari equity agar akun tidak overleveraged.
     """
     if equity <= 0 or current_price <= 0 or leverage <= 0 or risk_percent <= 0:
@@ -215,8 +219,9 @@ def calculate_computed_position_size(
     if stop_distance <= 0:
         stop_distance = current_price * 0.015  # Fallback 1.5% distance
 
-    # 1. Hitung toleransi risiko (Risk Budget)
-    risk_amount = equity * (risk_percent / 100.0)
+    # 1. Hitung toleransi risiko (Risk Budget) dengan Kelly Scaling
+    adjusted_risk_pct = risk_percent * max(0.5, min(kelly_multiplier, 1.5))
+    risk_amount = equity * (adjusted_risk_pct / 100.0)
 
     # 2. Hitung jumlah coin (quantity) dan nominal notional
     quantity = risk_amount / stop_distance
@@ -250,9 +255,61 @@ def calculate_computed_position_size(
         "quantity": quantity,
         "notional_usdt": round(final_margin * leverage, 2),
         "risk_amount": round(risk_amount, 2),
-        "risk_percent": risk_percent,
+        "risk_percent": round(adjusted_risk_pct, 2),
+        "kelly_multiplier": round(kelly_multiplier, 2),
         "is_valid": True,
         "reason": "OK",
+    }
+
+
+def check_consecutive_losses_circuit_breaker(
+    consecutive_losses: int = 0,
+    max_consecutive_losses: int = 3,
+    max_allowed: int = 3,
+    cooldown_minutes: int = 45,
+) -> dict:
+    """
+    Pilar 5: Consecutive Losses Circuit Breaker.
+    Jika terjadi loss beruntun melebihi batas, aktifkan cooling-off period untuk mencegah revenge trading.
+    """
+    threshold = min(max_consecutive_losses, max_allowed)
+    if consecutive_losses >= threshold:
+        return {
+            "is_circuit_broken": True,
+            "cooldown_minutes": cooldown_minutes,
+            "reason": (
+                f"🚨 CIRCUIT BREAKER AKTIF: Terdeteksi {consecutive_losses}x loss beruntun (>= {threshold}x). "
+                f"Trading dihentikan sementara selama {cooldown_minutes} menit untuk mendinginkan portofolio."
+            ),
+        }
+    return {
+        "is_circuit_broken": False,
+        "cooldown_minutes": 0,
+        "reason": "",
+    }
+
+
+def check_market_volatility_spike_anomaly(
+    relative_atr: float,
+    max_relative_atr: float = 2.2,
+    spike_threshold: float = 2.2,
+) -> dict:
+    """
+    Pilar 5: Anomaly Spike Guard.
+    Mendeteksi anomali lonjakan volatilitas ekstrem mendadak (Flash News / Black Swan Spike).
+    """
+    limit = max_relative_atr if max_relative_atr != 2.2 else spike_threshold
+    if relative_atr >= limit:
+        return {
+            "is_anomaly": True,
+            "reason": (
+                f"🛡️ ANOMALY SPIKE GUARD: Volatilitas melonjak {relative_atr:.2f}x di atas rata-rata normal (Limit: {limit:.1f}x). "
+                f"Entri baru dibatalkan demi keamanan."
+            ),
+        }
+    return {
+        "is_anomaly": False,
+        "reason": "",
     }
 
 
