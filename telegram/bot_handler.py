@@ -1966,7 +1966,60 @@ async def btn_pengaturan_handler(message: types.Message):
         "• `/set_leverage 10` | `/set_max_positions 3`\n"
         "• `/set_rsi_oversold 30` | `/set_rsi_overbought 70`"
     )
-    await message.answer(text, parse_mode="Markdown")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 Ganti ke Binance", callback_data="change_exchange_BINANCE"),
+            InlineKeyboardButton(text="🔄 Ganti ke Bitunix", callback_data="change_exchange_BITUNIX")
+        ]
+    ])
+    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("change_exchange_"))
+async def callback_change_exchange(callback: types.CallbackQuery):
+    target = callback.data.split("_")[-1].upper()
+    current = getattr(bot_config, "active_exchange", "BINANCE").upper()
+    
+    if target == current:
+        await callback.answer(f"Exchange sudah diatur ke {target}!", show_alert=True)
+        return
+
+    try:
+        await callback.answer("Memproses ganti exchange...")
+        bot_config.update_active_exchange(target)
+        new_adapter = get_exchange_adapter(target)
+        await new_adapter.init()
+        bot_state["client"] = new_adapter
+        
+        curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
+        bal_res = await fetch_account_balance_info(new_adapter, target, curr_mode)
+        is_real = curr_mode.upper() in ("REAL", "LIVE")
+        
+        if is_real:
+            total_bal = bal_res.get("total_balance", 0.0)
+            bal_str = f"💰 **Saldo Akun Real {target}:** `${total_bal:.2f} USDT`\n"
+        else:
+            sim_bal = bal_res.get("total_balance", 100.0)
+            bal_str = f"💰 **Saldo Simulasi:** `${sim_bal:.2f} USDT` (Live Market Feed dari {target})\n"
+            
+        text_resp = (
+            f"✅ **EXCHANGE BERHASIL DIUBAH KE {target}!**\n"
+            f"────────────────────────\n"
+            f"🏛️ **Platform Aktif:** `{target}`\n"
+            f"🎯 **Mode Saat Ini:** `{curr_mode}`\n"
+            f"{bal_str}"
+            f"⚡ Scanner sekarang membaca orderbook & data kline langsung dari **{target}**."
+        )
+        await callback.message.answer(text_resp, parse_mode="Markdown")
+        
+        try:
+            await callback.message.delete()
+        except:
+            pass
+        await btn_pengaturan_handler(callback.message)
+        
+    except Exception as e:
+        await callback.answer(f"Gagal ganti exchange: {e}", show_alert=True)
 
 @dp.message(Command("pause"))
 @dp.message(Command("stop"))

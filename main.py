@@ -1597,6 +1597,11 @@ async def user_data_stream_loop():
         while True:
             await asyncio.sleep(3600)
 
+    if not BINANCE_API_KEY or str(BINANCE_API_KEY).strip() == "":
+        print("[USER STREAM] BINANCE_API_KEY kosong. Mengabaikan User Data Stream.")
+        while True:
+            await asyncio.sleep(3600)
+
     testnet = TRADING_MODE == 'TESTNET'
     client = await AsyncClient.create(
         api_key=BINANCE_API_KEY,
@@ -1607,6 +1612,11 @@ async def user_data_stream_loop():
     try:
         reconnect_delay = 2
         while True:
+            if getattr(bot_config, "active_exchange", "BINANCE").upper() != "BINANCE":
+                bot_state["websocket_connected"] = False
+                await asyncio.sleep(5)
+                continue
+                
             bm = BinanceSocketManager(client)
             ts = bm.futures_user_socket()
             try:
@@ -1769,7 +1779,17 @@ async def user_data_stream_loop():
             except Exception as e:
                 bot_state["websocket_connected"] = False
                 bot_state["state"] = "DEGRADED"
-                error_msg = f"WebSocket terputus: {str(e)}. Reconnect dalam {reconnect_delay}s."
+                err_str = str(e)
+                
+                if "-2015" in err_str or "Invalid API-key" in err_str:
+                    msg = f"⚠️ [BINANCE STREAM] API Key invalid atau tidak berizin Futures (Code -2015). User Stream dihentikan."
+                    print(msg)
+                    if getattr(bot_config, "trading_mode", "") != "PAPER_TRADING":
+                        await send_error_log(bot, TELEGRAM_ADMIN_CHAT_ID, msg)
+                    while True:
+                        await asyncio.sleep(3600)
+
+                error_msg = f"WebSocket terputus: {err_str}. Reconnect dalam {reconnect_delay}s."
                 print(error_msg)
                 await send_error_log(bot, TELEGRAM_ADMIN_CHAT_ID, error_msg)
                 await asyncio.sleep(reconnect_delay)
