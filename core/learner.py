@@ -73,6 +73,7 @@ def record_trade_result(
     pnl: float = 0.0,
     symbol: str = "",
     timestamp: Optional[str] = None,
+    source: str = "REAL",
 ) -> None:
     """
     Mencatat hasil dari sebuah pola / setup dengan timestamp riil untuk perhitungan rolling window.
@@ -108,7 +109,8 @@ def record_trade_result(
         "time": ts_now,
         "is_win": bool(is_profit),
         "pnl": float(pnl),
-        "symbol": symbol
+        "symbol": symbol,
+        "source": source.upper()
     })
     
     # Batasi riwayat maksimal 200 per kategori untuk efisiensi
@@ -119,13 +121,16 @@ def record_trade_result(
     wr = (cat_data["win"] / cat_data["total"]) * 100
     print(f"🧠 [LEARNER] Rekam jejak '{canonical_name}' diperbarui: Win: {cat_data['win']}, Loss: {cat_data['loss']} (All-Time WR: {wr:.1f}%)")
 
-def calculate_window_stats(history: List[Dict[str, Any]], window: str = "DAILY") -> Dict[str, Any]:
+def calculate_window_stats(history: List[Dict[str, Any]], window: str = "DAILY", source_filter: Optional[str] = None) -> Dict[str, Any]:
     """
     Menghitung Win Rate dan PnL berdasarkan jendela waktu (DAILY, RECENT_10, RECENT_20, WEEKLY, MONTHLY, ALL_TIME).
     """
     if not history:
         return {"win": 0, "loss": 0, "total": 0, "win_rate": 0.0, "total_pnl": 0.0}
         
+    if source_filter:
+        history = [h for h in history if h.get("source", "REAL").upper() == source_filter.upper()]
+
     w = window.upper().strip()
     filtered: List[Dict[str, Any]] = []
     now = datetime.now()
@@ -218,8 +223,8 @@ def is_pattern_reliable(
         threshold_wr = min_winrate if min_winrate is not None else 50.0
         probation_enabled = use_probation
 
-    # Hitung statistik pada window aktif
-    w_stats = calculate_window_stats(history, window=active_window)
+    # Hitung statistik pada window aktif, HANYA evaluasi dari data riil (REAL)
+    w_stats = calculate_window_stats(history, window=active_window, source_filter="REAL")
     total_w = w_stats["total"]
     wr = w_stats["win_rate"]
 

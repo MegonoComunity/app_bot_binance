@@ -115,6 +115,23 @@ class BinanceAdapter(BaseExchange):
             log_error(f"BINANCE_PRICE_{symbol}", str(e))
             return 0.0
 
+    async def get_orderbook_spread(self, symbol: str) -> Dict[str, float]:
+        try:
+            depth = await self.client.futures_order_book(symbol=symbol.upper(), limit=5)
+            bids = depth.get("bids", [])
+            asks = depth.get("asks", [])
+            if bids and asks:
+                best_bid = float(bids[0][0])
+                best_ask = float(asks[0][0])
+                if best_bid > 0 and best_ask > 0:
+                    mid = (best_bid + best_ask) / 2.0
+                    spread_pct = ((best_ask - best_bid) / mid) * 100.0
+                    return {"bid": best_bid, "ask": best_ask, "mid": mid, "spread_pct": spread_pct}
+        except Exception as e:
+            log_error(f"BINANCE_DEPTH_{symbol}", str(e))
+        price = await self.get_symbol_price(symbol)
+        return {"bid": price, "ask": price, "mid": price, "spread_pct": 0.0}
+
     async def get_account_balance(self) -> Dict[str, float]:
         try:
             account_info = await self.client.futures_account()

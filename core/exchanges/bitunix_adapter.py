@@ -329,6 +329,27 @@ class BitunixAdapter(BaseExchange):
             log_error(f"BITUNIX_PRICE_{symbol}", str(e))
             return 0.0
 
+    async def get_orderbook_spread(self, symbol: str) -> Dict[str, float]:
+        """
+        Mengambil best bid, best ask, mid price, dan spread percentage dari orderbook Bitunix.
+        """
+        try:
+            res = await self._request("GET", "/api/v1/futures/market/depth", params={"symbol": symbol.upper()})
+            raw_data = res.get("data", {}) if isinstance(res, dict) else {}
+            bids = raw_data.get("bids", []) if isinstance(raw_data, dict) else []
+            asks = raw_data.get("asks", []) if isinstance(raw_data, dict) else []
+            if bids and asks:
+                best_bid = float(bids[0][0] if isinstance(bids[0], (list, tuple)) else bids[0].get("price", 0))
+                best_ask = float(asks[0][0] if isinstance(asks[0], (list, tuple)) else asks[0].get("price", 0))
+                if best_bid > 0 and best_ask > 0:
+                    mid = (best_bid + best_ask) / 2.0
+                    spread_pct = ((best_ask - best_bid) / mid) * 100.0
+                    return {"bid": best_bid, "ask": best_ask, "mid": mid, "spread_pct": spread_pct}
+        except Exception as e:
+            log_error(f"BITUNIX_DEPTH_{symbol}", str(e))
+        price = await self.get_symbol_price(symbol)
+        return {"bid": price, "ask": price, "mid": price, "spread_pct": 0.0}
+
     async def get_account_balance(self, margin_coin: str = "USDT") -> Dict[str, float]:
         """
         Mengambil balance futures Bitunix untuk margin coin (default USDT).

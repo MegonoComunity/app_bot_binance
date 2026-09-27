@@ -129,6 +129,39 @@ async def check_exchange_active_position(client: Union[BaseExchange, AsyncClient
     return False
 
 
+async def get_orderbook_mid_or_spread(
+    client: Union[BaseExchange, AsyncClient],
+    symbol: str,
+) -> Dict[str, float]:
+    """
+    Mengambil harga best bid, best ask, mid price, dan spread percentage.
+    """
+    bid = 0.0
+    ask = 0.0
+    try:
+        if isinstance(client, BaseExchange):
+            if hasattr(client, "get_orderbook_spread"):
+                return await client.get_orderbook_spread(symbol)
+            price = await client.get_symbol_price(symbol)
+            if price > 0:
+                return {"bid": price, "ask": price, "mid": price, "spread_pct": 0.0}
+        else:
+            depth = await client.futures_order_book(symbol=symbol.upper(), limit=5)
+            bids = depth.get("bids", [])
+            asks = depth.get("asks", [])
+            if bids and asks:
+                bid = float(bids[0][0])
+                ask = float(asks[0][0])
+                if bid > 0 and ask > 0:
+                    mid = (bid + ask) / 2.0
+                    spread_pct = ((ask - bid) / mid) * 100.0
+                    return {"bid": bid, "ask": ask, "mid": mid, "spread_pct": spread_pct}
+    except Exception as e:
+        log_error(f"SPREAD_CHECK_{symbol}", str(e))
+
+    return {"bid": bid, "ask": ask, "mid": (bid + ask) / 2.0 if (bid and ask) else 0.0, "spread_pct": 0.0}
+
+
 async def place_long_order(
     client: Union[BaseExchange, AsyncClient],
     symbol: str,
@@ -137,9 +170,10 @@ async def place_long_order(
     leverage: int,
     use_limit: bool = False,
     limit_timeout: int = 30,
+    max_slippage_pct: float = 0.003,
 ) -> dict:
     """
-    Membuka posisi Long (Market / Limit Order) dengan perlindungan Anti-Double Entry tingkat Exchange.
+    Membuka posisi Long (Market / Limit Order) dengan Slippage Guard & perlindungan Anti-Double Entry.
     """
     async with _get_symbol_lock(symbol):
         # 1. Verifikasi langsung ke Exchange sebelum menembak order
@@ -147,6 +181,38 @@ async def place_long_order(
             print(f"🛑 [EXCHANGE LOCK] {symbol} sudah memiliki posisi aktif di exchange. Order LONG dibatalkan (Anti-Double Entry).")
             return {"status": "error", "message": f"Position already active on exchange for {symbol}"}
 
+        # 2. Slippage Guard: Re-fetch harga terkini sesaat sebelum order ditembak
+        fresh_price = current_price
+        try:
+            if isinstance(client, BaseExchange):
+                p = await client.get_symbol_price(symbol)
+                if p > 0:
+                    fresh_price = p
+            else:
+                ticker = await client.futures_symbol_ticker(symbol=symbol.upper())
+                p = float(ticker.get("price", 0.0))
+                if p > 0:
+                    fresh_price = p
+        except Exception as e_p:
+            log_error(f"PRICE_CHECK_{symbol}", f"Gagal re-fetch harga pasar terkini: {e_p}")
+
+        if current_price > 0 and fresh_price > 0:
+            price_deviation = (fresh_price - current_price) / current_price
+            if price_deviation > max_slippage_pct:
+                print(
+                    f"⚠️ [SLIPPAGE GUARD] Order LONG {symbol} DIBATALKAN (SIGNAL_STALE): "
+                    f"Harga pasar ({fresh_price:.6f}) telah melonjak {price_deviation * 100:+.2f}% di atas harga sinyal ({current_price:.6f}) "
+                    f"> batas toleransi ({max_slippage_pct * 100:.2f}%)."
+                )
+                return {
+                    "status": "error",
+                    "reason": "SIGNAL_STALE",
+                    "message": f"Market price jumped {price_deviation * 100:+.2f}% above signal price (exceeds max slippage {max_slippage_pct * 100:.2f}%)",
+                    "signal_price": current_price,
+                    "market_price": fresh_price,
+                }
+
+        exec_ref_price = fresh_price if fresh_price > 0 else current_price
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -154,7 +220,7 @@ async def place_long_order(
                 await set_margin_type(client, symbol, 'ISOLATED')
                 
                 notional_value = margin_usdt * actual_leverage
-                quantity = notional_value / current_price
+                quantity = notional_value / exec_ref_price
                 
                 precision_info = await get_symbol_precision(client, symbol)
                 qty_precision = precision_info['qty']
@@ -169,12 +235,12 @@ async def place_long_order(
                         side="BUY",
                         order_type=order_type,
                         quantity=quantity,
-                        price=current_price if use_limit else None,
+                        price=exec_ref_price if use_limit else None,
                     )
                 else:
                     qty_str = str(int(quantity)) if qty_precision == 0 else f"{quantity:.{qty_precision}f}"
                     if use_limit:
-                        price_str = f"{current_price:.{precision_info['price']}f}"
+                        price_str = f"{exec_ref_price:.{precision_info['price']}f}"
                         order = await client.futures_create_order(
                             symbol=symbol, side=SIDE_BUY, type=ORDER_TYPE_LIMIT,
                             timeInForce=TIME_IN_FORCE_GTC, quantity=qty_str, price=price_str
@@ -190,11 +256,22 @@ async def place_long_order(
                             symbol=symbol, side=SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=qty_str
                         )
 
+                fill_price = _get_average_fill_price(order, exec_ref_price)
+                slippage_pct = (fill_price - current_price) / current_price if current_price > 0 else 0.0
+                
+                print(
+                    f"🎯 [EXECUTION FIDELITY] LONG {symbol} Filled | "
+                    f"Sinyal: {current_price:.6f} | Fill: {fill_price:.6f} | "
+                    f"Slippage: {slippage_pct * 100:+.3f}% ({order_type})"
+                )
+
                 return {
                     "status": "success",
                     "order": order,
                     "quantity": quantity,
-                    "price": _get_average_fill_price(order, current_price),
+                    "price": fill_price,
+                    "signal_price": current_price,
+                    "slippage_pct": slippage_pct,
                     "actual_leverage": actual_leverage,
                 }
             except Exception as e:
@@ -217,9 +294,10 @@ async def place_short_order(
     leverage: int,
     use_limit: bool = False,
     limit_timeout: int = 30,
+    max_slippage_pct: float = 0.003,
 ) -> dict:
     """
-    Membuka posisi Short (Market / Limit Order) dengan perlindungan Anti-Double Entry tingkat Exchange.
+    Membuka posisi Short (Market / Limit Order) dengan Slippage Guard & perlindungan Anti-Double Entry.
     """
     async with _get_symbol_lock(symbol):
         # 1. Verifikasi langsung ke Exchange sebelum menembak order
@@ -227,6 +305,38 @@ async def place_short_order(
             print(f"🛑 [EXCHANGE LOCK] {symbol} sudah memiliki posisi aktif di exchange. Order SHORT dibatalkan (Anti-Double Entry).")
             return {"status": "error", "message": f"Position already active on exchange for {symbol}"}
 
+        # 2. Slippage Guard: Re-fetch harga terkini sesaat sebelum order ditembak
+        fresh_price = current_price
+        try:
+            if isinstance(client, BaseExchange):
+                p = await client.get_symbol_price(symbol)
+                if p > 0:
+                    fresh_price = p
+            else:
+                ticker = await client.futures_symbol_ticker(symbol=symbol.upper())
+                p = float(ticker.get("price", 0.0))
+                if p > 0:
+                    fresh_price = p
+        except Exception as e_p:
+            log_error(f"PRICE_CHECK_{symbol}", f"Gagal re-fetch harga pasar terkini: {e_p}")
+
+        if current_price > 0 and fresh_price > 0:
+            price_deviation = (current_price - fresh_price) / current_price
+            if price_deviation > max_slippage_pct:
+                print(
+                    f"⚠️ [SLIPPAGE GUARD] Order SHORT {symbol} DIBATALKAN (SIGNAL_STALE): "
+                    f"Harga pasar ({fresh_price:.6f}) telah anjlok {price_deviation * 100:+.2f}% di bawah harga sinyal ({current_price:.6f}) "
+                    f"> batas toleransi ({max_slippage_pct * 100:.2f}%)."
+                )
+                return {
+                    "status": "error",
+                    "reason": "SIGNAL_STALE",
+                    "message": f"Market price dropped {price_deviation * 100:+.2f}% below signal price (exceeds max slippage {max_slippage_pct * 100:.2f}%)",
+                    "signal_price": current_price,
+                    "market_price": fresh_price,
+                }
+
+        exec_ref_price = fresh_price if fresh_price > 0 else current_price
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -234,7 +344,7 @@ async def place_short_order(
                 await set_margin_type(client, symbol, 'ISOLATED')
                 
                 notional_value = margin_usdt * actual_leverage
-                quantity = notional_value / current_price
+                quantity = notional_value / exec_ref_price
                 
                 precision_info = await get_symbol_precision(client, symbol)
                 qty_precision = precision_info['qty']
@@ -249,12 +359,12 @@ async def place_short_order(
                         side="SELL",
                         order_type=order_type,
                         quantity=quantity,
-                        price=current_price if use_limit else None,
+                        price=exec_ref_price if use_limit else None,
                     )
                 else:
                     qty_str = str(int(quantity)) if qty_precision == 0 else f"{quantity:.{qty_precision}f}"
                     if use_limit:
-                        price_str = f"{current_price:.{precision_info['price']}f}"
+                        price_str = f"{exec_ref_price:.{precision_info['price']}f}"
                         order = await client.futures_create_order(
                             symbol=symbol, side=SIDE_SELL, type=ORDER_TYPE_LIMIT,
                             timeInForce=TIME_IN_FORCE_GTC, quantity=qty_str, price=price_str
@@ -270,11 +380,22 @@ async def place_short_order(
                             symbol=symbol, side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=qty_str
                         )
 
+                fill_price = _get_average_fill_price(order, exec_ref_price)
+                slippage_pct = (current_price - fill_price) / current_price if current_price > 0 else 0.0
+                
+                print(
+                    f"🎯 [EXECUTION FIDELITY] SHORT {symbol} Filled | "
+                    f"Sinyal: {current_price:.6f} | Fill: {fill_price:.6f} | "
+                    f"Slippage: {slippage_pct * 100:+.3f}% ({order_type})"
+                )
+
                 return {
                     "status": "success",
                     "order": order,
                     "quantity": quantity,
-                    "price": _get_average_fill_price(order, current_price),
+                    "price": fill_price,
+                    "signal_price": current_price,
+                    "slippage_pct": slippage_pct,
                     "actual_leverage": actual_leverage,
                 }
             except Exception as e:

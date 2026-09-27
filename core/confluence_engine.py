@@ -147,9 +147,7 @@ def calculate_confluence_score(
     has_valid_pattern = bool(pattern_name and pattern_name not in ("NONE", "None", ""))
     
     if side == "LONG":
-        if is_pump_alert:
-            sr_pattern_points = 25.0  # Pump breakout mengonfirmasi momentum kuat di atas struktur
-        elif is_qml_buy:
+        if is_qml_buy:
             sr_pattern_points = 25.0  # LnSNRCH.v2 Bullish Quasimodo (QML Left Shoulder Reversal)
         elif is_sniper_buy:
             sr_pattern_points = 25.0  # SMC Sniper Buy Volume Zone (POC Reversal)
@@ -167,9 +165,11 @@ def calculate_confluence_score(
             sr_pattern_points = 25.0  # Fair Value AVWAP Support
         elif near_support and has_valid_pattern and pattern_type == "LONG":
             sr_pattern_points = 25.0  # Konfluensi sempurna: pola reversal persis di support
+        elif is_pump_alert and (near_support or in_fvg or is_discount):
+            sr_pattern_points = 25.0  # Pump breakout valid jika dari support/fvg
         elif near_support and near_lower_bb:
             sr_pattern_points = 20.0  # Support ganda: Lower BB + Price Support
-        elif two_consecutive_candles or compression_reversal:
+        elif two_consecutive_candles or compression_reversal or is_pump_alert:
             sr_pattern_points = 18.0
         elif near_support or avwap_info.get("position_to_avwap") == "BULLISH_ABOVE_AVWAP" or in_fvg:
             sr_pattern_points = 16.0
@@ -249,9 +249,7 @@ def calculate_confluence_score(
 
     # ─── PILAR 4: Volatility Squeeze & Discount/Premium Zones (Maks 15 Poin) ───
     squeeze_points = 0.0
-    if is_pump_alert:
-        squeeze_points = 15.0
-    elif (side == "LONG" and is_discount) or (side == "SHORT" and is_premium):
+    if (side == "LONG" and is_discount) or (side == "SHORT" and is_premium):
         squeeze_points = 15.0  # Zona Diskon/Premium SMC Optimal
     elif breakout_info and isinstance(breakout_info, dict):
         b_score = float(breakout_info.get("score", 0.0))
@@ -275,9 +273,7 @@ def calculate_confluence_score(
     # ─── PILAR 5: Momentum & RSI Zone (Maks 15 Poin) ───────────────────────────
     rsi_points = 0.0
     if side == "LONG":
-        if is_pump_alert:
-            rsi_points = 15.0  # Momentum bullish aktif
-        elif is_oversold:
+        if is_oversold:
             rsi_points = 15.0  # RSI oversold < 35
         elif near_lower_bb:
             rsi_points = 10.0

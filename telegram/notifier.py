@@ -247,6 +247,9 @@ async def send_order_filled_notification(bot: Bot, chat_id: str, order_data: dic
     elif 'STOP' in order_type:
         header_title = "🏁 **BOT CLOSED ORDER (STOP LOSS)** 🏁"
         trigger_reason = "🛡️ Proteksi Stop Loss Tertrigger (Risiko Dibatasi)"
+    elif 'SMART_REVERSAL_EXIT' in order_type:
+        header_title = "🚨 **SMART REVERSAL EXIT (EARLY CLOSE)** 🚨"
+        trigger_reason = "🧠 Reversal terdeteksi oleh AI Monitor (Mencegah floating loss lebih besar)"
     else:
         header_title = f"🏁 **BOT CLOSED ORDER ({order_type})** 🏁"
         trigger_reason = f"🤖 Market Exit ({order_type})"

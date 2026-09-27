@@ -141,8 +141,9 @@ def get_main_keyboard():
         [KeyboardButton(text="⚙️ Pengaturan"), KeyboardButton(text="🧮 Hitung Margin")],
         [KeyboardButton(text="📈 Histori TP"), KeyboardButton(text="📉 Histori SL")],
         [KeyboardButton(text="🔎 Analisa Koin"), KeyboardButton(text="🔄 Reset Demo")],
-        [KeyboardButton(text="⏯️ Pause / Resume"), KeyboardButton(text="📸 Upload Dataset")],
-        [KeyboardButton(text="⛔ Close ALL"), KeyboardButton(text="📞 Bantuan")],
+        [KeyboardButton(text="💵 Cek Deposit"), KeyboardButton(text="📸 Upload Dataset")],
+        [KeyboardButton(text="⏯️ Pause / Resume"), KeyboardButton(text="⛔ Close ALL")],
+        [KeyboardButton(text="📞 Bantuan")],
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -586,17 +587,26 @@ async def status_handler(message: types.Message):
     wait_msg = await message.answer(f"🔄 Mengambil data dari {active_ex}...")
     
     try:
-        if isinstance(client, BaseExchange):
-            balance_info = await client.get_account_balance()
-            total_margin = balance_info.get('total_wallet_balance', 0.0)
-            unrealized_pnl = balance_info.get('unrealized_pnl', 0.0)
-            active_positions = await client.get_open_positions()
+        curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
+        bal_res = await fetch_account_balance_info(client, active_ex, curr_mode)
+        is_paper_mode = curr_mode.upper() in ("PAPER_TRADING", "SIMULATION", "VIRTUAL")
+        
+        if is_paper_mode and not bal_res.get("is_api_demo"):
+            total_margin = bal_res.get("total_balance", 100.0)
+            unrealized_pnl = 0.0
+            active_positions = []
         else:
-            account_info = await client.futures_account()
-            total_margin = float(account_info['totalMarginBalance'])
-            unrealized_pnl = float(account_info['totalUnrealizedProfit'])
-            positions = account_info.get('positions', [])
-            active_positions = [p for p in positions if float(p.get('positionAmt', 0)) != 0]
+            if isinstance(client, BaseExchange):
+                balance_info = await client.get_account_balance()
+                total_margin = balance_info.get('total_wallet_balance', 0.0)
+                unrealized_pnl = balance_info.get('unrealized_pnl', 0.0)
+                active_positions = await client.get_open_positions()
+            else:
+                account_info = await client.futures_account()
+                total_margin = float(account_info['totalMarginBalance'])
+                unrealized_pnl = float(account_info['totalUnrealizedProfit'])
+                positions = account_info.get('positions', [])
+                active_positions = [p for p in positions if float(p.get('positionAmt', 0)) != 0]
         
         longs = []
         shorts = []
@@ -792,6 +802,54 @@ async def status_handler(message: types.Message):
     except Exception as e:
         await wait_msg.edit_text(f"❌ Gagal mengambil profil: {e}")
 
+
+@dp.message(F.text == "📈 Histori TP")
+async def histori_tp_handler(message: types.Message):
+    await _send_histori_by_type(message, "TAKE_PROFIT")
+
+@dp.message(F.text == "📉 Histori SL")
+async def histori_sl_handler(message: types.Message):
+    await _send_histori_by_type(message, "STOP_LOSS")
+
+async def _send_histori_by_type(message: types.Message, order_type_filter: str):
+    from database.trade_repo import get_recent_trades
+    ex_tag = getattr(bot_config, "active_exchange", "BITUNIX")
+    is_real = getattr(bot_config, "trading_mode", "PAPER_TRADING") == "REAL"
+    tag = f"{ex_tag}_REAL" if is_real else f"{ex_tag}_SIM"
+    
+    trades = await get_recent_trades(limit=100, exchange=tag)
+    filtered = [t for t in trades if order_type_filter in t.get("order_type", "").upper()]
+    
+    if not filtered:
+        await message.answer(f"Belum ada histori {order_type_filter} untuk {tag}.")
+        return
+        
+    text = f"📊 **HISTORI {order_type_filter} (10 Terakhir)**\n"
+    text += f"Mode: `{tag}`\n──────────────\n"
+    for t in filtered[:10]:
+        sym = t.get("symbol", "")
+        side = t.get("side", "")
+        pnl = float(t.get("net_pnl", 0))
+        dur = t.get("duration_minutes", 0)
+        dt_str = t.get("time", "")
+        icon = "🟢" if pnl > 0 else "🔴"
+        text += f"{icon} `{dt_str}` | **{sym}** ({side})\n"
+        text += f"   PNL: {pnl:+.4f} USDT | Hold: {dur}m\n\n"
+        
+    await message.answer(text, parse_mode="Markdown")
+
+@dp.message(F.text == "💵 Cek Deposit")
+@dp.message(Command("deposit"))
+async def cek_deposit_handler(message: types.Message):
+    await message.answer("🛠️ **Fitur Deposit Terakhir**\nRiwayat transfer (deposit) sedang disiapkan karena memerlukan dukungan khusus dari endpoint API (terutama Bitunix).\n\n💡 _Saat ini, Anda bisa melihat total balance realtime di menu 📊 Status Bot._", parse_mode="Markdown")
+
+@dp.message(Command("mode"))
+async def mode_toggle_handler(message: types.Message):
+    curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
+    if curr_mode == "PAPER_TRADING":
+        await scan_order_real_handler(message)
+    else:
+        await scan_order_paper_handler(message)
 
 @dp.message(Command("trade_stats"))
 async def trade_stats_handler(message: types.Message):

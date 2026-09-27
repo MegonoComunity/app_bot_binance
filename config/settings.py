@@ -71,6 +71,9 @@ ATR_MULTIPLIER_SL_ENV = float(os.getenv("ATR_MULTIPLIER_SL", "1.5"))
 LIMIT_ORDER_TIMEOUT_SECONDS_ENV = int(os.getenv("LIMIT_ORDER_TIMEOUT_SECONDS", "30"))
 MARGIN_MODE_ENV = os.getenv("MARGIN_MODE", "DYNAMIC").upper()
 MAX_POSITION_EQUITY_RATIO_ENV = float(os.getenv("MAX_POSITION_EQUITY_RATIO", "0.20"))
+USE_LIMIT_ORDERS_ENV = os.getenv("USE_LIMIT_ORDERS", "False").lower() in ("true", "1", "yes")
+MAX_SLIPPAGE_PCT_ENV = float(os.getenv("MAX_SLIPPAGE_PCT", "0.3"))  # Toleransi slippage max (0.3%)
+PAPER_SLIPPAGE_PCT_ENV = float(os.getenv("PAPER_SLIPPAGE_PCT", "0.08"))  # Slippage simulasi realistis (0.08%)
 
 # Fitur Baru: Trailing Stop & MTFA
 USE_TRAILING_STOP = os.getenv("USE_TRAILING_STOP", "True").lower() == "true"
@@ -164,6 +167,9 @@ class BotSettings:
             cls._instance.max_funding_rate_percent = MAX_FUNDING_RATE_PERCENT_ENV
             cls._instance.atr_multiplier_sl = ATR_MULTIPLIER_SL_ENV
             cls._instance.limit_order_timeout_seconds = LIMIT_ORDER_TIMEOUT_SECONDS_ENV
+            cls._instance.use_limit_orders = USE_LIMIT_ORDERS_ENV
+            cls._instance.max_slippage_pct = MAX_SLIPPAGE_PCT_ENV
+            cls._instance.paper_slippage_pct = PAPER_SLIPPAGE_PCT_ENV
 
             # Filter Altcoin (Exclude BTC, XAU, etc)
             raw_ex = EXCLUDED_COINS_ENV.split(",")
@@ -413,15 +419,21 @@ class BotSettings:
             raise ValueError("Urutan scan harus: VOLUME_DESC, CHANGE_DESC, GAINERS, atau LOSERS")
         self._update_env("SCAN_SORT_ORDER", self.scan_sort)
 
-    def get_scan_limit_int(self) -> Optional[int]:
-        """Mengembalikan limit integer untuk scanner, atau None jika ALL."""
-        if str(self.scan_target).upper() in ("ALL", "SEMUA", "0", "NONE"):
-            return None
-        try:
-            val = int(self.scan_target)
-            return val if val > 0 else None
-        except (ValueError, TypeError):
-            return None
+    def update_use_limit_orders(self, enabled: bool):
+        self.use_limit_orders = bool(enabled)
+        self._update_env("USE_LIMIT_ORDERS", str(bool(enabled)))
+
+    def update_max_slippage_pct(self, val: float):
+        if val <= 0 or val > 5.0:
+            raise ValueError("Max slippage percent harus antara 0.01% dan 5.0%")
+        self.max_slippage_pct = float(val)
+        self._update_env("MAX_SLIPPAGE_PCT", str(val))
+
+    def update_paper_slippage_pct(self, val: float):
+        if val < 0 or val > 2.0:
+            raise ValueError("Paper slippage percent harus antara 0.0% dan 2.0%")
+        self.paper_slippage_pct = float(val)
+        self._update_env("PAPER_SLIPPAGE_PCT", str(val))
 
     def _update_env(self, key: str, value: str):
         try:

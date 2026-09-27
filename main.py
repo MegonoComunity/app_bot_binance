@@ -54,6 +54,7 @@ from indicators.trend import get_htf_trend
 from indicators.sniper_volume import calculate_smc_sniper_volume
 from indicators.smc_snr_channel import calculate_smc_structure_v2
 from core.confluence_engine import calculate_confluence_score
+from core.position_monitor import analyze_position
 from core.regime_detector import detect_market_regime, validate_regime_strategy_match
 from core.meta_labeler import compute_meta_probability
 from core.learner import is_pattern_reliable, record_trade_result, detect_concept_drift
@@ -514,7 +515,7 @@ async def scanner_loop():
                                     except Exception as e_res:
                                         print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
                                 
-                                record_trade_result(v_trade.get('alasan', ''), is_profit=is_win)
+                                record_trade_result(v_trade.get('alasan', ''), is_profit=is_win, source="SIM")
                                 
                                 # Rekam hasil ke Pattern Memory AI & PostgreSQL Database
                                 p_entry_id = v_trade.get("pattern_entry_id")
@@ -1310,23 +1311,50 @@ async def scanner_loop():
                                 continue
 
                             if is_paper_trading:
-                                quantity = (current_margin * dynamic_leverage) / current_price
+                                # Simulasikan slippage realistis pada Paper Trading (mis. 0.08% adverse slippage)
+                                paper_slip_pct = (getattr(bot_config, "paper_slippage_pct", 0.08) or 0.08) / 100.0
+                                sim_fill_price = current_price * (1.0 + paper_slip_pct) if trade_type == "LONG" else current_price * (1.0 - paper_slip_pct)
+                                quantity = (current_margin * dynamic_leverage) / sim_fill_price
                                 order_res = {
                                     'status': 'success',
                                     'quantity': quantity,
-                                    'price': current_price,
+                                    'price': sim_fill_price,
+                                    'signal_price': current_price,
+                                    'slippage_pct': paper_slip_pct if trade_type == "LONG" else -paper_slip_pct,
                                     'actual_leverage': dynamic_leverage,
                                     'is_paper': True,
                                 }
-                                print(f"[PAPER TRADING] {symbol}: Simulasi Open {trade_type} di {current_price:.6f} | Margin={current_margin:.2f} USDT | Lev={dynamic_leverage}x [{exchange_tag}]")
+                                print(
+                                    f"[PAPER TRADING] {symbol}: Simulasi Open {trade_type} | "
+                                    f"Sinyal={current_price:.6f} -> Fill (Slip {paper_slip_pct*100:+.2f}%)={sim_fill_price:.6f} | "
+                                    f"Margin={current_margin:.2f} USDT | Lev={dynamic_leverage}x [{exchange_tag}]"
+                                )
                             else:
+                                use_limit_order = getattr(bot_config, "use_limit_orders", False)
+                                max_slip_pct = (getattr(bot_config, "max_slippage_pct", 0.3) or 0.3) / 100.0
+                                limit_timeout = getattr(bot_config, "limit_order_timeout_seconds", 30)
+
                                 if trade_type == "LONG":
                                     order_res = await place_long_order(
-                                        client, symbol, current_price, current_margin, dynamic_leverage
+                                        client=client,
+                                        symbol=symbol,
+                                        current_price=current_price,
+                                        margin_usdt=current_margin,
+                                        leverage=dynamic_leverage,
+                                        use_limit=use_limit_order,
+                                        limit_timeout=limit_timeout,
+                                        max_slippage_pct=max_slip_pct,
                                     )
                                 else:
                                     order_res = await place_short_order(
-                                        client, symbol, current_price, current_margin, dynamic_leverage
+                                        client=client,
+                                        symbol=symbol,
+                                        current_price=current_price,
+                                        margin_usdt=current_margin,
+                                        leverage=dynamic_leverage,
+                                        use_limit=use_limit_order,
+                                        limit_timeout=limit_timeout,
+                                        max_slippage_pct=max_slip_pct,
                                     )
                                 
                             if order_res.get('status') == 'success':
@@ -1334,10 +1362,15 @@ async def scanner_loop():
                                 entry_price = order_res['price']
                                 actual_leverage = order_res.get('actual_leverage', dynamic_leverage)
                                 
+                                slip_info = ""
+                                if "slippage_pct" in order_res:
+                                    slip_pct_val = order_res["slippage_pct"] * 100.0
+                                    slip_info = f" | Slip: {slip_pct_val:+.2f}%"
+
                                 add_scanner_log(
                                     "ORDER",
                                     symbol,
-                                    f"🚀 [ORDER] Open {trade_type} @ {entry_price:.6f} | Margin: {current_margin:.2f} USDT | Lev: {actual_leverage}x [{exchange_tag}]",
+                                    f"🚀 [ORDER] Open {trade_type} @ {entry_price:.6f} (Sinyal: {current_price:.6f}{slip_info}) | Margin: {current_margin:.2f} USDT | Lev: {actual_leverage}x [{exchange_tag}]",
                                     tag="ORDER_SUCCESS"
                                 )
                                 
@@ -1636,7 +1669,7 @@ async def user_data_stream_loop():
 
                             alasan = bot_state.get("active_trade_reasons", {}).get(symbol)
                             if alasan:
-                                record_trade_result(alasan, net_pnl > 0)
+                                record_trade_result(alasan, net_pnl > 0, source="SIM" if bot_config.trading_mode == "PAPER_TRADING" else "REAL")
                                 del bot_state["active_trade_reasons"][symbol]
 
                             margin_val = float(meta.get("margin_usdt", 0) or 0)
@@ -1837,6 +1870,30 @@ async def profitable_position_monitor_loop():
                         hold_hours = (datetime.now() - e_time).total_seconds() / 3600.0
                         hold_mins = hold_hours * 60.0
 
+                        # Smart Position Monitor (Reversal Detection)
+                        is_smart_close = False
+                        smart_reason = ""
+                        if hold_mins >= 15:  # Beri waktu minimal 15 menit agar posisi berkembang
+                            try:
+                                df_mon = await fetch_ohlcv(client, sym, TIMEFRAME, limit=100)
+                                df_htf_mon = await fetch_ohlcv(client, sym, HTF_TIMEFRAME, limit=50)
+                                if not df_mon.empty and not df_htf_mon.empty:
+                                    res_mon = analyze_position(
+                                        side=pos_side,
+                                        entry_price=e_price,
+                                        current_price=curr_price,
+                                        df=df_mon,
+                                        df_htf=df_htf_mon,
+                                        rsi_oversold=bot_config.rsi_oversold,
+                                        rsi_overbought=bot_config.rsi_overbought,
+                                        rsi_length=bot_config.rsi_length,
+                                    )
+                                    if res_mon.decision == "CLOSE":
+                                        is_smart_close = True
+                                        smart_reason = ", ".join(res_mon.reasons)
+                            except Exception as em:
+                                print(f"[SMART MONITOR PAPER ERROR] {sym}: {em}")
+
                         should_close_time, exit_type, time_reason = evaluate_time_based_exit(
                             hold_duration_hours=hold_hours,
                             roi_percent=roi_pct,
@@ -1846,6 +1903,11 @@ async def profitable_position_monitor_loop():
                             profit_time_limit_hours=4.0,
                             max_hold_hours=8.0,
                         )
+
+                        if is_smart_close:
+                            should_close_time = True
+                            exit_type = "SMART_REVERSAL_EXIT"
+                            time_reason = f"Reversal detected: {smart_reason}"
 
                         if reached_tp or reached_sl or should_close_time:
                             close_type = "TAKE_PROFIT" if reached_tp else ("STOP_LOSS" if reached_sl else exit_type)
@@ -1862,7 +1924,7 @@ async def profitable_position_monitor_loop():
 
                             t_alasan = bot_state.get("active_trade_reasons", {}).get(sym, meta.get("alasan", "Simulasi AI"))
                             if t_alasan:
-                                record_trade_result(t_alasan, is_win_trade)
+                                record_trade_result(t_alasan, is_win_trade, source="SIM" if bot_config.trading_mode == "PAPER_TRADING" else "REAL")
                                 bot_state.get("active_trade_reasons", {}).pop(sym, None)
 
                             ex_tag = meta.get("exchange", "BITUNIX_SIM")
@@ -2025,7 +2087,7 @@ async def profitable_position_monitor_loop():
 
                         t_alasan = bot_state.get("active_trade_reasons", {}).pop(sym, meta.get("alasan", "Real Trade"))
                         if t_alasan:
-                            record_trade_result(t_alasan, is_win)
+                            record_trade_result(t_alasan, is_win, source="SIM" if bot_config.trading_mode == "PAPER_TRADING" else "REAL")
 
                         ex_tag = meta.get("exchange", getattr(bot_config, 'exchange', 'BITUNIX')).upper()
 
@@ -2272,7 +2334,7 @@ async def profitable_position_monitor_loop():
                                 record_pattern_result(pattern_entry_id, profit > 0, profit)
                             alasan = bot_state.get("active_trade_reasons", {}).pop(symbol, None)
                             if alasan:
-                                record_trade_result(alasan, profit > 0)
+                                record_trade_result(alasan, profit > 0, source="SIM" if bot_config.trading_mode == "PAPER_TRADING" else "REAL")
                             record_closed_trade({
                                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                 "symbol": symbol,
@@ -2318,6 +2380,30 @@ async def profitable_position_monitor_loop():
                         max_hold_hours=8.0,
                     )
 
+                    # Smart Position Monitor (Reversal Detection)
+                    if amount != 0 and hold_duration_hours * 60 >= 15 and not should_time_close:
+                        try:
+                            df_mon = await fetch_ohlcv(client, symbol, TIMEFRAME, limit=100)
+                            df_htf_mon = await fetch_ohlcv(client, symbol, HTF_TIMEFRAME, limit=50)
+                            if not df_mon.empty and not df_htf_mon.empty:
+                                curr_price_est = entry_price + (profit / abs(amount)) if amount > 0 else entry_price - (profit / abs(amount))
+                                res_mon = analyze_position(
+                                    side="LONG" if amount > 0 else "SHORT",
+                                    entry_price=entry_price,
+                                    current_price=curr_price_est,
+                                    df=df_mon,
+                                    df_htf=df_htf_mon,
+                                    rsi_oversold=bot_config.rsi_oversold,
+                                    rsi_overbought=bot_config.rsi_overbought,
+                                    rsi_length=bot_config.rsi_length,
+                                )
+                                if res_mon.decision == "CLOSE":
+                                    should_time_close = True
+                                    exit_type = "SMART_REVERSAL_EXIT"
+                                    time_close_reason = f"Reversal detected: {', '.join(res_mon.reasons)}"
+                        except Exception as em:
+                            print(f"[SMART MONITOR REAL ERROR] {symbol}: {em}")
+
                     if amount != 0 and should_time_close:
                         close_result = await emergency_close_position(
                             client,
@@ -2340,7 +2426,7 @@ async def profitable_position_monitor_loop():
 
                             t_alasan = bot_state.get("active_trade_reasons", {}).pop(symbol, meta.get("alasan", "Real Trade"))
                             if t_alasan:
-                                record_trade_result(t_alasan, is_win_trade)
+                                record_trade_result(t_alasan, is_win_trade, source="SIM" if bot_config.trading_mode == "PAPER_TRADING" else "REAL")
 
                             record_closed_trade({
                                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

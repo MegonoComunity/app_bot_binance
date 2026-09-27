@@ -52,6 +52,14 @@ class BaseExchange(ABC):
         """
         pass
 
+    async def get_orderbook_spread(self, symbol: str) -> Dict[str, float]:
+        """
+        Mengambil harga best bid, best ask, mid price, dan spread percentage.
+        Default fallback mengembalikan get_symbol_price.
+        """
+        price = await self.get_symbol_price(symbol)
+        return {"bid": price, "ask": price, "mid": price, "spread_pct": 0.0}
+
     @abstractmethod
     async def get_account_balance(self) -> Dict[str, float]:
         """
