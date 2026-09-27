@@ -249,6 +249,15 @@ class BotSettings:
         self.min_pattern_winrate = val
         self._update_env("MIN_PATTERN_WINRATE", str(val))
 
+    def get_scan_limit_int(self):
+        val = str(self.scan_target).strip().upper()
+        if val == "ALL":
+            return None
+        try:
+            return int(val)
+        except ValueError:
+            return 80
+
     def update_probation_mode(self, enabled: bool):
         self.use_probation_mode = enabled
         self._update_env("USE_PROBATION_MODE", str(enabled))
