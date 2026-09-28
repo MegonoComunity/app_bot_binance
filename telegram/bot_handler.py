@@ -80,6 +80,10 @@ from aiogram.types import (
     ReplyKeyboardRemove,
     FSInputFile,
     BotCommand,
+    BotCommandScopeDefault,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeChat,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
@@ -97,7 +101,7 @@ bot_state = {
 }
 
 async def setup_bot_commands(bot_instance: Bot) -> None:
-    """Reset dan daftarkan perintah resmi bot ke Telegram (Menu Popup Scroll Lengkap)."""
+    """Reset dan daftarkan seluruh perintah resmi bot ke Telegram di semua scope (Private & Group)."""
     commands = [
         # --- Navigasi & Utama ---
         BotCommand(command="start", description="🚀 Buka Menu Utama & Keyboard Interaktif"),
@@ -157,10 +161,31 @@ async def setup_bot_commands(bot_instance: Bot) -> None:
         BotCommand(command="update_bot", description="🚀 Auto-Pull & Self-Healing dari GitHub"),
     ]
     try:
-        await bot_instance.delete_my_commands()
-        await bot_instance.set_my_commands(commands)
+        # 1. Scope Default (Global)
+        await bot_instance.delete_my_commands(scope=BotCommandScopeDefault())
+        await bot_instance.set_my_commands(commands, scope=BotCommandScopeDefault())
+
+        # 2. Scope Private Chats (Khusus DM/Chat Pribadi Pengguna)
+        await bot_instance.delete_my_commands(scope=BotCommandScopeAllPrivateChats())
+        await bot_instance.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
+
+        # 3. Scope Group Chats
+        await bot_instance.delete_my_commands(scope=BotCommandScopeAllGroupChats())
+        await bot_instance.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
+
+        # 4. Scope Spesifik Admin Chat
+        if TELEGRAM_ADMIN_CHAT_ID:
+            try:
+                chat_id_int = int(str(TELEGRAM_ADMIN_CHAT_ID).strip())
+                await bot_instance.delete_my_commands(scope=BotCommandScopeChat(chat_id=chat_id_int))
+                await bot_instance.set_my_commands(commands, scope=BotCommandScopeChat(chat_id=chat_id_int))
+            except Exception:
+                pass
+
+        print(f"[TELEGRAM] ✅ {len(commands)} perintah resmi berhasil didaftarkan ke semua scope Telegram (Default, Private & Admin)!")
     except Exception as exc:
         print(f"[TELEGRAM] Gagal update commands: {exc}")
+
 
 
 def get_main_keyboard(active_exchange: Optional[str] = None) -> ReplyKeyboardMarkup:
@@ -201,10 +226,25 @@ async def start_handler(message: types.Message):
         parse_mode="Markdown",
     )
 
+@dp.message(Command("sync_menu", "reload_commands"))
+async def sync_menu_handler(message: types.Message):
+    """Memperbarui dan mendaftarkan ulang seluruh perintah menu bot ke Telegram."""
+    try:
+        await setup_bot_commands(bot)
+        await message.answer(
+            "✅ **Daftar Perintah Menu Telegram Berhasil Disinkronkan ke Semua Scope!**\n\n"
+            "Silakan ketik `/` atau buka ikon Menu di samping kolom ketik untuk melihat daftar seluruh perintah resmi yang bisa di-scroll.",
+            parse_mode="Markdown",
+        )
+    except Exception as exc:
+        await message.answer(f"❌ Gagal memperbarui menu Telegram: {exc}")
+
+
 @dp.message(Command("help"))
 @dp.message(Command("bantuan"))
 @dp.message(F.text == "📞 Bantuan")
 async def help_handler(message: types.Message):
+
     active_ex = getattr(bot_config, "active_exchange", "BINANCE")
     curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
     help_text = (
