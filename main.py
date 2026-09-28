@@ -538,6 +538,28 @@ async def scanner_loop():
                             and htf_trend in ["UPTREND", "SIDEWAYS"]
                         )
                         
+                        # ================= CUSTOM USER LOGIC =================
+                        # 1. LONG: Cari titik entry saat harga turun ~2% (atau 1.8%) dalam 3-7 candle terakhir, posisi di Lower BB
+                        is_dip_2_percent = False
+                        if len(df) >= 7:
+                            for lookback in range(3, 8):
+                                past_close = df.iloc[-lookback]['close']
+                                if past_close > 0 and (past_close - current_price) / past_close >= 0.018:
+                                    is_dip_2_percent = True
+                                    break
+                        syarat_custom_long = near_lower_bb and is_dip_2_percent
+
+                        # 2. SHORT: Jika arus bullish (UPTREND), tapi candle 5m sudah di Upper BB minimal 2-3 candle beruntun
+                        candles_at_upper_bb = 0
+                        for i in range(1, min(4, len(df)+1)):
+                            r_i = df.iloc[-i]
+                            if r_i['close'] >= r_i.get('UpperBand', 999999) * 0.998 or r_i['high'] >= r_i.get('UpperBand', 999999):
+                                candles_at_upper_bb += 1
+                            else:
+                                break
+                        syarat_custom_short = (htf_trend == "UPTREND") and (candles_at_upper_bb >= 2)
+                        # =====================================================
+                        
                         # Skenario SMC Sniper Elite V17 (Volume Zone & Institutional Accumulation)
                         syarat_sniper_long = (
                             bool(
@@ -554,7 +576,8 @@ async def scanner_loop():
                         syarat_teknikal_long = (
                             (near_lower_bb and near_support and is_oversold and htf_trend in ["UPTREND", "SIDEWAYS"]) or
                             (two_green_at_support and htf_trend in ["UPTREND", "SIDEWAYS"]) or
-                            (compression_reversal_long and htf_trend in ["UPTREND", "SIDEWAYS"])
+                            (compression_reversal_long and htf_trend in ["UPTREND", "SIDEWAYS"]) or
+                            syarat_custom_long
                         )
                         syarat_pola_long = (near_support or near_lower_bb) and pattern_detected and pattern_type == 'LONG' and htf_trend in ["UPTREND", "SIDEWAYS"]
                         syarat_smart_buy_long = (
@@ -576,7 +599,7 @@ async def scanner_loop():
                             or vol_ratio >= 1.5
                             or sniper_intel.get("market_state") == "ACCUMULATION_READY"
                             or (last_row["close"] > last_row["open"] and last_row.get('RSI', 50) > 55)
-                            or htf_trend == "UPTREND"
+                            or (htf_trend == "UPTREND" and not syarat_custom_short)
                         )
                         if is_bullish_momentum:
                             syarat_qml_short = False
@@ -601,7 +624,8 @@ async def scanner_loop():
                             )
                             syarat_teknikal_short = (
                                 (near_upper_bb and near_resistance and is_overbought and htf_trend in ["DOWNTREND", "SIDEWAYS"]) or
-                                (two_red_at_resistance and (near_upper_bb or is_overbought or near_resistance) and htf_trend in ["DOWNTREND", "SIDEWAYS"])
+                                (two_red_at_resistance and (near_upper_bb or is_overbought or near_resistance) and htf_trend in ["DOWNTREND", "SIDEWAYS"]) or
+                                syarat_custom_short
                             )
                             syarat_pola_short = (near_resistance or near_upper_bb) and pattern_detected and pattern_type == 'SHORT' and htf_trend in ["DOWNTREND", "SIDEWAYS"]
                             syarat_breakout_short = (
@@ -738,16 +762,17 @@ async def scanner_loop():
                                 min_score_threshold=bot_config.min_confluence_score,
                                 pump_info=pump_intel,
                                 near_smart_buy=bool(syarat_smart_buy_long),
-                                two_consecutive_candles=bool(two_green_at_support or two_red_at_resistance),
-                                compression_reversal=bool(compression_reversal_long),
+                                two_consecutive_candles=bool(two_green_at_support or two_red_at_resistance or syarat_custom_short),
+                                compression_reversal=bool(compression_reversal_long or syarat_custom_long),
                                 ml_vision_info=ml_vision_intel,
                                 sniper_info=sniper_intel,
                                 smc_v2_info=smc_v2_intel,
                                 regime_info=regime_intel,
                             )
                             confluence_score = confluence_res["score"]
-                            confluence_approved = confluence_res["is_approved"]
+                            confluence_approved = confluence_res["is_approved"] or syarat_custom_long or syarat_custom_short
                             confluence_breakdown = confluence_res["breakdown"]
+
 
                             if not confluence_approved:
                                 print(f"🛡️ [CONFLUENCE FILTER] {symbol} ({trade_type}) DITOLAK: Skor {confluence_score}/100 < {bot_config.min_confluence_score} (Syarat Institusional Belum Terpenuhi). Breakdown: {confluence_breakdown}")
@@ -960,8 +985,8 @@ async def scanner_loop():
                                         f"Margin={current_margin:.2f} USDT | Lev={dynamic_leverage}x (Risk: {bot_config.risk_per_trade_percent}%)"
                                     )
                                 else:
-                                    # Mode FIXED dengan safety cap fleksibel (Support Margin $0.5 - $1.0)
-                                    fixed_margin = bot_config.margin_usdt * kelly_mult
+                                    # Mode FIXED (strictly use configured margin, without Kelly multiplier)
+                                    fixed_margin = bot_config.margin_usdt
                                     if modal < 30.0:
                                         current_margin = min(fixed_margin, modal * 0.95)
                                     else:
@@ -972,7 +997,7 @@ async def scanner_loop():
                                         print(f"[RISK] {symbol}: Margin FIXED ({current_margin:.2f} USDT) terlalu kecil (< 0.5 USDT)")
                                         continue
                                     print(
-                                        f"[FIXED SIZING (Kelly: {kelly_mult:.2f}x)] {symbol}: Modal={modal:.2f} USDT | "
+                                        f"[FIXED SIZING] {symbol}: Modal={modal:.2f} USDT | "
                                         f"Margin={current_margin:.2f} USDT | Lev={dynamic_leverage}x"
                                     )
 
