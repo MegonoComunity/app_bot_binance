@@ -37,12 +37,19 @@ class TestAutoUpdater(unittest.TestCase):
         self.assertEqual(res["behind_count"], 2)
         self.assertEqual(len(res["commits"]), 2)
 
+    @patch("subprocess.run")
     @patch("core.auto_updater.run_git_command")
-    def test_smart_git_pull_and_heal(self, mock_git):
+    def test_smart_git_pull_and_heal(self, mock_git, mock_subprocess):
         mock_git.side_effect = [
             (0, "", ""),                                    # git status --porcelain
             (0, "Updating abc..def\nFast-forward", ""),     # git pull
         ]
+        mock_sub_res = MagicMock()
+        mock_sub_res.returncode = 0
+        mock_sub_res.stdout = "Ran 50 tests in 1s\nOK"
+        mock_sub_res.stderr = ""
+        mock_subprocess.return_value = mock_sub_res
+
         res = asyncio.run(smart_git_pull_and_heal("main"))
         self.assertTrue(res["success"])
         self.assertIn("Fast-forward", res["pull_output"])

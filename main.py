@@ -133,8 +133,6 @@ if not os.path.exists("virtual_success_log.csv"):
         writer = csv.writer(f)
         writer.writerow(["Time", "Symbol", "Tipe", "Entry Price", "TP Price", "Alasan", "Status"])
 
-virtual_trades = {}
-
 # Muat ML Model sekali di awal
 ml_model = get_model("ml_vision/candle_model.pth") # Bisa diisi parameter model_path jika sudah ada weight
 
@@ -201,23 +199,17 @@ rate_limiter = RateLimiter(max_requests=120, time_window=60)
 
 def get_trade_notification_target(is_paper: bool = False) -> Optional[int | str]:
     """
-    Menentukan target chat ID untuk notifikasi trade.
-    - Real Trading: Selalu kirim ke TELEGRAM_ADMIN_CHAT_ID.
-    - Paper Trading / Latihan Simulasi: Hanya kirim jika TELEGRAM_DEMO_CHAT_ID diisi khusus atau jika NOTIFY_SIMULATION_TRADES=True.
-      Secara default TIDAK dikirim ke TELEGRAM_ADMIN_CHAT_ID untuk mencegah chat admin penuh dengan hasil latihan/simulasi.
+    Menentukan target chat ID untuk notifikasi trade:
+    - Jika is_paper=True dan TELEGRAM_DEMO_CHAT_ID diisi khusus, kirim ke channel demo tersebut.
+    - Jika tidak ada channel demo terpisah, selalu fallback ke TELEGRAM_ADMIN_CHAT_ID agar user selalu menerima notifikasi order.
     """
-    if not is_paper:
-        return TELEGRAM_ADMIN_CHAT_ID
+    if is_paper:
+        demo_chat = getattr(bot_config, "telegram_demo_chat_id", None) or os.getenv("TELEGRAM_DEMO_CHAT_ID", "").strip()
+        if demo_chat:
+            return demo_chat
 
-    # Jika Paper / Simulasi Demo
-    demo_chat = getattr(bot_config, "telegram_demo_chat_id", None) or os.getenv("TELEGRAM_DEMO_CHAT_ID", "").strip()
-    if demo_chat:
-        return demo_chat
-
-    if getattr(bot_config, "notify_simulation_trades", False):
-        return TELEGRAM_ADMIN_CHAT_ID
-
-    return None
+    admin_chat = getattr(bot_config, "telegram_admin_chat_id", None) or os.getenv("TELEGRAM_ADMIN_CHAT_ID", "").strip() or TELEGRAM_ADMIN_CHAT_ID
+    return admin_chat
 
 
 async def scanner_loop():
@@ -260,16 +252,20 @@ async def scanner_loop():
                     account_snapshot = await client.futures_account()
                     wallet_margin = float(account_snapshot.get("totalMarginBalance", 0.0))
 
+                curr_ex = getattr(client, "exchange_name", getattr(bot_config, "active_exchange", "BINANCE")).upper()
                 curr_trade_mode = getattr(bot_config, "trading_mode", TRADING_MODE).upper()
-                is_paper_trading = curr_trade_mode in ("PAPER_TRADING", "SIMULATION", "VIRTUAL") or (bot_config.simulated_modal is not None and bot_config.simulated_modal > 0)
-                if bot_config.simulated_modal is not None and bot_config.simulated_modal > 0:
+                is_binance_testnet = (curr_trade_mode in ("TESTNET", "DEMO") and curr_ex == "BINANCE")
+                is_paper_trading = (curr_trade_mode in ("PAPER_TRADING", "SIMULATION", "VIRTUAL")) or (curr_trade_mode in ("TESTNET", "DEMO") and curr_ex == "BITUNIX")
+                ex_tag = f"{curr_ex}_SIM" if is_paper_trading else (f"{curr_ex}_TESTNET" if is_binance_testnet else f"{curr_ex}_REAL")
+
+                if bot_config.simulated_modal is not None and bot_config.simulated_modal > 0 and is_paper_trading:
                     effective_equity = bot_config.simulated_modal
                 elif is_paper_trading and wallet_margin <= 0:
                     effective_equity = 100.0
                 else:
-                    effective_equity = wallet_margin
+                    effective_equity = wallet_margin if wallet_margin > 0 else (bot_config.simulated_modal or 100.0)
 
-                daily_stats = trade_summary()
+                daily_stats = trade_summary(exchange=ex_tag)
                 if daily_loss_limit_reached(
                     daily_stats["daily_net_pnl"],
                     effective_equity,
@@ -282,7 +278,7 @@ async def scanner_loop():
                         await send_error_log(
                             bot,
                             TELEGRAM_ADMIN_CHAT_ID,
-                            f"🛡️ DAILY CIRCUIT BREAKER: realized PnL {daily_stats['daily_net_pnl']:+.4f} USDT.\n"
+                            f"🛡️ DAILY CIRCUIT BREAKER [{ex_tag}]: realized PnL {daily_stats['daily_net_pnl']:+.4f} USDT.\n"
                             f"Bot di-pause untuk proteksi modal. Ketik /resume jika ingin mengabaikan & melanjutkan trading.",
                         )
                         await asyncio.sleep(SCAN_INTERVAL_SECONDS)
@@ -421,124 +417,7 @@ async def scanner_loop():
                         if DB_MODULES_LOADED:
                             asyncio.ensure_future(upsert_candles(symbol, "1d", df_daily.to_dict('records')))
                         
-                        # --- MONITORING PAPER TRADING (VIRTUAL TRADES) ---
-                        if symbol in virtual_trades:
-                            v_trade = virtual_trades[symbol]
-                            entry_p = float(v_trade.get('entry_price', current_price) or current_price)
-                            v_lev = int(v_trade.get('leverage', 10) or 10)
-                            v_side = str(v_trade.get('tipe', 'LONG')).upper()
-                            
-                            # Hitung durasi hold dalam jam
-                            v_time_raw = v_trade.get('time')
-                            try:
-                                v_entry_dt = datetime.strptime(v_time_raw, "%Y-%m-%d %H:%M:%S") if isinstance(v_time_raw, str) else datetime.now()
-                            except Exception:
-                                v_entry_dt = datetime.now()
-                            hold_h = max((datetime.now() - v_entry_dt).total_seconds() / 3600.0, 0.0)
-                            
-                            # Hitung Perubahan Harga % & Floating ROE %
-                            if entry_p > 0:
-                                price_pnl_pct = ((current_price - entry_p) / entry_p * 100.0) if v_side == "LONG" else ((entry_p - current_price) / entry_p * 100.0)
-                            else:
-                                price_pnl_pct = 0.0
-                            roi_pct = price_pnl_pct * v_lev
-                            
-                            # 1. Evaluasi Auto Break-Even (Risk-Free Trade) jika ROI >= +25%
-                            if getattr(bot_config, "use_auto_breakeven", True) and not v_trade.get("is_breakeven_set", False):
-                                be_threshold = getattr(bot_config, "auto_breakeven_roi_percent", 25.0)
-                                be_eval = evaluate_auto_breakeven(
-                                    current_roi_percent=roi_pct,
-                                    entry_price=entry_p,
-                                    side=v_side,
-                                    be_activation_roi=be_threshold,
-                                    fee_buffer_percent=0.1,
-                                    current_sl_price=v_trade.get('sl_price'),
-                                )
-                                if be_eval.get("should_move_to_be"):
-                                    new_be_sl = be_eval["new_sl_price"]
-                                    v_trade['sl_price'] = new_be_sl
-                                    v_trade['is_breakeven_set'] = True
-                                    print(f"🛡️ [AUTO BREAK-EVEN (VIRTUAL)] {symbol}: ROI {roi_pct:+.2f}% >= +{be_threshold}%. SL digeser ke Entry: {new_be_sl:.6f} (Risk-Free!)")
-
-                            # 2. Cek Eksekusi TP / SL
-                            is_tp = False
-                            is_sl = False
-                            target_tp_v = float(v_trade.get('tp_price', 0.0))
-                            target_sl_v = float(v_trade.get('sl_price', 0.0))
-
-                            if v_side == 'LONG':
-                                if target_tp_v > 0 and current_price >= target_tp_v:
-                                    is_tp = True
-                                elif target_sl_v > 0 and current_price <= target_sl_v:
-                                    is_sl = True
-                            elif v_side == 'SHORT':
-                                if target_tp_v > 0 and current_price <= target_tp_v:
-                                    is_tp = True
-                                elif target_sl_v > 0 and current_price >= target_sl_v:
-                                    is_sl = True
-                                
-                            # 3. Evaluasi Time-Based Exit (Cut Loss > 2 jam & Profit Lock 4-8 jam)
-                            should_time_close, time_exit_type, time_reason = evaluate_time_based_exit(
-                                hold_duration_hours=hold_h,
-                                roi_percent=roi_pct,
-                                loss_limit_percent=-5.0,
-                                loss_time_limit_hours=2.0,
-                                profit_target_percent=15.0,
-                                profit_time_limit_hours=4.0,
-                                max_hold_hours=8.0,
-                            )
-                            
-                            if is_tp or is_sl or should_time_close:
-                                is_win = is_tp or (should_time_close and roi_pct > 0)
-                                est_margin = float(getattr(bot_config, "margin_usdt", 1.0) or 1.0)
-                                est_pnl = est_margin * (roi_pct / 100.0)
-                                
-                                exit_label = "SESUAI TARGET (TP)" if is_tp else ("STOP LOSS (SL)" if is_sl else time_exit_type)
-                                icon = "🎯" if is_win else "🛑"
-                                status_text = "WIN ✅" if is_win else "LOSS ❌"
-                                
-                                msg = (
-                                    f"{icon} **HASIL LATIHAN SIMULASI: {exit_label} {status_text}**\n"
-                                    f"• **Koin:** `{symbol}` ({v_side} {v_lev}x)\n"
-                                    f"• **Entry:** `{entry_p:.6f}` ➔ **Exit:** `{current_price:.6f}` (Harga: `{price_pnl_pct:+.2f}%`, ROE: `{roi_pct:+.2f}%`)\n"
-                                    f"• **Estimasi PnL (Margin ${est_margin:.1f}):** `{est_pnl:+.2f} USDT` (Hold: {hold_h:.1f} jam)\n"
-                                    f"• **Setup:** {v_trade.get('alasan')}\n"
-                                    f"📚 *Catatan: Hasil simulasi latihan untuk pembelajaran AI & evaluasi akurasi pola candlestick.*"
-                                )
-                                print(f"[HASIL LATIHAN] {symbol} {v_side}: {exit_label} ({roi_pct:+.2f}% ROE) | Setup: {v_trade.get('alasan')}")
-                                
-                                # Kirim hasil simulasi HANYA jika demo chat dikonfigurasi (tidak spamming Admin)
-                                target_demo_chat = get_trade_notification_target(is_paper=True)
-                                if target_demo_chat:
-                                    try:
-                                        await safe_send_message(bot, target_demo_chat, msg)
-                                    except Exception as e_res:
-                                        print(f"[TELEGRAM] Gagal kirim hasil latihan: {e_res}")
-                                
-                                record_trade_result(v_trade.get('alasan', ''), is_profit=is_win, source="SIM")
-                                
-                                # Rekam hasil ke Pattern Memory AI & PostgreSQL Database
-                                p_entry_id = v_trade.get("pattern_entry_id")
-                                if p_entry_id:
-                                    record_pattern_result(p_entry_id, is_win=is_win, pnl=roi_pct)
-                                
-                                # Simpan ke CSV
-                                with open("virtual_success_log.csv", "a", newline="", encoding="utf-8") as f:
-                                    writer = csv.writer(f)
-                                    writer.writerow([
-                                        v_trade.get('time'),
-                                        symbol,
-                                        v_side,
-                                        entry_p,
-                                        current_price,
-                                        v_trade.get('alasan'),
-                                        f"{exit_label} ({status_text}) | PnL: {roi_pct:+.2f}%"
-                                    ])
-                                    
-                                del virtual_trades[symbol]
-                        # -------------------------------------------------
-                        
-                        # Pacing delay antar koin untuk mencegah spike request weight Binance
+                        # Pacing delay antar koin untuk mencegah spike request weight exchange
                         await asyncio.sleep(0.2)
 
                         
@@ -811,59 +690,8 @@ async def scanner_loop():
                         if trigger_long and trigger_short:
                             trigger_short = False
                         
-                        # Jika sinyal teknikal/pola terdeteksi tetapi ditolak oleh filter Learner/Trap/Blacklist,
-                        # simpan sebagai LATIHAN SIMULASI di background memory agar AI tetap belajar dan menguji win rate pola!
-                        if (raw_long or raw_short) and not (trigger_long or trigger_short):
-                            sim_side = "LONG" if raw_long else "SHORT"
-                            sim_alasan = alasan_long if sim_side == "LONG" else alasan_short
-                            if symbol not in virtual_trades:
-                                v_atr_res = calculate_dynamic_atr_targets(
-                                    entry_price=current_price,
-                                    atr_value=atr_val,
-                                    side=sim_side,
-                                    leverage=dynamic_leverage,
-                                    config_tp_percent=bot_config.tp_percent,
-                                    config_sl_percent=bot_config.sl_percent,
-                                    atr_sl_mult=1.8,
-                                )
-                                v_tp = v_atr_res["tp_price"]
-                                v_sl = v_atr_res["sl_price"]
-                                ex_name = getattr(client, "exchange_name", "BITUNIX")
-                                cond_sim = {
-                                    "side": sim_side,
-                                    "htf_trend": htf_trend,
-                                    "bb_zone": "LOWER" if near_lower_bb else ("UPPER" if near_upper_bb else "MID"),
-                                    "rsi_zone": "OVERSOLD" if is_oversold else ("OVERBOUGHT" if is_overbought else "NEUTRAL"),
-                                    "pattern": pattern_name if pattern_detected else "NONE",
-                                    "is_breakout": bool(syarat_breakout_long or syarat_breakout_short),
-                                    "squeeze_score": float(breakout.get("score", 0)),
-                                    "volume_ratio": round(vol_ratio, 2),
-                                    "atr_percent": round((atr_val / current_price * 100), 2) if current_price > 0 else 0.0,
-                                    "sniper_state": sniper_intel.get("market_state", "MONITORING"),
-                                    "sniper_poc": sniper_intel.get("poc_price"),
-                                    "market_regime": regime_intel.get("regime", "UNKNOWN"),
-                                }
-                                p_entry_id_v = record_pattern_entry(
-                                    symbol=symbol,
-                                    side=sim_side,
-                                    entry_price=current_price,
-                                    conditions=cond_sim,
-                                    alasan=f"[LATIHAN] {sim_alasan}",
-                                    margin_usdt=0.0,
-                                    leverage=dynamic_leverage,
-                                    exchange=f"{ex_name}_SIM_TRAIN",
-                                )
-                                virtual_trades[symbol] = {
-                                    "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    "tipe": sim_side,
-                                    "entry_price": current_price,
-                                    "tp_price": v_tp,
-                                    "sl_price": v_sl,
-                                    "alasan": sim_alasan,
-                                    "leverage": dynamic_leverage,
-                                    "pattern_entry_id": p_entry_id_v,
-                                }
-                                print(f"📚 [LATIHAN SIMULASI] Sinyal {sim_side} {symbol} dicatat ke Background Memory untuk melatih Win Rate pola (ID: {p_entry_id_v}).")
+                        # Jika tidak ada trigger yang valid (atau terfilter oleh Trap/Learner), lewati
+                        if not (trigger_long or trigger_short):
                             continue
 
                         if trigger_long or trigger_short:
@@ -930,33 +758,6 @@ async def scanner_loop():
                                     score=confluence_score,
                                     tag="CONFLUENCE_REJECT"
                                 )
-                                if symbol not in virtual_trades:
-                                    pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
-                                    pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
-                                    v_tp = current_price * (1 + pm_tp_v) if trade_type == "LONG" else current_price * (1 - pm_tp_v)
-                                    v_sl = current_price * (1 - pm_sl_v) if trade_type == "LONG" else current_price * (1 + pm_sl_v)
-                                    ex_name = getattr(client, "exchange_name", "BITUNIX")
-                                    p_entry_id_v = record_pattern_entry(
-                                        symbol=symbol,
-                                        side=trade_type,
-                                        entry_price=current_price,
-                                        conditions=conditions_snapshot,
-                                        alasan=f"[LATIHAN (Score: {confluence_score})] {alasan}",
-                                        margin_usdt=0.0,
-                                        leverage=dynamic_leverage,
-                                        exchange=f"{ex_name}_SIM_TRAIN",
-                                    )
-                                    virtual_trades[symbol] = {
-                                        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                        "tipe": trade_type,
-                                        "entry_price": current_price,
-                                        "tp_price": v_tp,
-                                        "sl_price": v_sl,
-                                        "alasan": f"{alasan} (Score: {confluence_score})",
-                                        "leverage": dynamic_leverage,
-                                        "pattern_entry_id": p_entry_id_v,
-                                    }
-                                    print(f"📚 [LATIHAN SIMULASI] Sinyal {trade_type} {symbol} (Skor {confluence_score}/100) dialihkan ke memory AI.")
                                 continue
 
                             # Evaluasi AI Pattern Learner & Gatekeeper (Rolling Window + Probation)
@@ -965,40 +766,13 @@ async def scanner_loop():
                             
                             if not is_reliable or is_fp_blacklisted:
                                 rej_msg = reason_eval if not is_reliable else "Fingerprint WR Rendah (<50%)"
-                                print(f"🚫 [LEARNER GATEKEEPER] Sinyal {trade_type} pada {symbol} DITOLAK ({rej_msg})! Dialihkan ke simulasi.")
+                                print(f"🚫 [LEARNER GATEKEEPER] Sinyal {trade_type} pada {symbol} DITOLAK ({rej_msg})!")
                                 add_scanner_log(
                                     "FILTERED",
                                     symbol,
                                     f"🚫 [GATEKEEPER] Sinyal {trade_type} Ditolak ({rej_msg})",
                                     tag="PATTERN_BLACKLIST"
                                 )
-                                if symbol not in virtual_trades:
-                                    pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
-                                    pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
-                                    v_tp = current_price * (1 + pm_tp_v) if trade_type == "LONG" else current_price * (1 - pm_tp_v)
-                                    v_sl = current_price * (1 - pm_sl_v) if trade_type == "LONG" else current_price * (1 + pm_sl_v)
-                                    ex_name = getattr(client, "exchange_name", "BITUNIX")
-                                    p_entry_id_v = record_pattern_entry(
-                                        symbol=symbol,
-                                        side=trade_type,
-                                        entry_price=current_price,
-                                        conditions=conditions_snapshot,
-                                        alasan=f"[LATIHAN] {alasan}",
-                                        margin_usdt=0.0,
-                                        leverage=dynamic_leverage,
-                                        exchange=f"{ex_name}_SIM_TRAIN",
-                                    )
-                                    virtual_trades[symbol] = {
-                                        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                        "tipe": trade_type,
-                                        "entry_price": current_price,
-                                        "tp_price": v_tp,
-                                        "sl_price": v_sl,
-                                        "alasan": alasan,
-                                        "leverage": dynamic_leverage,
-                                        "pattern_entry_id": p_entry_id_v,
-                                    }
-                                    print(f"📚 [LATIHAN SIMULASI] Sinyal {trade_type} {symbol} dicatat untuk evaluasi memory.")
                                 continue
 
                             # Evaluasi Pilar 2: Meta-Labeling Model (López de Prado)
@@ -1013,7 +787,7 @@ async def scanner_loop():
                             if not meta_intel.get("is_meta_approved", False):
                                 win_prob_pct = meta_intel.get("win_probability", 0.0) * 100
                                 meta_rej_msg = f"Meta-Labeler P(WIN) {win_prob_pct:.1f}% < 65% ({meta_intel.get('reason', '')})"
-                                print(f"🧠 [META-LABELER] Sinyal {trade_type} {symbol} DITOLAK: {meta_rej_msg}. Dialihkan ke simulasi.")
+                                print(f"🧠 [META-LABELER] Sinyal {trade_type} {symbol} DITOLAK: {meta_rej_msg}.")
                                 add_scanner_log(
                                     "FILTERED",
                                     symbol,
@@ -1021,33 +795,6 @@ async def scanner_loop():
                                     score=confluence_score,
                                     tag="META_LABEL_REJECT"
                                 )
-                                if symbol not in virtual_trades:
-                                    pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
-                                    pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
-                                    v_tp = current_price * (1 + pm_tp_v) if trade_type == "LONG" else current_price * (1 - pm_tp_v)
-                                    v_sl = current_price * (1 - pm_sl_v) if trade_type == "LONG" else current_price * (1 + pm_sl_v)
-                                    ex_name = getattr(client, "exchange_name", "BITUNIX")
-                                    p_entry_id_v = record_pattern_entry(
-                                        symbol=symbol,
-                                        side=trade_type,
-                                        entry_price=current_price,
-                                        conditions=conditions_snapshot,
-                                        alasan=f"[LATIHAN (Meta P: {win_prob_pct:.1f}%)] {alasan}",
-                                        margin_usdt=0.0,
-                                        leverage=dynamic_leverage,
-                                        exchange=f"{ex_name}_SIM_TRAIN",
-                                    )
-                                    virtual_trades[symbol] = {
-                                        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                        "tipe": trade_type,
-                                        "entry_price": current_price,
-                                        "tp_price": v_tp,
-                                        "sl_price": v_sl,
-                                        "alasan": f"{alasan} (Meta: {win_prob_pct:.1f}%)",
-                                        "leverage": dynamic_leverage,
-                                        "pattern_entry_id": p_entry_id_v,
-                                    }
-                                    print(f"📚 [LATIHAN SIMULASI] Sinyal {trade_type} {symbol} (Meta P(WIN): {win_prob_pct:.1f}%) dialihkan ke memory simulasi.")
                                 continue
 
                             # Evaluasi Pilar 5: Consecutive Losses Circuit Breaker Protection
@@ -1122,33 +869,6 @@ async def scanner_loop():
                                 exposure_limit = modal * bot_config.max_total_exposure_percent / 100
                                 if total_margin_used >= exposure_limit:
                                     print(f"[RISK] Lewati {symbol}: margin terpakai {total_margin_used:.2f} >= limit {exposure_limit:.2f}")
-                                    if symbol not in virtual_trades:
-                                        pm_tp_v = (bot_config.tp_percent / 100) / dynamic_leverage
-                                        pm_sl_v = (bot_config.sl_percent / 100) / dynamic_leverage
-                                        v_tp = current_price * (1 + pm_tp_v) if trade_type == "LONG" else current_price * (1 - pm_tp_v)
-                                        v_sl = current_price * (1 - pm_sl_v) if trade_type == "LONG" else current_price * (1 + pm_sl_v)
-                                        ex_name = getattr(client, "exchange_name", "BITUNIX")
-                                        p_entry_id_v = record_pattern_entry(
-                                            symbol=symbol,
-                                            side=trade_type,
-                                            entry_price=current_price,
-                                            conditions=conditions_snapshot,
-                                            alasan=f"[LATIHAN] {alasan}",
-                                            margin_usdt=0.0,
-                                            leverage=dynamic_leverage,
-                                            exchange=f"{ex_name}_SIM_TRAIN",
-                                        )
-                                        virtual_trades[symbol] = {
-                                            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                            "tipe": trade_type,
-                                            "entry_price": current_price,
-                                            "tp_price": v_tp,
-                                            "sl_price": v_sl,
-                                            "alasan": alasan,
-                                            "leverage": dynamic_leverage,
-                                            "pattern_entry_id": p_entry_id_v,
-                                        }
-                                        print(f"📚 [LATIHAN SIMULASI] {symbol} ({trade_type}) dicatat untuk latihan memory karena batas margin real penuh.")
                                     continue
 
                                 # Market guard opsional jika Binance
@@ -1204,48 +924,10 @@ async def scanner_loop():
                                 is_side_full = (trade_type == "LONG" and count_long >= MAX_POSITIONS_PER_SIDE) or (trade_type == "SHORT" and count_short >= MAX_POSITIONS_PER_SIDE)
                                 is_total_full = (count_long + count_short) >= MAX_TOTAL_POSITIONS
 
-                                # ─── JIKA BATASAN SLOT PENUH: ALIKAN KE LATIHAN SIMULASI DI CHANNEL TERPISAH ───
+                                # ─── JIKA BATASAN SLOT PENUH: LEWATI (SAMA SEPERTI REAL MODE) ───
                                 if is_side_full or is_total_full:
-                                    if symbol not in virtual_trades:
-                                        v_atr_res = calculate_dynamic_atr_targets(
-                                            entry_price=current_price,
-                                            atr_value=atr_val,
-                                            side=trade_type,
-                                            leverage=dynamic_leverage,
-                                            config_tp_percent=bot_config.tp_percent,
-                                            config_sl_percent=bot_config.sl_percent,
-                                            atr_sl_mult=1.8,
-                                        )
-                                        v_tp = v_atr_res["tp_price"]
-                                        v_sl = v_atr_res["sl_price"]
-
-                                        # Catat snapshot pola candle ke Pattern Memory & PostgreSQL untuk Latihan Simulasi
-                                        ex_name = getattr(client, "exchange_name", "BITUNIX")
-                                        p_entry_id_v = record_pattern_entry(
-                                            symbol=symbol,
-                                            side=trade_type,
-                                            entry_price=current_price,
-                                            conditions=conditions_snapshot,
-                                            alasan=f"[LATIHAN] {alasan}",
-                                            margin_usdt=0.0,
-                                            leverage=dynamic_leverage,
-                                            exchange=f"{ex_name}_SIM_TRAIN",
-                                        )
-
-                                        virtual_trades[symbol] = {
-                                            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                            "tipe": trade_type,
-                                            "entry_price": current_price,
-                                            "tp_price": v_tp,
-                                            "sl_price": v_sl,
-                                            "alasan": alasan,
-                                            "leverage": dynamic_leverage,
-                                            "pattern_entry_id": p_entry_id_v,
-                                        }
-
-                                        slot_status_text = f"LONG: {count_long}/{MAX_POSITIONS_PER_SIDE} | SHORT: {count_short}/{MAX_POSITIONS_PER_SIDE}"
-                                        print(f"📚 [LATIHAN SIMULASI] Slot aktif penuh ({slot_status_text}). {symbol} ({trade_type}) dicatat untuk evaluasi target TP/SL (ID: {p_entry_id_v}).")
-
+                                    slot_status_text = f"LONG: {count_long}/{MAX_POSITIONS_PER_SIDE} | SHORT: {count_short}/{MAX_POSITIONS_PER_SIDE}"
+                                    print(f"[RISK] Lewati {symbol} ({trade_type}): Slot aktif penuh ({slot_status_text}).")
                                     continue
 
                                 # Hitung Pilar 3: Sizing Dinamis Berbasis Half-Kelly & Volatilitas ATR
@@ -1298,11 +980,12 @@ async def scanner_loop():
                                 print(f"[ERROR] Gagal menghitung sizing modal: {e_bal}")
                                 continue
 
-                            # 6. Eksekusi Order (Real vs Paper Trading Simulasi)
+                            # 6. Eksekusi Order (Real / Binance Testnet API vs Paper Trading Simulasi)
                             curr_trade_mode = getattr(bot_config, "trading_mode", TRADING_MODE).upper()
-                            is_paper_trading = curr_trade_mode in ("PAPER_TRADING", "SIMULATION", "VIRTUAL") or (bot_config.simulated_modal is not None and bot_config.simulated_modal > 0)
-                            exchange_name = getattr(client, "exchange_name", getattr(bot_config, "active_exchange", "BINANCE"))
-                            exchange_tag = f"{exchange_name}_SIM" if is_paper_trading else (f"{exchange_name}_TESTNET" if curr_trade_mode == "TESTNET" else f"{exchange_name}_REAL")
+                            exchange_name = getattr(client, "exchange_name", getattr(bot_config, "active_exchange", "BINANCE")).upper()
+                            is_binance_testnet = (curr_trade_mode in ("TESTNET", "DEMO") and exchange_name == "BINANCE")
+                            is_paper_trading = (curr_trade_mode in ("PAPER_TRADING", "SIMULATION", "VIRTUAL")) or (curr_trade_mode in ("TESTNET", "DEMO") and exchange_name == "BITUNIX")
+                            exchange_tag = f"{exchange_name}_SIM" if is_paper_trading else (f"{exchange_name}_TESTNET" if is_binance_testnet else f"{exchange_name}_REAL")
 
                             # Strict Anti-Double Entry Guard (Pre-Order Verification)
                             sym_clean = str(symbol).upper().strip()
@@ -1310,29 +993,60 @@ async def scanner_loop():
                                 print(f"🛑 [ANTI-DOUBLE ENTRY] Pembatalan order {symbol}: Posisi sudah tercatat aktif di bot memory.")
                                 continue
 
-                            if is_paper_trading:
-                                # Simulasikan slippage realistis pada Paper Trading (mis. 0.08% adverse slippage)
-                                paper_slip_pct = (getattr(bot_config, "paper_slippage_pct", 0.08) or 0.08) / 100.0
-                                sim_fill_price = current_price * (1.0 + paper_slip_pct) if trade_type == "LONG" else current_price * (1.0 - paper_slip_pct)
-                                quantity = (current_margin * dynamic_leverage) / sim_fill_price
-                                order_res = {
-                                    'status': 'success',
-                                    'quantity': quantity,
-                                    'price': sim_fill_price,
-                                    'signal_price': current_price,
-                                    'slippage_pct': paper_slip_pct if trade_type == "LONG" else -paper_slip_pct,
-                                    'actual_leverage': dynamic_leverage,
-                                    'is_paper': True,
-                                }
-                                print(
-                                    f"[PAPER TRADING] {symbol}: Simulasi Open {trade_type} | "
-                                    f"Sinyal={current_price:.6f} -> Fill (Slip {paper_slip_pct*100:+.2f}%)={sim_fill_price:.6f} | "
-                                    f"Margin={current_margin:.2f} USDT | Lev={dynamic_leverage}x [{exchange_tag}]"
-                                )
+                            exec_mode = getattr(bot_config, "execution_mode", "SMART_LIMIT").upper()
+                            use_limit_order = exec_mode in ("SMART_LIMIT", "HYBRID_LIMIT") or getattr(bot_config, "use_limit_orders", True)
+                            limit_retrace_pct = float(getattr(bot_config, "limit_retracement_percent", 0.4) or 0.4)
+                            limit_timeout = int(getattr(bot_config, "limit_order_timeout_seconds", 180) or 180)
+                            atr_mult_sl = float(getattr(bot_config, "atr_multiplier_sl", 1.5) or 1.5)
+
+                            # Hitung Target Entry Price (Limit Diskon Pullback vs Market)
+                            if use_limit_order:
+                                if trade_type == "LONG":
+                                    target_entry_price = current_price * (1.0 - (limit_retrace_pct / 100.0))
+                                else:
+                                    target_entry_price = current_price * (1.0 + (limit_retrace_pct / 100.0))
                             else:
-                                use_limit_order = getattr(bot_config, "use_limit_orders", False)
+                                target_entry_price = current_price
+
+                            if is_paper_trading:
+                                if use_limit_order:
+                                    sim_fill_price = target_entry_price
+                                    paper_adv_slip = -(limit_retrace_pct / 100.0) if trade_type == "LONG" else (limit_retrace_pct / 100.0)
+                                    quantity = (current_margin * dynamic_leverage) / sim_fill_price
+                                    order_res = {
+                                        'status': 'success',
+                                        'quantity': quantity,
+                                        'price': sim_fill_price,
+                                        'signal_price': current_price,
+                                        'slippage_pct': paper_adv_slip,
+                                        'actual_leverage': dynamic_leverage,
+                                        'is_paper': True,
+                                    }
+                                    print(
+                                        f"[PAPER TRADING (SMART LIMIT)] {symbol}: Simulasi Open {trade_type} | "
+                                        f"Sinyal={current_price:.6f} -> Pullback Fill ({limit_retrace_pct:.2f}% disc)={sim_fill_price:.6f} | "
+                                        f"Margin={current_margin:.2f} USDT | Lev={dynamic_leverage}x [{exchange_tag}]"
+                                    )
+                                else:
+                                    paper_slip_pct = (getattr(bot_config, "paper_slippage_pct", 0.08) or 0.08) / 100.0
+                                    sim_fill_price = current_price * (1.0 + paper_slip_pct) if trade_type == "LONG" else current_price * (1.0 - paper_slip_pct)
+                                    quantity = (current_margin * dynamic_leverage) / sim_fill_price
+                                    order_res = {
+                                        'status': 'success',
+                                        'quantity': quantity,
+                                        'price': sim_fill_price,
+                                        'signal_price': current_price,
+                                        'slippage_pct': paper_slip_pct if trade_type == "LONG" else -paper_slip_pct,
+                                        'actual_leverage': dynamic_leverage,
+                                        'is_paper': True,
+                                    }
+                                    print(
+                                        f"[PAPER TRADING (MARKET)] {symbol}: Simulasi Open {trade_type} | "
+                                        f"Sinyal={current_price:.6f} -> Fill (Slip {paper_slip_pct*100:+.2f}%)={sim_fill_price:.6f} | "
+                                        f"Margin={current_margin:.2f} USDT | Lev={dynamic_leverage}x [{exchange_tag}]"
+                                    )
+                            else:
                                 max_slip_pct = (getattr(bot_config, "max_slippage_pct", 0.3) or 0.3) / 100.0
-                                limit_timeout = getattr(bot_config, "limit_order_timeout_seconds", 30)
 
                                 if trade_type == "LONG":
                                     order_res = await place_long_order(
@@ -1344,6 +1058,7 @@ async def scanner_loop():
                                         use_limit=use_limit_order,
                                         limit_timeout=limit_timeout,
                                         max_slippage_pct=max_slip_pct,
+                                        limit_price=target_entry_price if use_limit_order else None,
                                     )
                                 else:
                                     order_res = await place_short_order(
@@ -1355,6 +1070,7 @@ async def scanner_loop():
                                         use_limit=use_limit_order,
                                         limit_timeout=limit_timeout,
                                         max_slippage_pct=max_slip_pct,
+                                        limit_price=target_entry_price if use_limit_order else None,
                                     )
                                 
                             if order_res.get('status') == 'success':
@@ -1365,12 +1081,13 @@ async def scanner_loop():
                                 slip_info = ""
                                 if "slippage_pct" in order_res:
                                     slip_pct_val = order_res["slippage_pct"] * 100.0
-                                    slip_info = f" | Slip: {slip_pct_val:+.2f}%"
+                                    slip_info = f" | Slip/Gain: {slip_pct_val:+.2f}%"
 
+                                exec_mode_tag = "SMART_LIMIT" if use_limit_order else "MARKET"
                                 add_scanner_log(
                                     "ORDER",
                                     symbol,
-                                    f"🚀 [ORDER] Open {trade_type} @ {entry_price:.6f} (Sinyal: {current_price:.6f}{slip_info}) | Margin: {current_margin:.2f} USDT | Lev: {actual_leverage}x [{exchange_tag}]",
+                                    f"🚀 [ORDER] Open {trade_type} @ {entry_price:.6f} (Sinyal: {current_price:.6f}{slip_info}) | Mode: {exec_mode_tag} | Margin: {current_margin:.2f} USDT | Lev: {actual_leverage}x [{exchange_tag}]",
                                     tag="ORDER_SUCCESS"
                                 )
                                 
@@ -1382,7 +1099,7 @@ async def scanner_loop():
                                     leverage=actual_leverage,
                                     config_tp_percent=bot_config.tp_percent,
                                     config_sl_percent=bot_config.sl_percent,
-                                    atr_sl_mult=1.8,
+                                    atr_sl_mult=atr_mult_sl,
                                 )
                                 tp_price = atr_targets["tp_price"]
                                 sl_price = atr_targets["sl_price"]
@@ -1592,29 +1309,43 @@ async def user_data_stream_loop():
     """
     Mendengarkan event order dari Binance secara real-time (hanya jika ACTIVE_EXCHANGE == BINANCE).
     """
-    if ACTIVE_EXCHANGE.upper() != "BINANCE":
-        print(f"[USER STREAM] Active exchange adalah '{ACTIVE_EXCHANGE}'. Skipping Binance WebSocket User Stream.")
-        while True:
-            await asyncio.sleep(3600)
+    while True:
+        active_ex = getattr(bot_config, "active_exchange", ACTIVE_EXCHANGE).upper()
+        if active_ex != "BINANCE":
+            bot_state["websocket_connected"] = False
+            await asyncio.sleep(10)
+            continue
 
-    if not BINANCE_API_KEY or str(BINANCE_API_KEY).strip() == "":
-        print("[USER STREAM] BINANCE_API_KEY kosong. Mengabaikan User Data Stream.")
-        while True:
-            await asyncio.sleep(3600)
+        if not BINANCE_API_KEY or str(BINANCE_API_KEY).strip() == "" or "your_" in BINANCE_API_KEY.lower() or len(BINANCE_API_KEY) < 10:
+            bot_state["websocket_connected"] = False
+            await asyncio.sleep(60)
+            continue
 
-    testnet = TRADING_MODE == 'TESTNET'
-    client = await AsyncClient.create(
-        api_key=BINANCE_API_KEY,
-        api_secret=BINANCE_API_SECRET,
-        testnet=testnet
-    )
-    
+        curr_mode = getattr(bot_config, "trading_mode", TRADING_MODE).upper()
+        testnet = curr_mode in ("TESTNET", "DEMO")
+        try:
+            client = await AsyncClient.create(
+                api_key=BINANCE_API_KEY,
+                api_secret=BINANCE_API_SECRET,
+                testnet=testnet
+            )
+            break
+        except Exception as e_init:
+            err_str = str(e_init)
+            if "-2015" in err_str or "Invalid API-key" in err_str:
+                print(f"⚠️ [BINANCE STREAM] API Key invalid atau tidak berizin Futures (Code -2015). User Stream di-pause.")
+            else:
+                print(f"⚠️ [BINANCE STREAM] Gagal inisialisasi client: {e_init}")
+            bot_state["websocket_connected"] = False
+            await asyncio.sleep(60)
+            continue
+            
     try:
         reconnect_delay = 2
         while True:
             if getattr(bot_config, "active_exchange", "BINANCE").upper() != "BINANCE":
                 bot_state["websocket_connected"] = False
-                await asyncio.sleep(5)
+                await asyncio.sleep(10)
                 continue
                 
             bm = BinanceSocketManager(client)
@@ -1670,6 +1401,10 @@ async def user_data_stream_loop():
 
                             net_pnl = realized_pnl - commission + funding_fee
 
+                            if bot_config.trading_mode != "REAL":
+                                new_sim_modal = bot_config.add_simulated_pnl(net_pnl)
+                                print(f"[SIMULATED WALLET] Trade closed ({symbol}): Saldo simulasi sekarang: ${new_sim_modal:.2f} USDT (Net PnL: {net_pnl:+.4f} USDT)")
+
                             # Rekam hasil ke Pattern Memory dan ambil statistik polanya
                             pattern_entry_id = meta.get("pattern_entry_id")
                             ai_stats = {}
@@ -1702,8 +1437,9 @@ async def user_data_stream_loop():
                             mfe_str = f"+{mfe_pct:.2f}%" if margin_val > 0 else f"{mfe_val:+.4f}"
                             mae_str = f"-{mae_pct:.2f}%" if margin_val > 0 else f"{mae_val:+.4f}"
 
+                            ex_name = getattr(client, "exchange_name", getattr(bot_config, "active_exchange", "BINANCE")).upper()
                             order_data = {
-                                "symbol": symbol,
+                                "symbol": f"[{ex_name}] {symbol}" if not str(symbol).startswith("[") else symbol,
                                 "order_type": order_type,
                                 "price": order_info.get("ap"),
                                 "entry_price": meta.get("entry_price", "N/A"),
@@ -2109,7 +1845,8 @@ async def profitable_position_monitor_loop():
                         if t_alasan:
                             record_trade_result(t_alasan, is_win, source="SIM" if bot_config.trading_mode == "PAPER_TRADING" else "REAL")
 
-                        ex_tag = meta.get("exchange", getattr(bot_config, 'exchange', 'BITUNIX')).upper()
+                        ex_name = getattr(client, "exchange_name", getattr(bot_config, 'active_exchange', 'BITUNIX')).upper()
+                        ex_tag = meta.get("exchange", f"{ex_name}_REAL").upper()
 
                         record_closed_trade({
                             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -2131,7 +1868,7 @@ async def profitable_position_monitor_loop():
                         })
 
                         order_data = {
-                            "symbol": f"[{ex_tag}] {sym}" if not sym.startswith("[") else sym,
+                            "symbol": f"[{ex_name}] {sym}" if not sym.startswith("[") else sym,
                             "order_type": order_type,
                             "price": f"{curr_exit_price:.6f}",
                             "entry_price": meta.get("entry_price", e_price),
@@ -2326,9 +2063,10 @@ async def profitable_position_monitor_loop():
                             mae_str = f"-{mae_pct:.2f}%" if margin_val > 0 else f"{mae_val:+.4f}"
 
                             exit_price = float(close_result.get("price") or (entry_price + (profit / amount) if amount != 0 else entry_price))
+                            ex_name = getattr(client, "exchange_name", getattr(bot_config, "active_exchange", "BITUNIX")).upper()
 
                             order_data = {
-                                "symbol": symbol,
+                                "symbol": f"[{ex_name}] {symbol}" if not str(symbol).startswith("[") else symbol,
                                 "order_type": f"AUTO_{reason}",
                                 "price": f"{exit_price:.6f}",
                                 "entry_price": meta.get("entry_price", entry_price),
@@ -2349,6 +2087,10 @@ async def profitable_position_monitor_loop():
                                 "alasan_masuk": meta.get("alasan", "Sinyal Multi-Indikator AI"),
                                 "ai_eval_summary": meta.get("ai_eval_summary", ""),
                             }
+                            if bot_config.trading_mode != "REAL":
+                                new_sim_modal = bot_config.add_simulated_pnl(profit)
+                                print(f"[SIMULATED WALLET] Position monitor closed ({symbol}): Saldo simulasi sekarang: ${new_sim_modal:.2f} USDT (Net PnL: {profit:+.4f} USDT)")
+
                             pattern_entry_id = meta.get("pattern_entry_id")
                             if pattern_entry_id:
                                 record_pattern_result(pattern_entry_id, profit > 0, profit)
@@ -2442,7 +2184,8 @@ async def profitable_position_monitor_loop():
                             is_win_trade = profit > 0
                             margin_val = float(meta.get("margin_usdt", initial_margin) or initial_margin)
                             exit_price = float(close_result.get("price") or (entry_price + (profit / amount) if amount != 0 else entry_price))
-                            ex_tag = getattr(bot_config, 'exchange', 'BINANCE').upper()
+                            ex_name = getattr(client, "exchange_name", getattr(bot_config, 'active_exchange', 'BITUNIX')).upper()
+                            ex_tag = meta.get("exchange", f"{ex_name}_REAL").upper()
 
                             t_alasan = bot_state.get("active_trade_reasons", {}).pop(symbol, meta.get("alasan", "Real Trade"))
                             if t_alasan:
@@ -2468,7 +2211,7 @@ async def profitable_position_monitor_loop():
                             })
 
                             order_data = {
-                                "symbol": f"[{ex_tag}] {symbol}",
+                                "symbol": f"[{ex_name}] {symbol}" if not str(symbol).startswith("[") else symbol,
                                 "order_type": "TIME_BASED_EXIT",
                                 "price": f"{exit_price:.6f}",
                                 "entry_price": meta.get("entry_price", entry_price),
@@ -2566,8 +2309,9 @@ async def profitable_position_monitor_loop():
                         meta = bot_state.get("active_trade_meta", {}).pop(symbol, {})
                         duration_minutes = round(age_ms / 60000, 1)
                         exit_price = float(close_result.get("price") or (entry_price + (profit / amount) if amount != 0 else entry_price))
+                        ex_name = getattr(client, "exchange_name", getattr(bot_config, "active_exchange", "BITUNIX")).upper()
                         order_data = {
-                            "symbol": symbol,
+                            "symbol": f"[{ex_name}] {symbol}" if not str(symbol).startswith("[") else symbol,
                             "order_type": "PROFIT_HOLDING_AUTO_CLOSE",
                             "price": f"{exit_price:.6f}",
                             "entry_price": meta.get("entry_price", entry_price),
@@ -2703,14 +2447,36 @@ async def main():
             run_long_term_scraper(_startup_client) if DB_MODULES_LOADED else asyncio.sleep(0),
         )
     finally:
+        print("[SHUTDOWN] Menutup semua koneksi dan membersihkan resource...")
         if dashboard_runner:
-            await dashboard_runner.cleanup()
-        if isinstance(_startup_client, BaseExchange):
-            await _startup_client.close()
-        else:
-            await _startup_client.close_connection()
+            try:
+                await dashboard_runner.cleanup()
+            except Exception:
+                pass
+
+        curr_client = bot_state.get("client") or _startup_client
+        if curr_client:
+            try:
+                if isinstance(curr_client, BaseExchange):
+                    await curr_client.close()
+                else:
+                    await curr_client.close_connection()
+            except Exception:
+                pass
+
+        try:
+            await bot.session.close()
+        except Exception:
+            pass
+
         if DB_MODULES_LOADED:
-            await close_pool()
+            try:
+                await close_pool()
+            except Exception:
+                pass
+
+        # Jeda 250ms agar asyncio & aiohttp TCP transport selesai melepaskan socket
+        await asyncio.sleep(0.25)
 
 if __name__ == "__main__":
     try:

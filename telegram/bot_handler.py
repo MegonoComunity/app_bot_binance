@@ -1,4 +1,5 @@
 import os
+from typing import Optional, List, Dict, Any, Union
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
@@ -22,11 +23,11 @@ from config.settings import (
 from core.order_manager import close_profitable_position
 from core.market_analysis import analyze_daily_market
 from core.risk_manager import calculate_account_pnl_percent, calculate_position_pnl_percent
-from core.trade_stats import trade_summary, reset_trade_stats
+from core.trade_stats import trade_summary, reset_trade_stats, clear_trade_explainability
 from database.trade_repo import get_trade_summary
 from core.trade_sync import sync_real_exchange_account
 from core.learner import get_multi_timeframe_summary, get_stats as get_learner_stats, reset_pattern_blacklist
-from core.pattern_memory import _load as load_pattern_memory
+from core.pattern_memory import _load as load_pattern_memory, clear_pattern_memory
 from core.auto_updater import check_for_git_updates, smart_git_pull_and_heal
 
 # Initialize bot and dispatcher
@@ -123,6 +124,10 @@ async def setup_bot_commands(bot_instance: Bot) -> None:
         BotCommand(command="set_sl", description="Target Stop Loss (%)"),
         BotCommand(command="set_confluence", description="Skor Konfluensi Minimum (50-100, Rekomendasi: 80)"),
         BotCommand(command="set_breakeven", description="Auto Break-Even (on/off, target ROI %)"),
+        BotCommand(command="set_exec_mode", description="Mode Eksekusi (SMART_LIMIT/HYBRID/MARKET)"),
+        BotCommand(command="set_limit_retrace", description="Diskon Limit Retracement (%)"),
+        BotCommand(command="set_limit_timeout", description="Timeout Batal Limit Order (Detik)"),
+        BotCommand(command="set_atr_sl", description="Multiplier ATR Stop Loss Dinamis"),
         BotCommand(command="backup_db", description="Backup Database ke Telegram"),
         BotCommand(command="close_all", description="Tutup Semua Posisi Terbuka"),
         BotCommand(command="pause", description="Jeda Scanning"),
@@ -134,9 +139,17 @@ async def setup_bot_commands(bot_instance: Bot) -> None:
     except Exception as exc:
         print(f"[TELEGRAM] Gagal update commands: {exc}")
 
-def get_main_keyboard():
+def get_main_keyboard(active_exchange: Optional[str] = None) -> ReplyKeyboardMarkup:
+    """Membuat Reply Keyboard dinamis sesuai exchange aktif (Binance Testnet vs Bitunix Paper)."""
+    ex = (active_exchange or getattr(bot_config, "active_exchange", "BINANCE")).upper().strip()
+    if ex == "BINANCE":
+        demo_btn = KeyboardButton(text="🌐 Scan Binance Testnet")
+    else:
+        demo_btn = KeyboardButton(text="🔵 Scan Bitunix Paper")
+
     kb = [
-        [KeyboardButton(text="🔵 Scan Order Paper"), KeyboardButton(text="🟢 Scan Order Real")],
+        [demo_btn, KeyboardButton(text="🟢 Scan Order Real")],
+        [KeyboardButton(text="🎯 Ganti Mode"), KeyboardButton(text="🏛️ Ganti Exchange")],
         [KeyboardButton(text="📊 Status Bot"), KeyboardButton(text="🧠 Monitoring AI")],
         [KeyboardButton(text="⚙️ Pengaturan"), KeyboardButton(text="🧮 Hitung Margin")],
         [KeyboardButton(text="📈 Histori TP"), KeyboardButton(text="📉 Histori SL")],
@@ -149,16 +162,18 @@ def get_main_keyboard():
 
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
-    active_ex = getattr(bot_config, "active_exchange", "BINANCE")
-    curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
+    active_ex = getattr(bot_config, "active_exchange", "BINANCE").upper()
+    curr_mode = getattr(bot_config, "trading_mode", "TESTNET" if active_ex == "BINANCE" else "PAPER_TRADING")
+    demo_guide = "**🌐 Scan Binance Testnet** (demo.binance.com)" if active_ex == "BINANCE" else "**🔵 Scan Bitunix Paper** (Simulasi Virtual)"
+    
     await message.answer(
         f"🚀 **Trading Bot is Online!**\n"
         f"🏛️ **Exchange:** `{active_ex}` | 🎯 **Mode:** `{curr_mode}`\n\n"
-        f"• Gunakan tombol **🔵 Scan Order Paper** untuk simulasi tanpa resiko.\n"
+        f"• Gunakan tombol {demo_guide} untuk uji coba trading tanpa risiko modal.\n"
         f"• Gunakan tombol **🟢 Scan Order Real** untuk eksekusi order dengan akun nyata.\n"
         f"• Ketik `/help` atau klik **📞 Bantuan** untuk melihat panduan lengkap.\n\n"
         f"Silakan pilih menu di bawah ini:",
-        reply_markup=get_main_keyboard(),
+        reply_markup=get_main_keyboard(active_ex),
         parse_mode="Markdown",
     )
 
@@ -236,7 +251,7 @@ async def set_exchange_handler(message: types.Message, command: CommandObject):
             f"✅ **Exchange Berhasil Diubah!**\n"
             f"Sebelumnya: `{old_ex}` ➔ Sekarang: **`{args}`**\n\n"
             f"Scanner dan eksekutor order sekarang terhubung ke **{args}**.",
-            reply_markup=get_main_keyboard(),
+            reply_markup=get_main_keyboard(args),
             parse_mode="Markdown"
         )
     except Exception as e:
@@ -311,11 +326,10 @@ async def fetch_account_balance_info(client_inst, exchange_name: str, mode: str)
                 "positions": [],
             }
     else:
-        # Mode SIMULASI / PAPER / TESTNET
-        if target_ex == "BINANCE":
-            # Coba koneksi ke Binance Futures Testnet API terlebih dahulu
+        # Mode TESTNET (Khusus Binance Futures Testnet API di demo.binance.com)
+        if target_ex == "BINANCE" and mode.upper() in ("TESTNET", "DEMO", "BINANCE_DEMO"):
             try:
-                testnet_client = get_exchange_adapter("BINANCE", is_testnet=True)
+                testnet_client = get_exchange_adapter("BINANCE", is_testnet=True, force_recreate=True)
                 await testnet_client.init()
                 bal_info = await testnet_client.get_account_balance()
                 total_tn = float(bal_info.get("total_wallet_balance", 0.0))
@@ -323,25 +337,55 @@ async def fetch_account_balance_info(client_inst, exchange_name: str, mode: str)
                 unreal_tn = float(bal_info.get("unrealized_pnl", 0.0))
                 positions_tn = await testnet_client.get_open_positions()
                 
-                if total_tn > 0:
-                    bot_state["client"] = testnet_client
-                    return {
-                        "success": True,
-                        "is_real": False,
-                        "source": "Binance Futures Testnet Demo API",
-                        "exchange": "BINANCE",
-                        "total_balance": total_tn,
-                        "available_balance": avail_tn,
-                        "unrealized_pnl": unreal_tn,
-                        "positions_count": len(positions_tn),
-                        "positions": positions_tn,
-                        "is_api_demo": True,
-                    }
+                bot_state["client"] = testnet_client
+                return {
+                    "success": True,
+                    "is_real": False,
+                    "source": "Binance Futures Testnet API (demo.binance.com)",
+                    "exchange": "BINANCE",
+                    "total_balance": total_tn,
+                    "available_balance": avail_tn,
+                    "unrealized_pnl": unreal_tn,
+                    "positions_count": len(positions_tn),
+                    "positions": positions_tn,
+                    "is_api_demo": True,
+                }
             except Exception as e_tn:
+                print(f"[TESTNET BINANCE] Gagal ambil saldo testnet API: {e_tn}")
+
+        # Mode VIRTUAL SIMULASI / PAPER TRADING
+        if bot_config.simulated_modal is not None and bot_config.simulated_modal > 0:
+            sim_modal = float(bot_config.simulated_modal)
+            active_meta = bot_state.get("active_trade_meta", {})
+            active_sim_pos = [m for m in active_meta.values() if m.get("is_paper")]
+            
+            margin_locked = sum(float(m.get("margin_usdt", 0.0) or 0.0) for m in active_sim_pos)
+            unreal_pnl = sum(float(m.get("unrealized_pnl", 0.0) or 0.0) for m in active_sim_pos)
+            avail_bal = max(0.0, sim_modal - margin_locked + unreal_pnl)
+
+            db_stats = {}
+            try:
+                db_stats = await get_trade_summary(exchange=f"{target_ex}_SIM")
+            except Exception:
                 pass
 
-        # Fallback / Default Paper Simulation (Memori & Database)
-        sim_modal = bot_config.simulated_modal if bot_config.simulated_modal is not None and bot_config.simulated_modal > 0 else 100.0
+            return {
+                "success": True,
+                "is_real": False,
+                "source": f"{target_ex} Virtual Demo Wallet (Akumulasi PnL)",
+                "exchange": target_ex,
+                "total_balance": sim_modal,
+                "available_balance": avail_bal,
+                "margin_locked": margin_locked,
+                "unrealized_pnl": unreal_pnl,
+                "positions_count": len(active_sim_pos),
+                "positions": active_sim_pos,
+                "db_stats": db_stats,
+                "is_api_demo": False,
+            }
+
+        # 3. Default Fallback ke 100 USDT Simulated Modal
+        sim_modal = 100.0
         bot_config.simulated_modal = sim_modal
         
         db_stats = {}
@@ -356,7 +400,7 @@ async def fetch_account_balance_info(client_inst, exchange_name: str, mode: str)
         return {
             "success": True,
             "is_real": False,
-            "source": f"{target_ex} Virtual Paper Simulation (DB / Memori)",
+            "source": f"{target_ex} Virtual Demo Wallet",
             "exchange": target_ex,
             "total_balance": sim_modal,
             "available_balance": sim_modal,
@@ -426,73 +470,198 @@ async def scan_order_real_handler(message: types.Message):
             f"🔧 **Setup:** Lev `{bot_config.leverage}x` | TP `{bot_config.tp_percent}%` | SL `{bot_config.sl_percent}%` | Mode `{bot_config.margin_mode}`\n\n"
             f"Gunakan `/scan_order_paper` kapan saja untuk kembali ke mode simulasi aman."
         )
-        await message.answer(text, parse_mode="Markdown")
+        await message.answer(text, reply_markup=get_main_keyboard(active_ex), parse_mode="Markdown")
     except Exception as e:
         await message.answer(f"❌ Gagal mengaktifkan mode Real: {e}")
 
 
 @dp.message(Command("scan_order_paper"))
+@dp.message(Command("scan_binance_testnet"))
 @dp.message(Command("simulasi"))
-@dp.message(F.text == "🔵 Scan Order Paper")
+@dp.message(Command("demo"))
+@dp.message(Command("paper"))
+@dp.message(F.text.in_({"🔵 Scan Order Paper", "🌐 Scan Binance Testnet", "🔵 Scan Bitunix Paper", "🔵 Scan Order Demo"}))
 async def scan_order_paper_handler(message: types.Message):
     """
-    Mengaktifkan mode Paper Trading / Simulasi: bot men-scan market live dan mengeksekusi order virtual,
-    serta otomatis mengecek saldo akun demo (Binance Testnet API) atau memori/database (Bitunix).
+    Mengaktifkan mode Demo / Testnet secara otomatis:
+    - Jika exchange BINANCE: Mengaktifkan mode TESTNET (terhubung langsung ke API demo.binance.com).
+    - Jika exchange BITUNIX: Mengaktifkan mode PAPER_TRADING (simulasi virtual internal dengan harga real Bitunix).
     """
     try:
-        bot_config.update_trading_mode("PAPER_TRADING")
-        active_ex = getattr(bot_config, "active_exchange", "BITUNIX")
+        active_ex = getattr(bot_config, "active_exchange", "BINANCE").upper()
+        target_mode = "TESTNET" if active_ex == "BINANCE" else "PAPER_TRADING"
+        
+        bot_config.update_trading_mode(target_mode)
+        is_tn = (target_mode == "TESTNET")
+        
+        # Inisialisasi adapter exchange sesuai mode
+        new_adapter = get_exchange_adapter(active_ex, is_testnet=is_tn, force_recreate=True)
+        await new_adapter.init()
+        bot_state["client"] = new_adapter
         
         bot_state["is_running"] = True
         bot_state["state"] = "RUNNING"
         
-        # Cek saldo simulasi / demo secara otomatis
-        client_inst = bot_state.get("client")
-        bal_res = await fetch_account_balance_info(client_inst, active_ex, "PAPER_TRADING")
-        
-        sim_bal = bal_res.get("total_balance", 100.0)
+        # Ambil saldo realtime
+        bal_res = await fetch_account_balance_info(new_adapter, active_ex, target_mode)
+        sim_bal = bal_res.get("total_balance", 0.0)
+        avail_bal = bal_res.get("available_balance", sim_bal)
         pos_cnt = bal_res.get("positions_count", 0)
         db_stats = bal_res.get("db_stats", {})
-        src_lbl = bal_res.get("source", "Virtual Paper Simulation")
-        is_api_demo = bal_res.get("is_api_demo", False)
+        src_lbl = bal_res.get("source", "Testnet / Paper Simulation")
         
         stats_text = ""
         if db_stats and db_stats.get("total", 0) > 0:
-            stats_text = f"📊 **Riwayat Simulasi DB:** `{db_stats.get('wins', 0)}W / {db_stats.get('losses', 0)}L` (WR: `{db_stats.get('win_rate', 0)}%` | Net: `{db_stats.get('net_pnl', 0):+.2f} USDT`)\n"
+            stats_text = f"📊 **Riwayat Sesi DB:** `{db_stats.get('wins', 0)}W / {db_stats.get('losses', 0)}L` (WR: `{db_stats.get('win_rate', 0)}%` | Net: `{db_stats.get('net_pnl', 0):+.2f} USDT`)\n"
 
-        saldo_label = "Saldo Demo Testnet API" if is_api_demo else "Saldo Virtual Simulasi"
+        if active_ex == "BINANCE":
+            header_title = "🌐 **MODE BINANCE FUTURES TESTNET DIAKTIFKAN!** 🔵"
+            saldo_label = "Saldo Testnet Demo"
+            mode_desc = "Order dieksekusi langsung ke server **Binance Futures Testnet API** (sinkron dengan web `demo.binance.com`)."
+        else:
+            header_title = "📝 **MODE BITUNIX PAPER TRADING DIAKTIFKAN!** 🔵"
+            saldo_label = "Saldo Virtual Simulasi"
+            mode_desc = "Simulasi internal presisi 1:1 tanpa resiko modal dengan feed harga live **Bitunix**."
 
         text = (
-            f"🧪 **MODE SIMULASI / DEMO DIAKTIFKAN!** 🔵\n"
+            f"{header_title}\n"
             f"────────────────────────\n"
             f"🏛️ **Exchange Data:** `{active_ex}` (Live Market Feed)\n"
-            f"⚡ **Status Scanning:** `AKTIF (Running)`\n"
-            f"🎯 **Mode Eksekusi:** `{'DEMO TESTNET API' if is_api_demo else 'VIRTUAL SIMULATION'}`\n"
+            f"⚡ **Status Scanning:** `AKTIF (Running 🟢)`\n"
+            f"🎯 **Mode Eksekusi:** `{target_mode}`\n"
             f"────────────────────────\n"
-            f"💰 **{saldo_label}:** `${sim_bal:.2f} USDT`\n"
+            f"💰 **{saldo_label}:** `${sim_bal:.2f} USDT` (Tersedia: `${avail_bal:.2f}`)\n"
             f"🔌 **Sumber:** `{src_lbl}`\n"
-            f"📊 **Posisi Aktif:** `{pos_cnt}` posisi\n"
+            f"📊 **Posisi Terbuka:** `{pos_cnt}` posisi\n"
             f"{stats_text}"
             f"────────────────────────\n"
-            f"💡 **Catatan:** Sinyal market real {active_ex} akan diproses dan dipantau 24/7 hingga target TP/SL tercapai.\n"
-            f"🔧 **Setup:** Lev `{bot_config.leverage}x` | TP `{bot_config.tp_percent}%` | SL `{bot_config.sl_percent}%`\n\n"
+            f"ℹ️ *{mode_desc}*\n"
+            f"🔧 **Setup:** Lev `{bot_config.leverage}x` | TP `{bot_config.tp_percent}%` | SL `{bot_config.sl_percent}%` | Mode `{bot_config.execution_mode}`\n\n"
             f"Gunakan `/scan_order_real` untuk mulai order dengan modal real."
         )
-        await message.answer(text, parse_mode="Markdown")
+        await message.answer(text, reply_markup=get_main_keyboard(active_ex), parse_mode="Markdown")
     except Exception as e:
-        await message.answer(f"❌ Gagal mengaktifkan mode Paper Trading: {e}")
+        await message.answer(f"❌ Gagal mengaktifkan mode demo/testnet: {e}")
+
+
+def get_mode_gui_keyboard(current_mode: str, active_exchange: str = "BINANCE") -> InlineKeyboardMarkup:
+    """Membuat Inline Keyboard untuk Menu GUI Mode Trading (Khusus Binance Testnet vs Bitunix Paper)."""
+    curr_m = current_mode.upper()
+    is_real = curr_m in ("REAL", "LIVE")
+    is_testnet = curr_m in ("TESTNET", "DEMO_TESTNET", "BINANCE_DEMO")
+    is_paper = curr_m in ("PAPER_TRADING", "SIMULATION", "VIRTUAL")
+
+    btn_real = InlineKeyboardButton(
+        text="🟢 REAL (Aktif ✅)" if is_real else "🟢 Aktifkan REAL",
+        callback_data="gui_mode_real"
+    )
+
+    if active_exchange.upper() == "BINANCE":
+        btn_demo = InlineKeyboardButton(
+            text="🌐 TESTNET API (Aktif ✅)" if is_testnet else "🌐 Aktifkan TESTNET (demo.binance.com)",
+            callback_data="gui_mode_testnet"
+        )
+    else:
+        btn_demo = InlineKeyboardButton(
+            text="📝 PAPER Mode (Aktif ✅)" if is_paper or is_testnet else "📝 Aktifkan PAPER (Virtual)",
+            callback_data="gui_mode_paper"
+        )
+
+    btn_refresh = InlineKeyboardButton(text="🔄 Refresh Status", callback_data="gui_mode_refresh")
+    btn_exchange = InlineKeyboardButton(text="🏛️ Ganti Exchange", callback_data="gui_goto_exchange")
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [btn_real, btn_demo],
+        [btn_refresh, btn_exchange],
+    ])
+
+
+def get_exchange_gui_keyboard(current_exchange: str) -> InlineKeyboardMarkup:
+    """Membuat Inline Keyboard untuk Menu GUI Exchange Switcher."""
+    is_bitunix = current_exchange.upper() == "BITUNIX"
+    is_binance = current_exchange.upper() == "BINANCE"
+
+    btn_bitunix = InlineKeyboardButton(
+        text="🔷 BITUNIX (Aktif ✅)" if is_bitunix else "🔷 Pilih BITUNIX",
+        callback_data="gui_ex_bitunix"
+    )
+    btn_binance = InlineKeyboardButton(
+        text="🔶 BINANCE (Aktif ✅)" if is_binance else "🔶 Pilih BINANCE",
+        callback_data="gui_ex_binance"
+    )
+    btn_refresh = InlineKeyboardButton(text="🔄 Refresh Status", callback_data="gui_ex_refresh")
+    btn_mode = InlineKeyboardButton(text="🎯 Ganti Mode", callback_data="gui_goto_mode")
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [btn_bitunix, btn_binance],
+        [btn_refresh, btn_mode],
+    ])
+
+
+async def build_mode_gui_content(client_inst, active_ex: str, curr_mode: str) -> tuple:
+    """Membangun teks pesan dan keyboard untuk GUI Mode."""
+    bal_res = await fetch_account_balance_info(client_inst, active_ex, curr_mode)
+    curr_m = curr_mode.upper()
+    is_real = curr_m in ("REAL", "LIVE")
+    is_testnet = curr_m in ("TESTNET", "DEMO_TESTNET", "BINANCE_DEMO")
+    bal_val = bal_res.get("total_balance", 0.0)
+    avail_val = bal_res.get("available_balance", bal_val)
+    pos_cnt = bal_res.get("positions_count", 0)
+
+    if is_real:
+        mode_title = "🟢 REAL TRADING (UANG ASLI)"
+        exec_desc = f"Order dieksekusi secara nyata di exchange **{active_ex}** dengan modal riil."
+        bal_label = "Saldo Akun Real"
+    elif active_ex == "BINANCE" and is_testnet:
+        mode_title = "🌐 BINANCE FUTURES TESTNET (DEMO.BINANCE.COM)"
+        exec_desc = "Terhubung langsung ke **Binance Futures Testnet API**. Order & posisi sinkron ke website `demo.binance.com`."
+        bal_label = "Saldo Testnet Demo"
+    else:
+        mode_title = "📝 VIRTUAL SIMULATION (PAPER TRADING)"
+        exec_desc = f"Simulasi internal presisi 1:1 tanpa resiko dengan live market price feed dari **{active_ex}**."
+        bal_label = "Saldo Virtual Simulasi"
+
+    text = (
+        f"🎛️ **MENU KONTROL MODE TRADING**\n"
+        f"────────────────────────\n"
+        f"🎯 **Mode Saat Ini:** `{mode_title}`\n"
+        f"🏛️ **Exchange Aktif:** `{active_ex}`\n"
+        f"💰 **{bal_label}:** `${bal_val:.2f} USDT` (Tersedia: `${avail_val:.2f}`)\n"
+        f"📊 **Posisi Terbuka:** `{pos_cnt}` posisi\n"
+        f"────────────────────────\n"
+        f"ℹ️ *{exec_desc}*\n\n"
+        f"Klik tombol di bawah untuk beralih mode secara instan:"
+    )
+    return text, get_mode_gui_keyboard(curr_mode, active_ex)
+
+
+async def build_exchange_gui_content(client_inst, active_ex: str, curr_mode: str) -> tuple:
+    """Membangun teks pesan dan keyboard untuk GUI Exchange."""
+    bal_res = await fetch_account_balance_info(client_inst, active_ex, curr_mode)
+    bal_val = bal_res.get("total_balance", 0.0)
+    is_real = curr_mode.upper() in ("REAL", "LIVE")
+    bal_label = "Saldo Akun Real" if is_real else "Saldo Demo/Simulasi"
+
+    text = (
+        f"🏛️ **MENU PILIH EXCHANGE AKTIF**\n"
+        f"────────────────────────\n"
+        f"🏛️ **Exchange Aktif:** `{active_ex}`\n"
+        f"🎯 **Mode Trading:** `{'🟢 REAL' if is_real else '🔵 DEMO/SIMULASI'}`\n"
+        f"💰 **{bal_label}:** `${bal_val:.2f} USDT`\n"
+        f"────────────────────────\n"
+        f"• **BITUNIX**: Altcoin Focus, Low Slippage & Smart Execution\n"
+        f"• **BINANCE**: High Liquidity & Official Testnet Demo API\n\n"
+        f"Klik tombol di bawah untuk beralih exchange:"
+    )
+    return text, get_exchange_gui_keyboard(active_ex)
 
 
 @dp.message(Command("mode"))
 @dp.message(Command("set_mode"))
-async def mode_switch_handler(message: types.Message, command: CommandObject):
-    """
-    Perintah fleksibel untuk melihat status atau mengubah mode trading:
-    • /mode real -> Ganti ke mode Real & cek saldo real
-    • /mode paper / /mode simulasi -> Ganti ke mode Simulasi & cek saldo simulasi
-    • /mode -> Tampilkan status mode & saldo saat ini
-    """
-    arg = (command.args or "").strip().upper()
+@dp.message(F.text == "🎯 Ganti Mode")
+async def mode_switch_handler(message: types.Message, command: CommandObject = None):
+    """Membuka GUI kontrol mode trading interaktif."""
+    arg = (command.args or "").strip().upper() if command and command.args else ""
     if arg in ("REAL", "LIVE", "ASLI"):
         await scan_order_real_handler(message)
     elif arg in ("PAPER", "SIMULASI", "DEMO", "VIRTUAL", "PAPER_TRADING"):
@@ -501,67 +670,135 @@ async def mode_switch_handler(message: types.Message, command: CommandObject):
         active_ex = getattr(bot_config, "active_exchange", "BITUNIX")
         curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
         client_inst = bot_state.get("client")
-        bal_res = await fetch_account_balance_info(client_inst, active_ex, curr_mode)
-        
-        is_real = curr_mode.upper() in ("REAL", "LIVE")
-        bal_val = bal_res.get("total_balance", 0.0)
-        bal_label = "Saldo Real Wallet" if is_real else "Saldo Virtual Simulasi"
-        
-        await message.answer(
-            f"ℹ️ **STATUS MODE TRADING SAAT INI**\n"
-            f"────────────────────────\n"
-            f"🏛️ **Exchange:** `{active_ex}`\n"
-            f"🎯 **Mode Aktif:** `{'🟢 REAL' if is_real else '🔵 PAPER TRADING (SIMULASI)'}`\n"
-            f"💰 **{bal_label}:** `${bal_val:.2f} USDT`\n"
-            f"────────────────────────\n"
-            f"**Perintah Ganti Mode:**\n"
-            f"• `/mode real` atau tombol `🟢 Scan Order Real`\n"
-            f"• `/mode paper` atau tombol `🔵 Scan Order Paper`",
-            parse_mode="Markdown"
-        )
+        text, kb = await build_mode_gui_content(client_inst, active_ex, curr_mode)
+        await message.answer(text, reply_markup=kb, parse_mode="Markdown")
 
 
 @dp.message(Command("set_exchange"))
-async def set_exchange_handler(message: types.Message, command: CommandObject):
-    target = (command.args or "").strip().upper()
-    if target not in {"BINANCE", "BITUNIX"}:
-        current = getattr(bot_config, "active_exchange", "BINANCE")
-        await message.answer(
-            f"🏛️ **Exchange Saat Ini:** `{current}`\n\n"
-            "Format ganti exchange:\n"
-            "• `/set_exchange bitunix`\n"
-            "• `/set_exchange binance`",
-            parse_mode="Markdown"
-        )
-        return
-    try:
-        bot_config.update_active_exchange(target)
-        new_adapter = get_exchange_adapter(target)
-        await new_adapter.init()
-        bot_state["client"] = new_adapter
-        
+@dp.message(Command("exchange"))
+@dp.message(F.text == "🏛️ Ganti Exchange")
+async def set_exchange_handler(message: types.Message, command: CommandObject = None):
+    """Membuka GUI switch exchange interaktif."""
+    target = (command.args or "").strip().upper() if command and command.args else ""
+    if target in {"BINANCE", "BITUNIX"}:
+        try:
+            bot_config.update_active_exchange(target)
+            new_adapter = get_exchange_adapter(target)
+            await new_adapter.init()
+            bot_state["client"] = new_adapter
+            
+            curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
+            text, kb = await build_exchange_gui_content(new_adapter, target, curr_mode)
+            await message.answer(
+                f"✅ **EXCHANGE BERHASIL DIUBAH KE {target}!**\n\n" + text,
+                reply_markup=kb,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            await message.answer(f"❌ Gagal mengubah exchange ke {target}: {e}")
+    else:
+        active_ex = getattr(bot_config, "active_exchange", "BITUNIX")
         curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
-        bal_res = await fetch_account_balance_info(new_adapter, target, curr_mode)
-        
-        is_real = curr_mode.upper() in ("REAL", "LIVE")
-        if is_real:
-            total_bal = bal_res.get("total_balance", 0.0)
-            bal_str = f"💰 **Saldo Akun Real {target}:** `${total_bal:.2f} USDT`\n"
-        else:
-            sim_bal = bal_res.get("total_balance", 100.0)
-            bal_str = f"💰 **Saldo Simulasi:** `${sim_bal:.2f} USDT` (Live Market Feed dari {target})\n"
-        
-        await message.answer(
-            f"✅ **EXCHANGE BERHASIL DIUBAH KE {target}!**\n"
-            f"────────────────────────\n"
-            f"🏛️ **Platform Aktif:** `{target}`\n"
-            f"🎯 **Mode Saat Ini:** `{curr_mode}`\n"
-            f"{bal_str}"
-            f"⚡ Scanner sekarang membaca orderbook & data kline langsung dari **{target}**.",
-            parse_mode="Markdown"
-        )
+        client_inst = bot_state.get("client")
+        text, kb = await build_exchange_gui_content(client_inst, active_ex, curr_mode)
+        await message.answer(text, reply_markup=kb, parse_mode="Markdown")
+
+
+# ─── CALLBACK QUERY HANDLERS UNTUK INLINE GUI ─────────────────────────────────
+
+@dp.callback_query(F.data.startswith("gui_mode_"))
+async def callback_mode_handler(callback: types.CallbackQuery):
+    action = callback.data.replace("gui_mode_", "")
+    active_ex = getattr(bot_config, "active_exchange", "BINANCE").upper()
+
+    try:
+        if action == "real":
+            bot_config.update_trading_mode("REAL")
+            new_adapter = get_exchange_adapter(active_ex, is_testnet=False, force_recreate=True)
+            await new_adapter.init()
+            bot_state["client"] = new_adapter
+            await callback.answer("🟢 Beralih ke Mode REAL!", show_alert=False)
+        elif action == "testnet":
+            bot_config.update_trading_mode("TESTNET")
+            new_adapter = get_exchange_adapter("BINANCE", is_testnet=True, force_recreate=True)
+            await new_adapter.init()
+            bot_state["client"] = new_adapter
+            await callback.answer("🌐 Beralih ke Mode TESTNET (demo.binance.com)!", show_alert=False)
+        elif action in ("demo", "paper"):
+            target_mode = "TESTNET" if active_ex == "BINANCE" else "PAPER_TRADING"
+            bot_config.update_trading_mode(target_mode)
+            is_tn = (target_mode == "TESTNET")
+            new_adapter = get_exchange_adapter(active_ex, is_testnet=is_tn, force_recreate=True)
+            await new_adapter.init()
+            bot_state["client"] = new_adapter
+            await callback.answer(f"🔵 Beralih ke Mode {target_mode}!", show_alert=False)
+        elif action == "refresh":
+            await callback.answer("🔄 Status Mode Diperbarui!", show_alert=False)
     except Exception as e:
-        await message.answer(f"❌ Gagal mengubah exchange ke {target}: {e}")
+        await callback.answer(f"❌ Gagal ganti mode: {e}", show_alert=True)
+        return
+
+    curr_mode = getattr(bot_config, "trading_mode", "TESTNET" if active_ex == "BINANCE" else "PAPER_TRADING")
+    client_inst = bot_state.get("client")
+    text, kb = await build_mode_gui_content(client_inst, active_ex, curr_mode)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+@dp.callback_query(F.data.startswith("gui_ex_"))
+async def callback_exchange_handler(callback: types.CallbackQuery):
+    action = callback.data.replace("gui_ex_", "")
+    curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
+
+    if action in ("bitunix", "binance"):
+        target = action.upper()
+        try:
+            bot_config.update_active_exchange(target)
+            new_adapter = get_exchange_adapter(target)
+            await new_adapter.init()
+            bot_state["client"] = new_adapter
+            await callback.answer(f"🏛️ Exchange aktif: {target}!", show_alert=False)
+        except Exception as e:
+            await callback.answer(f"❌ Gagal beralih exchange: {e}", show_alert=True)
+            return
+    elif action == "refresh":
+        await callback.answer("🔄 Status Exchange Diperbarui!", show_alert=False)
+
+    active_ex = getattr(bot_config, "active_exchange", "BITUNIX")
+    client_inst = bot_state.get("client")
+    text, kb = await build_exchange_gui_content(client_inst, active_ex, curr_mode)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+@dp.callback_query(F.data == "gui_goto_mode")
+async def callback_goto_mode_handler(callback: types.CallbackQuery):
+    active_ex = getattr(bot_config, "active_exchange", "BITUNIX")
+    curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
+    client_inst = bot_state.get("client")
+    text, kb = await build_mode_gui_content(client_inst, active_ex, curr_mode)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "gui_goto_exchange")
+async def callback_goto_exchange_handler(callback: types.CallbackQuery):
+    active_ex = getattr(bot_config, "active_exchange", "BITUNIX")
+    curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
+    client_inst = bot_state.get("client")
+    text, kb = await build_exchange_gui_content(client_inst, active_ex, curr_mode)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        pass
+    await callback.answer()
 
 @dp.message(Command("status"))
 @dp.message(Command("saldo"))
@@ -1393,6 +1630,96 @@ async def set_breakeven_handler(message: types.Message, command: CommandObject):
         except ValueError:
             await message.answer("❌ Format salah. Gunakan `/set_breakeven on`, `/set_breakeven off`, atau `/set_breakeven 8.0`", parse_mode="Markdown")
 
+@dp.message(Command("set_exec_mode", "set_execution"))
+async def set_exec_mode_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip().upper()
+    if not arg:
+        curr_mode = getattr(bot_config, "execution_mode", "SMART_LIMIT")
+        retrace = getattr(bot_config, "limit_retracement_percent", 0.4)
+        timeout = getattr(bot_config, "limit_order_timeout_seconds", 180)
+        text = (
+            f"🎯 **PENGATURAN MODE EKSEKUSI ORDER**\n"
+            f"────────────────────────\n"
+            f"• Mode Saat Ini : **`{curr_mode}`**\n"
+            f"• Limit Retrace : **`{retrace:.2f}%`** (Diskon Pullback)\n"
+            f"• Order Timeout : **`{timeout}s`** (Batal Otomatis jika Trap)\n\n"
+            f"Pilihan Mode:\n"
+            f"1️⃣ `/set_exec_mode SMART_LIMIT` — Pasang Limit di harga diskon pullback. Batalkan jika tidak tersentuh (Anti-Pucuk/Anti-Slippage).\n"
+            f"2️⃣ `/set_exec_mode HYBRID` — Pasang Limit diskon dengan toleransi adaptif.\n"
+            f"3️⃣ `/set_exec_mode MARKET` — Eksekusi Instan Market Order (Taker)."
+        )
+        await message.answer(text, parse_mode="Markdown")
+        return
+    try:
+        bot_config.update_execution_mode(arg)
+        await message.answer(
+            f"✅ **Mode Eksekusi Diubah ke `{bot_config.execution_mode}`!**\n"
+            f"• Use Limit Orders: `{bot_config.use_limit_orders}`\n"
+            f"• Pullback Retracement: `{bot_config.limit_retracement_percent:.2f}%`\n"
+            f"• Timeout Guard: `{bot_config.limit_order_timeout_seconds} detik`",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await message.answer(f"❌ {e}")
+
+@dp.message(Command("set_limit_retrace", "set_retrace"))
+async def set_limit_retrace_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg:
+        curr_val = getattr(bot_config, "limit_retracement_percent", 0.4)
+        await message.answer(
+            f"ℹ️ **Limit Retracement Saat Ini:** `{curr_val:.2f}%`\n\n"
+            f"Penjelasan: Bot akan memasang Limit Order dengan harga diskon `{curr_val:.2f}%` di bawah harga sinyal (untuk LONG) atau di atas sinyal (untuk SHORT) agar tidak mengejar harga di pucuk.\n\n"
+            f"Gunakan `/set_limit_retrace <0.1-5.0>` (Contoh: `/set_limit_retrace 0.4`)",
+            parse_mode="Markdown"
+        )
+        return
+    try:
+        val = float(arg)
+        bot_config.update_limit_retracement(val)
+        await message.answer(f"✅ **Diskon Limit Retracement diubah ke `{val:.2f}%`**! 🎯", parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ {e}")
+
+@dp.message(Command("set_limit_timeout", "set_timeout"))
+async def set_limit_timeout_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg:
+        curr_val = getattr(bot_config, "limit_order_timeout_seconds", 180)
+        await message.answer(
+            f"ℹ️ **Limit Order Timeout Saat Ini:** `{curr_val}` detik\n\n"
+            f"Penjelasan: Jika Limit Order tidak tersentuh (pullback tidak terjadi) dalam `{curr_val}` detik, bot otomatis membatalkan order di exchange untuk menghindari fakeout/trap.\n\n"
+            f"Gunakan `/set_limit_timeout <10-1800>` (Contoh: `/set_limit_timeout 180`)",
+            parse_mode="Markdown"
+        )
+        return
+    try:
+        val = int(arg)
+        bot_config.update_limit_timeout(val)
+        await message.answer(f"✅ **Timeout Pembatalan Limit Order diubah ke `{val}` detik**! ⏳", parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ {e}")
+
+@dp.message(Command("set_atr_sl"))
+async def set_atr_sl_handler(message: types.Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg:
+        curr_val = getattr(bot_config, "atr_multiplier_sl", 1.5)
+        await message.answer(
+            f"ℹ️ **Dynamic ATR SL Multiplier Saat Ini:** `{curr_val:.2f}x ATR`\n\n"
+            f"Penjelasan: Stop Loss disesuaikan secara dinamis dengan volatilitas koin ($SL = ATR \\times {curr_val:.2f}$) agar tidak terkena wick hunting pada koin dengan fluktuasi tinggi.\n\n"
+            f"Gunakan `/set_atr_sl <0.5-5.0>` (Contoh: `/set_atr_sl 1.8`)",
+            parse_mode="Markdown"
+        )
+        return
+    try:
+        val = float(arg)
+        bot_config.update_atr_multiplier_sl(val)
+        await message.answer(f"✅ **Multiplier ATR Stop Loss diubah ke `{val:.2f}x`**! 🛡️", parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ {e}")
+
+
 @dp.message(Command("set_leverage"))
 async def set_leverage_handler(message: types.Message, command: CommandObject):
     if command.args:
@@ -1628,31 +1955,56 @@ async def reset_modal_handler(message: types.Message):
 
 @dp.message(Command("reset_stats"))
 @dp.message(Command("reset_demo"))
+@dp.message(Command("reset_binance_history"))
+@dp.message(Command("reset_pola"))
 @dp.message(F.text == "🔄 Reset Demo")
 async def reset_stats_handler(message: types.Message):
+    active_ex = getattr(bot_config, "active_exchange", "BINANCE").upper()
+    trading_mode = getattr(bot_config, "trading_mode", "TESTNET").upper()
+    
     bot_config.reset_simulated_modal(100.0)
     bot_config.update_margin_mode("DYNAMIC")
-    bot_config.update_leverage(10)
+    bot_config.update_leverage(15)
     bot_config.update_risk_per_trade(1.0)
     bot_config.update_max_position_equity_ratio(0.15)
     bot_config.update_tp(30.0)
     bot_config.update_sl(25.0)
-    reset_trade_stats()
+
+    # 1. Reset trade stats session & PostgreSQL trade_history
+    reset_trade_stats(exchange=active_ex)
     
+    # 2. Reset AI Learner category stats & blacklist
+    reset_pattern_blacklist()
+    
+    # 3. Reset Pattern Memory fingerprints & PostgreSQL pattern tables
+    clear_pattern_memory(exchange=active_ex)
+    
+    # 4. Clear explainability snapshots
+    clear_trade_explainability()
+    
+    # 5. Clear in-memory active trade & daily circuit breaker state
+    if isinstance(bot_state.get("active_trade_reasons"), dict):
+        bot_state["active_trade_reasons"].clear()
+    if isinstance(bot_state.get("active_trade_meta"), dict):
+        bot_state["active_trade_meta"].clear()
+    bot_state["daily_trades_count"] = 0
+    bot_state["consecutive_losses"] = 0
+    bot_state["circuit_breaker_active"] = False
+
     await message.answer(
-        "🔄 **RESET TOTAL PENGUJIAN DEMO BERHASIL!** 🔄\n\n"
-        "Seluruh parameter dan rekap performa telah dikembalikan ke **Preset Uji Coba Paling Aman**:\n"
-        "• 💰 Modal Simulasi : `100.00 USDT`\n"
-        "• 💵 Margin Sizing  : `DYNAMIC (Auto Safe Computed)`\n"
-        "• 🛡️ Risk / Trade   : `1.0%` ($1.00 per SL hit)\n"
-        "• 🔒 Max Margin/Pos : `15%` ($15.00 max)\n"
-        "• ⚡ Leverage       : `10x` (Jarak SL lega 2.5%)\n"
-        "• 🎯 Take Profit    : `30.0%` ROI\n"
-        "• 🛑 Stop Loss      : `25.0%` ROI\n"
-        "• 📊 Rekap Win Rate : `0W / 0L (Reset ke 0)`\n\n"
-        "Bot siap melakukan scanning dan pengujian ulang dari awal dengan teknik optimal! 🚀",
+        f"🔄 **RESET TOTAL HISTORY & POLA AI BERHASIL!** 🔄\n"
+        f"Exchange: `{active_ex}` | Mode: `{trading_mode}`\n\n"
+        "Seluruh rekaman history lama dan memori pola telah **DIBERSIHKAN TOTAL**:\n"
+        "• 🧹 **Trade Stats & DB History** : Reset ke `0W / 0L`\n"
+        "• 🧠 **Pattern Learner & Blacklist**: Dikosongkan (Semua pola kembali fresh)\n"
+        "• 🧬 **Pattern Memory Fingerprints**: Dihapus (AI siap belajar data baru)\n"
+        "• 📑 **Trade Explainability Log**  : Dikosongkan\n"
+        "• 🛡️ **Circuit Breaker Status**    : Normal (0 Consecutive Loss)\n"
+        "• 💰 **Preset Parameter Aman**    : Modal $100 | Risk 1% | Lev 15x | Dynamic SL/TP\n\n"
+        "Bot sekarang akan merekam dan mempelajari setiap setup baru dari nol secara akurat! 🚀",
         parse_mode="Markdown",
     )
+
 
 @dp.message(Command("set_max_ratio"))
 async def set_max_ratio_handler(message: types.Message, command: CommandObject):
@@ -1904,6 +2256,56 @@ async def btn_status_handler(message: types.Message):
 async def btn_hitung_margin_handler(message: types.Message):
     await hitung_margin_handler(message, CommandObject(prefix="/", command="hitung_margin", args=""))
 
+def check_config_conflicts() -> list[str]:
+    """Mendeteksi potensi konflik antar parameter konfigurasi bot."""
+    warnings = []
+    lev = float(getattr(bot_config, "leverage", 15) or 15)
+    sl_roi = float(getattr(bot_config, "sl_percent", 25) or 25)
+    min_conf = float(getattr(bot_config, "min_confluence_score", 65) or 65)
+    exec_m = getattr(bot_config, "execution_mode", "SMART_LIMIT").upper()
+    act_ex = getattr(bot_config, "active_exchange", "BINANCE").upper()
+    tr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING").upper()
+
+    # 1. Jarak Harga SL vs Leverage
+    price_sl_dist = (sl_roi / lev) if lev > 0 else 0.0
+    if price_sl_dist < 0.8:
+        warnings.append(
+            f"⚠️ **Konflik Leverage vs SL:** Leverage `{lev:.0f}x` & SL `{sl_roi:.0f}% ROI` membuat jarak SL hanya `{price_sl_dist:.2f}%`. "
+            f"Rentan terkena wick/sick 5m! Disarankan Leverage 10x-20x."
+        )
+
+    # 2. Confluence Score terlalu rendah
+    if min_conf < 60:
+        warnings.append(
+            f"⚠️ **Konflik Kualitas Sinyal:** Min Confluence `{min_conf:.0f}` terlalu rendah. Sinyal noise akan mudah lolos. Disarankan `>= 65.0`."
+        )
+
+    # 3. Mode Eksekusi Market
+    if exec_m == "MARKET":
+        warnings.append(
+            "⚠️ **Peringatan Eksekusi:** Mode `MARKET` aktif (rentan beli di pucuk candle & slippage). Disarankan gunakan `SMART_LIMIT`."
+        )
+
+    # 4. Penjelasan Spesifik Demo Binance vs Bitunix
+    if tr_mode in ("PAPER_TRADING", "TESTNET", "DEMO", "SIMULATION"):
+        if act_ex == "BINANCE":
+            if bot_config.simulated_modal and bot_config.simulated_modal > 0:
+                warnings.append(
+                    f"💡 **Demo Binance:** Menggunakan *Virtual Wallet Custom* (${bot_config.simulated_modal:.2f}). PnL terakumulasi realtime ke saldo ini."
+                )
+            else:
+                warnings.append(
+                    "💡 **Demo Binance:** Menggunakan *Binance Futures Testnet API ($15.000)* faucet resmi."
+                )
+        elif act_ex == "BITUNIX":
+            warnings.append(
+                f"💡 **Demo Bitunix:** Berjalan via *Virtual Paper Engine 1:1* (Live Price Bitunix + Akumulasi PnL Realtime) karena Bitunix tidak memiliki public faucet."
+            )
+
+    return warnings
+
+
+@dp.message(Command("pengaturan", "settings"))
 @dp.message(F.text == "⚙️ Pengaturan")
 async def btn_pengaturan_handler(message: types.Message):
     ts_status = "ON" if bot_config.use_trailing_stop else "OFF"
@@ -1917,63 +2319,101 @@ async def btn_pengaturan_handler(message: types.Message):
     eval_win = getattr(bot_config, "winrate_eval_window", "DAILY")
     min_wr = getattr(bot_config, "min_pattern_winrate", 50.0)
 
+    exec_mode = getattr(bot_config, "execution_mode", "SMART_LIMIT")
+    retrace_pct = getattr(bot_config, "limit_retracement_percent", 0.4)
+    limit_to = getattr(bot_config, "limit_order_timeout_seconds", 180)
+    atr_sl_mult = getattr(bot_config, "atr_multiplier_sl", 1.8)
+
+    # Evaluasi Konflik & Peringatan
+    conflicts = check_config_conflicts()
+    conflict_text = ""
+    if conflicts:
+        conflict_text = "────────────────────────\n📋 **STATUS & CATATAN KONFIGURASI:**\n" + "\n".join(conflicts) + "\n"
+
     text = (
-        "⚙️ **PENGATURAN BOT LENGKAP** ⚙️\n\n"
-        "💰 **1. MODAL & MARGIN SIZING**\n"
-        f"• Basis Modal : `{modal_desc}`\n"
-        f"• Mode Margin : `{margin_desc}`\n"
-        f"• Risk / Trade: `{bot_config.risk_per_trade_percent}%` dari saldo\n"
-        f"• Max Alokasi : `{bot_config.max_position_equity_ratio * 100:.0f}%` saldo / posisi\n\n"
-        "🛡️ **2. TARGET & PROTEKSI (TP / SL / BE / TS)**\n"
-        f"• Take Profit : `{bot_config.tp_percent}%` ROI\n"
-        f"• Stop Loss   : `{bot_config.sl_percent}%` ROI\n"
+        "⚙️ **PENGATURAN BOT LENGKAP & STATUS KONFIGURASI** ⚙️\n\n"
+        "🎯 **1. MODE EKSEKUSI & FIDELITY**\n"
+        f"• Mode Eksekusi : **`{exec_mode}`** 🛡️\n"
+        f"• Limit Retrace : **`{retrace_pct:.2f}%`** (Diskon Entry Pullback)\n"
+        f"• Timeout Guard : **`{limit_to}s`** (Auto-Cancel jika Trap)\n"
+        f"• Dynamic ATR SL: **`{atr_sl_mult:.2f}x ATR`** (Anti Wick Hunting)\n\n"
+        "💰 **2. MODAL & MARGIN SIZING**\n"
+        f"• Basis Modal   : `{modal_desc}`\n"
+        f"• Mode Margin   : `{margin_desc}`\n"
+        f"• Risk / Trade  : `{bot_config.risk_per_trade_percent}%` dari saldo\n"
+        f"• Max Alokasi   : `{bot_config.max_position_equity_ratio * 100:.0f}%` saldo / posisi\n\n"
+        "🛡️ **3. TARGET & PROTEKSI (TP / SL / BE / TS)**\n"
+        f"• Take Profit   : `{bot_config.tp_percent}%` ROI\n"
+        f"• Stop Loss     : `{bot_config.sl_percent}%` ROI\n"
         f"• Auto Break-Even : `{be_status}` (Risk-Free Mode 🛡️)\n"
-        f"• Trailing Stop   : `{ts_status}` (Act: `{bot_config.ts_activation_percent}%`, Call: `{bot_config.ts_callback_rate}%`)\n\n"
-        "🧠 **3. ADAPTIVE WIN RATE GATEKEEPER**\n"
+        f"• Trailing Stop : `{ts_status}` (Act: `{bot_config.ts_activation_percent}%`, Call: `{bot_config.ts_callback_rate}%`)\n\n"
+        "🧠 **4. ADAPTIVE WIN RATE GATEKEEPER**\n"
         f"• Jendela Waktu : `{eval_win}` (Rolling Window)\n"
         f"• Min Win Rate  : `{min_wr:.0f}%` (Ambang batas Real vs Latihan)\n"
         f"• Probation Mode: `{'AKTIF (1x Test Harian)' if bot_config.use_probation_mode else 'OFF'}`\n\n"
-        "⚡ **4. EKSEKUSI & SCANNER PRO**\n"
-        f"• Exchange    : `{bot_config.active_exchange}` | Mode: `{bot_config.trading_mode}`\n"
-        f"• Confluence Matrix : Min `{min_conf:.0f}/100` Poin (5-Pillar Pro Setup)\n"
-        f"• Target Scan : `{scan_target_desc}`\n"
-        f"• Urutan Scan : `{scan_sort_desc}`\n"
-        f"• Leverage    : `{bot_config.leverage}x`\n"
-        f"• Max Posisi  : `{bot_config.max_open_positions} koin bersamaan`\n"
-        f"• RSI Filter  : `{bot_config.rsi_length}` (Oversold: `{bot_config.rsi_oversold:g}` / Overbought: `{bot_config.rsi_overbought:g}`)\n\n"
-        "──────────────\n"
-        "📝 **DAFTAR PERINTAH PENGATURAN:**\n"
-        "📊 **Win Rate & Evaluasi AI:**\n"
-        "• `/winrate` (Cek rekap Win Rate Daily / Weekly / Monthly)\n"
-        "• `/set_wr_window daily` (Hanya nilai 24 jam terakhir)\n"
-        "• `/set_wr_window recent20` (Hanya nilai 20 trade terakhir)\n"
-        "• `/set_min_wr 50` (Atur minimal 50% Win Rate)\n"
-        "• `/reset_blacklist` (Reset blokir pola)\n\n"
-        "🎯 **Pro Matrix & Proteksi:**\n"
-        "• `/set_confluence 80` (Min skor konfluensi 80/100)\n"
-        "• `/set_breakeven on 8.0` (Auto geser SL ke Entry)\n"
-        "• `/set_tp 30` (Take profit 30%)\n"
-        "• `/set_sl 25` (Stop loss 25%)\n\n"
-        "🌐 **Scanner & Target Koin:**\n"
-        "• `/set_scan` (Buka Panel Tombol Target & Urutan Scan)\n"
-        "• `/set_scan_target all` (Scan seluruh altcoin futures)\n"
-        "• `/set_scan_sort volume` | `/set_scan_sort change`\n\n"
-        "💵 **Modal & Sizing:**\n"
-        "• `/set_modal 100` | `/set_modal auto` | `/reset_modal`\n"
-        "• `/set_margin auto` atau `/set_margin 25`\n"
-        "• `/set_risk 1.0` | `/set_max_ratio 15`\n\n"
-        "⚡ **Eksekusi & Filter:**\n"
-        "• `/set_leverage 10` | `/set_max_positions 3`\n"
-        "• `/set_rsi_oversold 30` | `/set_rsi_overbought 70`"
+        "⚡ **5. SCANNER & FILTER PASAR**\n"
+        f"• Exchange      : `{bot_config.active_exchange}` | Mode: `{bot_config.trading_mode}`\n"
+        f"• Confluence    : Min `{min_conf:.0f}/100` Poin (5-Pillar Pro Setup)\n"
+        f"• Target Scan   : `{scan_target_desc}`\n"
+        f"• Urutan Scan   : `{scan_sort_desc}`\n"
+        f"• Leverage      : `{bot_config.leverage}x` | Max Posisi: `{bot_config.max_open_positions}`\n\n"
+        f"{conflict_text}"
+        "────────────────────────\n"
+        "📝 **PERINTAH PENGATURAN CEPAT:**\n"
+        "• `/mode` (GUI Mode) | `/exchange` (GUI Exchange)\n"
+        "• `/set_exec_mode smart` | `/set_limit_retrace 0.4` | `/set_atr_sl 1.8`\n"
+        "• `/set_modal 100` | `/set_leverage 15` | `/set_tp 40` | `/set_sl 25`"
     )
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🔄 Ganti ke Binance", callback_data="change_exchange_BINANCE"),
-            InlineKeyboardButton(text="🔄 Ganti ke Bitunix", callback_data="change_exchange_BITUNIX")
+            InlineKeyboardButton(text="🎯 SMART LIMIT", callback_data="change_exec_SMART_LIMIT"),
+            InlineKeyboardButton(text="⚡ HYBRID", callback_data="change_exec_HYBRID_LIMIT"),
+            InlineKeyboardButton(text="🚀 MARKET", callback_data="change_exec_MARKET")
+        ],
+        [
+            InlineKeyboardButton(text="🎯 Retrace 0.3%", callback_data="change_retrace_0.3"),
+            InlineKeyboardButton(text="🎯 Retrace 0.4%", callback_data="change_retrace_0.4"),
+            InlineKeyboardButton(text="🎯 Retrace 0.6%", callback_data="change_retrace_0.6"),
+        ],
+        [
+            InlineKeyboardButton(text="🎯 Ganti Mode", callback_data="gui_goto_mode"),
+            InlineKeyboardButton(text="🏛️ Ganti Exchange", callback_data="gui_goto_exchange"),
+        ],
+        [
+            InlineKeyboardButton(text="🔄 Refresh Pengaturan", callback_data="gui_refresh_settings")
         ]
     ])
     await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("change_exec_"))
+async def callback_change_exec_mode(callback: types.CallbackQuery):
+    target = callback.data.replace("change_exec_", "").upper()
+    try:
+        bot_config.update_execution_mode(target)
+        await callback.answer(f"✅ Mode Eksekusi diubah ke {bot_config.execution_mode}!", show_alert=True)
+        try:
+            await callback.message.delete()
+        except:
+            pass
+        await btn_pengaturan_handler(callback.message)
+    except Exception as e:
+        await callback.answer(f"Gagal ubah mode eksekusi: {e}", show_alert=True)
+
+@dp.callback_query(F.data.startswith("change_retrace_"))
+async def callback_change_retrace(callback: types.CallbackQuery):
+    try:
+        val_str = callback.data.replace("change_retrace_", "")
+        val = float(val_str)
+        bot_config.update_limit_retracement(val)
+        await callback.answer(f"✅ Diskon Limit Retracement diubah ke {val:.2f}%!", show_alert=True)
+        try:
+            await callback.message.delete()
+        except:
+            pass
+        await btn_pengaturan_handler(callback.message)
+    except Exception as e:
+        await callback.answer(f"Gagal ubah limit retrace: {e}", show_alert=True)
 
 @dp.callback_query(F.data.startswith("change_exchange_"))
 async def callback_change_exchange(callback: types.CallbackQuery):
@@ -2021,6 +2461,15 @@ async def callback_change_exchange(callback: types.CallbackQuery):
     except Exception as e:
         await callback.answer(f"Gagal ganti exchange: {e}", show_alert=True)
 
+@dp.callback_query(F.data == "gui_refresh_settings")
+async def callback_refresh_settings(callback: types.CallbackQuery):
+    await callback.answer("🔄 Memperbarui pengaturan...")
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await btn_pengaturan_handler(callback.message)
+
 @dp.message(Command("pause"))
 @dp.message(Command("stop"))
 async def cmd_pause_handler(message: types.Message):
@@ -2033,23 +2482,24 @@ async def cmd_pause_handler(message: types.Message):
 
 @dp.message(Command("resume"))
 async def cmd_resume_handler(message: types.Message):
-    if not bot_state["is_running"]:
-        bot_state["is_running"] = True
-        bot_state["state"] = "RUNNING"
-        await message.answer("▶️ Bot Scanner dijalankan kembali.")
-    else:
-        await message.answer("⚠️ Bot sudah berjalan.")
+    bot_state["is_running"] = True
+    bot_state["state"] = "RUNNING"
+    bot_state["circuit_breaker_acknowledged"] = True
+    active_ex = getattr(bot_config, "active_exchange", "BINANCE").upper()
+    await message.answer(f"▶️ **Bot Scanner dijalankan kembali!** (Exchange: `{active_ex}`)", reply_markup=get_main_keyboard(active_ex), parse_mode="Markdown")
 
 @dp.message(F.text == "⏯️ Pause / Resume")
 async def btn_pause_resume_handler(message: types.Message):
+    active_ex = getattr(bot_config, "active_exchange", "BINANCE").upper()
     if bot_state["is_running"]:
         bot_state["is_running"] = False
         bot_state["state"] = "PAUSED"
-        await message.answer("🛑 Bot Scanner dihentikan sementara.")
+        await message.answer("🛑 Bot Scanner dihentikan sementara.", reply_markup=get_main_keyboard(active_ex))
     else:
         bot_state["is_running"] = True
         bot_state["state"] = "RUNNING"
-        await message.answer("▶️ Bot Scanner dijalankan kembali.")
+        bot_state["circuit_breaker_acknowledged"] = True
+        await message.answer(f"▶️ **Bot Scanner dijalankan kembali!** (Exchange: `{active_ex}`)", reply_markup=get_main_keyboard(active_ex), parse_mode="Markdown")
 
 import csv
 

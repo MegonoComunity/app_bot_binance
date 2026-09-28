@@ -307,3 +307,35 @@ class BinanceAdapter(BaseExchange):
             quantity=abs(pos['position_amt']),
             reduce_only=True,
         )
+
+    async def cancel_order(self, symbol: str, order_id: Union[str, int]) -> Dict[str, Any]:
+        """
+        Membatalkan open order di Binance Futures.
+        """
+        try:
+            return await self.client.futures_cancel_order(symbol=symbol.upper(), orderId=order_id)
+        except Exception as e:
+            log_error(f"BINANCE_CANCEL_ORDER_{symbol}", str(e))
+            return {"status": "error", "message": str(e)}
+
+    async def get_order(self, symbol: str, order_id: Union[str, int]) -> Dict[str, Any]:
+        """
+        Mengambil detail order dari Binance Futures.
+        """
+        try:
+            return await self.client.futures_get_order(symbol=symbol.upper(), orderId=order_id)
+        except Exception as e:
+            log_error(f"BINANCE_GET_ORDER_{symbol}", str(e))
+            return {}
+
+    async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Mengambil daftar open orders dari Binance Futures.
+        """
+        try:
+            if symbol:
+                return await self.client.futures_get_open_orders(symbol=symbol.upper())
+            return await self.client.futures_get_open_orders()
+        except Exception as e:
+            log_error("BINANCE_OPEN_ORDERS", str(e))
+            return []

@@ -326,3 +326,39 @@ async def migrate_from_json(json_path: str = "data/pattern_memory.json") -> int:
     except Exception as exc:
         logger.error(f"[DB] Migrasi pattern JSON gagal: {exc}")
         return 0
+
+
+async def clear_pattern_records(exchange: Optional[str] = None) -> tuple[int, int]:
+    """
+    Menghapus records pattern_entries (dan pattern_memory) di database.
+    Jika exchange diberikan, hapus pattern_entries yang cocok.
+    Return: (entries_deleted, memory_deleted)
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            if exchange and exchange.upper() not in ("ALL", "*"):
+                ex_clean = exchange.upper().strip()
+                res_entries = await conn.execute(
+                    "DELETE FROM pattern_entries WHERE COALESCE(exchange, 'BINANCE') LIKE $1",
+                    f"{ex_clean}%"
+                )
+                res_mem = await conn.execute(
+                    """
+                    DELETE FROM pattern_memory 
+                    WHERE fingerprint NOT IN (SELECT DISTINCT fingerprint FROM pattern_entries)
+                    """
+                )
+            else:
+                res_entries = await conn.execute("DELETE FROM pattern_entries")
+                res_mem = await conn.execute("DELETE FROM pattern_memory")
+
+            parts_e = res_entries.split()
+            cnt_e = int(parts_e[-1]) if len(parts_e) > 1 else 0
+            parts_m = res_mem.split()
+            cnt_m = int(parts_m[-1]) if len(parts_m) > 1 else 0
+            return cnt_e, cnt_m
+    except Exception as exc:
+        logger.error(f"[DB] Gagal menghapus pattern records: {exc}")
+        return 0, 0
+

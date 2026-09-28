@@ -63,15 +63,17 @@ MAX_TOTAL_EXPOSURE_PERCENT_ENV = float(os.getenv("MAX_TOTAL_EXPOSURE_PERCENT", "
 BREAKOUT_MIN_SCORE_ENV = float(os.getenv("BREAKOUT_MIN_SCORE", "50.0"))
 BREAKOUT_VOLUME_MULTIPLIER_ENV = float(os.getenv("BREAKOUT_VOLUME_MULTIPLIER", "2.0"))
 
-# Fitur Lanjutan: Risk Management, Liquidity, Funding, & Limit Order
+# Fitur Lanjutan: Risk Management, Liquidity, Funding, & Smart Limit Order
 DAILY_LOSS_LIMIT_PERCENT_ENV = float(os.getenv("DAILY_LOSS_LIMIT_PERCENT", "5.0"))
 MIN_ORDER_BOOK_DEPTH_USDT_ENV = float(os.getenv("MIN_ORDER_BOOK_DEPTH_USDT", "50000.0"))
 MAX_FUNDING_RATE_PERCENT_ENV = float(os.getenv("MAX_FUNDING_RATE_PERCENT", "0.05"))
 ATR_MULTIPLIER_SL_ENV = float(os.getenv("ATR_MULTIPLIER_SL", "1.5"))
-LIMIT_ORDER_TIMEOUT_SECONDS_ENV = int(os.getenv("LIMIT_ORDER_TIMEOUT_SECONDS", "30"))
+LIMIT_ORDER_TIMEOUT_SECONDS_ENV = int(os.getenv("LIMIT_ORDER_TIMEOUT_SECONDS", "180"))
+EXECUTION_MODE_ENV = os.getenv("EXECUTION_MODE", "SMART_LIMIT").upper().strip()
+LIMIT_RETRACEMENT_PERCENT_ENV = float(os.getenv("LIMIT_RETRACEMENT_PERCENT", "0.4"))
 MARGIN_MODE_ENV = os.getenv("MARGIN_MODE", "DYNAMIC").upper()
 MAX_POSITION_EQUITY_RATIO_ENV = float(os.getenv("MAX_POSITION_EQUITY_RATIO", "0.20"))
-USE_LIMIT_ORDERS_ENV = os.getenv("USE_LIMIT_ORDERS", "False").lower() in ("true", "1", "yes")
+USE_LIMIT_ORDERS_ENV = os.getenv("USE_LIMIT_ORDERS", "True").lower() in ("true", "1", "yes")
 MAX_SLIPPAGE_PCT_ENV = float(os.getenv("MAX_SLIPPAGE_PCT", "0.3"))  # Toleransi slippage max (0.3%)
 PAPER_SLIPPAGE_PCT_ENV = float(os.getenv("PAPER_SLIPPAGE_PCT", "0.08"))  # Slippage simulasi realistis (0.08%)
 
@@ -167,6 +169,8 @@ class BotSettings:
             cls._instance.max_funding_rate_percent = MAX_FUNDING_RATE_PERCENT_ENV
             cls._instance.atr_multiplier_sl = ATR_MULTIPLIER_SL_ENV
             cls._instance.limit_order_timeout_seconds = LIMIT_ORDER_TIMEOUT_SECONDS_ENV
+            cls._instance.execution_mode = EXECUTION_MODE_ENV if EXECUTION_MODE_ENV in ("SMART_LIMIT", "HYBRID_LIMIT", "MARKET") else "SMART_LIMIT"
+            cls._instance.limit_retracement_percent = LIMIT_RETRACEMENT_PERCENT_ENV
             cls._instance.use_limit_orders = USE_LIMIT_ORDERS_ENV
             cls._instance.max_slippage_pct = MAX_SLIPPAGE_PCT_ENV
             cls._instance.paper_slippage_pct = PAPER_SLIPPAGE_PCT_ENV
@@ -179,6 +183,43 @@ class BotSettings:
             cls._instance.notify_simulation_trades = NOTIFY_SIMULATION_TRADES_ENV
             cls._instance.telegram_demo_chat_id = TELEGRAM_DEMO_CHAT_ID
         return cls._instance
+
+    def update_execution_mode(self, mode: str):
+        """Mengatur mode eksekusi order: SMART_LIMIT, HYBRID_LIMIT, atau MARKET."""
+        m = mode.upper().strip()
+        if m in ("LIMIT", "SMART", "SMART_LIMIT"):
+            target_m = "SMART_LIMIT"
+        elif m in ("HYBRID", "HYBRID_LIMIT"):
+            target_m = "HYBRID_LIMIT"
+        elif m in ("MARKET", "INSTANT", "DIRECT"):
+            target_m = "MARKET"
+        else:
+            raise ValueError("Mode eksekusi harus SMART_LIMIT, HYBRID_LIMIT, atau MARKET")
+        self.execution_mode = target_m
+        self.use_limit_orders = target_m != "MARKET"
+        self._update_env("EXECUTION_MODE", target_m)
+        self._update_env("USE_LIMIT_ORDERS", str(self.use_limit_orders))
+
+    def update_limit_retracement(self, val: float):
+        """Mengatur persentase diskon/retrace untuk Limit Order (misal 0.3% - 1.5%)."""
+        if val <= 0.0 or val > 5.0:
+            raise ValueError("Limit retracement harus antara 0.1% sampai 5.0%")
+        self.limit_retracement_percent = val
+        self._update_env("LIMIT_RETRACEMENT_PERCENT", str(val))
+
+    def update_limit_timeout(self, seconds: int):
+        """Mengatur batas waktu tunggu Limit Order sebelum dibatalkan otomatis."""
+        if seconds < 10 or seconds > 1800:
+            raise ValueError("Timeout limit order harus antara 10 sampai 1800 detik")
+        self.limit_order_timeout_seconds = int(seconds)
+        self._update_env("LIMIT_ORDER_TIMEOUT_SECONDS", str(self.limit_order_timeout_seconds))
+
+    def update_atr_multiplier_sl(self, mult: float):
+        """Mengatur multiplier ATR untuk Stop Loss dinamis."""
+        if mult < 0.5 or mult > 5.0:
+            raise ValueError("ATR Multiplier SL harus antara 0.5 sampai 5.0")
+        self.atr_multiplier_sl = float(mult)
+        self._update_env("ATR_MULTIPLIER_SL", str(self.atr_multiplier_sl))
 
     def update_notify_simulation_trades(self, enabled: bool):
         """Mengatur apakah notifikasi trade hasil simulasi/paper dikirim ke Telegram."""
@@ -205,6 +246,28 @@ class BotSettings:
             if sym == f"{prefix}USDT" or sym == prefix or sym.startswith(f"{prefix}_"):
                 return True
         return False
+
+    def update_trading_mode(self, mode: str):
+        """Mengatur mode trading: REAL, TESTNET (Demo Binance API), atau PAPER_TRADING (Simulasi Lokal)."""
+        m = mode.upper().strip()
+        if m in ("REAL", "LIVE", "PRODUCTION"):
+            target_m = "REAL"
+        elif m in ("TESTNET", "DEMO_TESTNET", "TESTNET_API", "BINANCE_DEMO"):
+            target_m = "TESTNET"
+        elif m in ("PAPER", "PAPER_TRADING", "SIMULATION", "VIRTUAL", "DEMO"):
+            target_m = "PAPER_TRADING"
+        else:
+            raise ValueError("Mode trading harus: REAL, TESTNET, atau PAPER_TRADING")
+        self.trading_mode = target_m
+        self._update_env("TRADING_MODE", target_m)
+
+    def update_active_exchange(self, ex: str):
+        """Mengatur exchange aktif: BINANCE atau BITUNIX."""
+        target = ex.upper().strip()
+        if target not in ("BINANCE", "BITUNIX"):
+            raise ValueError("Exchange harus BINANCE atau BITUNIX")
+        self.active_exchange = target
+        self._update_env("ACTIVE_EXCHANGE", target)
 
     def update_excluded_coins(self, coins: str | List[str] | Set[str]):
         """Mengubah daftar koin yang di-exclude secara dinamis."""

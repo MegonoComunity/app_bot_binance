@@ -287,3 +287,57 @@ def get_pattern_stats_for_entry(entry_id: str) -> dict:
         "losses": losses,
     }
 
+
+def clear_pattern_memory(exchange: Optional[str] = None) -> dict:
+    """
+    Mereset / menghapus riwayat pola dari data/pattern_memory.json.
+    Jika exchange ditentukan (misal 'BINANCE'), hapus hanya entri milik exchange tersebut
+    dan hitung ulang patterns yang tersisa. Jika exchange=None atau 'ALL', bersihkan semua.
+    """
+    data = _load()
+    if exchange and exchange.upper() not in ("ALL", "*"):
+        ex_clean = str(exchange).upper().strip()
+        remaining_entries = [
+            e for e in data.get("entries", [])
+            if not (str(e.get("exchange", "BINANCE")).upper().startswith(ex_clean))
+        ]
+        patterns: dict = {}
+        for entry in remaining_entries:
+            if entry.get("result") is None:
+                continue
+            fp = entry["fingerprint"]
+            if fp not in patterns:
+                patterns[fp] = {
+                    "win": 0, "loss": 0, "total": 0,
+                    "total_pnl": 0.0,
+                    "conditions_sample": entry.get("conditions", {}),
+                    "last_seen": entry["time"],
+                }
+            patterns[fp]["total"] += 1
+            patterns[fp]["total_pnl"] += float(entry.get("pnl") or 0)
+            patterns[fp]["last_seen"] = entry["time"]
+            if entry["result"] == "WIN":
+                patterns[fp]["win"] += 1
+            else:
+                patterns[fp]["loss"] += 1
+        data = {"entries": remaining_entries, "patterns": patterns}
+    else:
+        data = {"entries": [], "patterns": {}}
+
+    _save(data)
+    logger.info(f"[PATTERN MEMORY] Reset pattern memory untuk exchange: {exchange or 'ALL'}")
+
+    # Dual-write ke PostgreSQL (non-blocking)
+    try:
+        from database.pattern_repo import clear_pattern_records
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(clear_pattern_records(exchange))
+        else:
+            loop.run_until_complete(clear_pattern_records(exchange))
+    except Exception as exc:
+        logger.warning(f"[DB] dual-write clear pattern records gagal (non-fatal): {exc}")
+
+    return data
+
+

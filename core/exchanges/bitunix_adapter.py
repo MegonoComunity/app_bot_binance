@@ -738,3 +738,50 @@ class BitunixAdapter(BaseExchange):
             trade_side="CLOSE",
             position_id=pos_id,
         )
+
+    async def cancel_order(self, symbol: str, order_id: Union[str, int]) -> Dict[str, Any]:
+        """
+        Membatalkan open order di Bitunix Futures.
+        POST /api/v1/futures/trade/cancel_order
+        """
+        payload = {
+            "symbol": symbol.upper(),
+            "orderId": str(order_id),
+        }
+        return await self._request("POST", "/api/v1/futures/trade/cancel_order", data=payload, auth_required=True)
+
+    async def get_order(self, symbol: str, order_id: Union[str, int]) -> Dict[str, Any]:
+        """
+        Mengambil status detail order di Bitunix Futures.
+        GET /api/v1/futures/trade/get_order
+        """
+        params = {
+            "symbol": symbol.upper(),
+            "orderId": str(order_id),
+        }
+        try:
+            res = await self._request("GET", "/api/v1/futures/trade/get_order", params=params, auth_required=True)
+            return res.get("data", res) if isinstance(res, dict) else {}
+        except Exception as e:
+            log_error(f"BITUNIX_GET_ORDER_{symbol}", str(e))
+            return {}
+
+    async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Mengambil daftar open order di Bitunix Futures.
+        GET /api/v1/futures/trade/get_open_orders
+        """
+        params = {}
+        if symbol:
+            params["symbol"] = symbol.upper()
+        try:
+            res = await self._request("GET", "/api/v1/futures/trade/get_open_orders", params=params if params else None, auth_required=True)
+            data = res.get("data", []) if isinstance(res, dict) else []
+            if isinstance(data, dict):
+                return data.get("orderList", data.get("list", []))
+            elif isinstance(data, list):
+                return data
+            return []
+        except Exception as e:
+            log_error("BITUNIX_OPEN_ORDERS", str(e))
+            return []

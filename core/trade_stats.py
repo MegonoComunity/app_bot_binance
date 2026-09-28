@@ -80,9 +80,16 @@ def import_legacy_history() -> None:
         return
 
 
-def trade_summary() -> dict:
+def trade_summary(exchange: str = None) -> dict:
     import_legacy_history()
-    trades = _load_stats()["trades"]
+    all_trades = _load_stats()["trades"]
+    
+    if exchange:
+        ex_clean = str(exchange).upper().strip()
+        trades = [t for t in all_trades if str(t.get("exchange", "")).upper().strip() == ex_clean or str(t.get("exchange", "")).upper().startswith(ex_clean)]
+    else:
+        trades = all_trades
+
     wins = [trade for trade in trades if float(trade.get("realized_pnl", 0)) > 0]
     losses = [trade for trade in trades if float(trade.get("realized_pnl", 0)) <= 0]
     today = datetime.now().strftime("%Y-%m-%d")
@@ -110,15 +117,47 @@ def trade_summary() -> dict:
     }
 
 
-def reset_trade_stats() -> dict:
+def reset_trade_stats(exchange: str = None) -> dict:
     """Reset / bersihkan rekap trade stats sesi agar bisa menganalisis dari 0."""
     os.makedirs(os.path.dirname(STATS_FILE), exist_ok=True)
+    if exchange and exchange.upper() not in ("ALL", "*"):
+        ex_clean = str(exchange).upper().strip()
+        stats = _load_stats()
+        stats["trades"] = [
+            t for t in stats.get("trades", [])
+            if not (str(t.get("exchange", "BINANCE")).upper().startswith(ex_clean))
+        ]
+    else:
+        stats = {"trades": []}
+
     with open(STATS_FILE, "w", encoding="utf-8") as file:
-        json.dump({"trades": []}, file, indent=2)
-    return trade_summary()
+        json.dump(stats, file, indent=2)
+
+    # Dual-write delete ke PostgreSQL (non-blocking)
+    try:
+        from database.trade_repo import clear_trade_history
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(clear_trade_history(exchange))
+        else:
+            loop.run_until_complete(clear_trade_history(exchange))
+    except Exception as exc:
+        logger.warning(f"[DB] dual-write clear trade history gagal: {exc}")
+
+    return trade_summary(exchange=exchange)
 
 
 EXPLAINABILITY_FILE = "data/trade_explainability.json"
+
+def clear_trade_explainability() -> None:
+    """Bersihkan file trade explainability JSON."""
+    try:
+        if os.path.exists(EXPLAINABILITY_FILE):
+            with open(EXPLAINABILITY_FILE, "w", encoding="utf-8") as f:
+                json.dump([], f, indent=2)
+    except Exception as exc:
+        logger.warning(f"[EXPLAINABILITY] Gagal membersihkan explainability: {exc}")
+
 
 def record_trade_explainability_snapshot(
     symbol: str = "UNKNOWN",

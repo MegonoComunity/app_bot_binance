@@ -11,6 +11,13 @@ from core.logger import log_error
 _exchange_info_cache: Dict[str, Dict[str, int]] = {}
 
 
+def _safe_print(msg: str) -> None:
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        print(msg.encode("ascii", "replace").decode("ascii"))
+
+
 def _get_average_fill_price(order: dict, fallback_price: float) -> float:
     if not isinstance(order, dict):
         return fallback_price
@@ -171,17 +178,19 @@ async def place_long_order(
     use_limit: bool = False,
     limit_timeout: int = 30,
     max_slippage_pct: float = 0.003,
+    limit_price: Optional[float] = None,
 ) -> dict:
     """
-    Membuka posisi Long (Market / Limit Order) dengan Slippage Guard & perlindungan Anti-Double Entry.
+    Membuka posisi Long (Market / Smart Limit Order) dengan Slippage Guard,
+    Active Polling Timeout Cancellation, & perlindungan Anti-Double Entry.
     """
     async with _get_symbol_lock(symbol):
         # 1. Verifikasi langsung ke Exchange sebelum menembak order
         if await check_exchange_active_position(client, symbol):
-            print(f"🛑 [EXCHANGE LOCK] {symbol} sudah memiliki posisi aktif di exchange. Order LONG dibatalkan (Anti-Double Entry).")
+            _safe_print(f"🛑 [EXCHANGE LOCK] {symbol} sudah memiliki posisi aktif di exchange. Order LONG dibatalkan (Anti-Double Entry).")
             return {"status": "error", "message": f"Position already active on exchange for {symbol}"}
 
-        # 2. Slippage Guard: Re-fetch harga terkini sesaat sebelum order ditembak
+        # 2. Slippage Guard: Re-fetch harga terkini sesaat sebelum order ditembak (hanya jika mode market)
         fresh_price = current_price
         try:
             if isinstance(client, BaseExchange):
@@ -196,10 +205,10 @@ async def place_long_order(
         except Exception as e_p:
             log_error(f"PRICE_CHECK_{symbol}", f"Gagal re-fetch harga pasar terkini: {e_p}")
 
-        if current_price > 0 and fresh_price > 0:
+        if not use_limit and current_price > 0 and fresh_price > 0:
             price_deviation = (fresh_price - current_price) / current_price
             if price_deviation > max_slippage_pct:
-                print(
+                _safe_print(
                     f"⚠️ [SLIPPAGE GUARD] Order LONG {symbol} DIBATALKAN (SIGNAL_STALE): "
                     f"Harga pasar ({fresh_price:.6f}) telah melonjak {price_deviation * 100:+.2f}% di atas harga sinyal ({current_price:.6f}) "
                     f"> batas toleransi ({max_slippage_pct * 100:.2f}%)."
@@ -212,7 +221,8 @@ async def place_long_order(
                     "market_price": fresh_price,
                 }
 
-        exec_ref_price = fresh_price if fresh_price > 0 else current_price
+        target_exec_price = (limit_price if (use_limit and limit_price and limit_price > 0)
+                             else (fresh_price if fresh_price > 0 else current_price))
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -220,14 +230,17 @@ async def place_long_order(
                 await set_margin_type(client, symbol, 'ISOLATED')
                 
                 notional_value = margin_usdt * actual_leverage
-                quantity = notional_value / exec_ref_price
+                quantity = notional_value / target_exec_price
                 
                 precision_info = await get_symbol_precision(client, symbol)
                 qty_precision = precision_info['qty']
+                price_precision = precision_info['price']
                 multiplier = 10 ** qty_precision
                 quantity = math.floor(quantity * multiplier) / multiplier
                 
                 order_type = "LIMIT" if use_limit else "MARKET"
+                order = {}
+                order_id = None
                 
                 if isinstance(client, BaseExchange):
                     order = await client.place_order(
@@ -235,39 +248,90 @@ async def place_long_order(
                         side="BUY",
                         order_type=order_type,
                         quantity=quantity,
-                        price=exec_ref_price if use_limit else None,
+                        price=round(target_exec_price, price_precision) if use_limit else None,
                     )
+                    if isinstance(order, dict):
+                        order_id = order.get("orderId") or order.get("order_id") or (order.get("data", {}).get("orderId") if isinstance(order.get("data"), dict) else None)
                 else:
                     qty_str = str(int(quantity)) if qty_precision == 0 else f"{quantity:.{qty_precision}f}"
                     if use_limit:
-                        price_str = f"{exec_ref_price:.{precision_info['price']}f}"
+                        price_str = f"{target_exec_price:.{price_precision}f}"
                         order = await client.futures_create_order(
                             symbol=symbol, side=SIDE_BUY, type=ORDER_TYPE_LIMIT,
                             timeInForce=TIME_IN_FORCE_GTC, quantity=qty_str, price=price_str
                         )
-                        await asyncio.sleep(limit_timeout)
-                        check_order = await client.futures_get_order(symbol=symbol, orderId=order['orderId'])
-                        if check_order['status'] != 'FILLED':
-                            await client.futures_cancel_order(symbol=symbol, orderId=order['orderId'])
-                            return {"status": "error", "message": "Limit order timeout / Trap avoided"}
-                        order = check_order
+                        order_id = order.get("orderId")
                     else:
                         order = await client.futures_create_order(
                             symbol=symbol, side=SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=qty_str
                         )
 
-                fill_price = _get_average_fill_price(order, exec_ref_price)
+                # Active Polling & Timeout Cancellation untuk Limit Order
+                final_order_data = order
+                if use_limit:
+                    poll_interval = 2.0
+                    elapsed = 0.0
+                    is_filled = False
+                    _safe_print(f"⏳ [SMART LIMIT] LONG {symbol} @ {target_exec_price:.6f} ditempatkan. Menunggu pullback (Timeout: {limit_timeout}s)...")
+
+                    while elapsed < limit_timeout:
+                        await asyncio.sleep(poll_interval)
+                        elapsed += poll_interval
+
+                        if order_id:
+                            try:
+                                if hasattr(client, "get_order"):
+                                    chk = await client.get_order(symbol, order_id)
+                                elif hasattr(client, "futures_get_order"):
+                                    chk = await client.futures_get_order(symbol=symbol, orderId=order_id)
+                                else:
+                                    chk = {}
+
+                                status_raw = str(chk.get("status", chk.get("orderStatus", chk.get("state", "")))).upper()
+                                if status_raw in ("FILLED", "COMPLETE", "2", "SUCCESS"):
+                                    is_filled = True
+                                    final_order_data = chk
+                                    break
+                                elif status_raw in ("CANCELED", "CANCELLED", "EXPIRED", "REJECTED", "-1"):
+                                    return {"status": "error", "message": f"Limit order {symbol} was {status_raw}"}
+                            except Exception as e_chk:
+                                log_error(f"LIMIT_POLL_{symbol}", str(e_chk))
+
+                        # Cek fallback langsung ke posisi exchange
+                        if await check_exchange_active_position(client, symbol):
+                            is_filled = True
+                            break
+
+                    if not is_filled:
+                        if order_id:
+                            try:
+                                if hasattr(client, "cancel_order"):
+                                    await client.cancel_order(symbol, order_id)
+                                elif hasattr(client, "futures_cancel_order"):
+                                    await client.futures_cancel_order(symbol=symbol, orderId=order_id)
+                            except Exception as e_c:
+                                log_error(f"CANCEL_TIMEOUT_{symbol}", str(e_c))
+
+                        _safe_print(f"🛑 [SMART LIMIT TIMEOUT] LONG {symbol} @ {target_exec_price:.6f} dibatalkan setelah {limit_timeout}s (Pullback tidak tersentuh / Trap Terhindar).")
+                        return {
+                            "status": "timeout",
+                            "reason": "LIMIT_RETRACEMENT_TIMEOUT",
+                            "message": f"Smart Limit order {symbol} timed out after {limit_timeout}s without pullback fill (Trap Avoided)",
+                            "target_price": target_exec_price,
+                        }
+
+                fill_price = _get_average_fill_price(final_order_data, target_exec_price)
                 slippage_pct = (fill_price - current_price) / current_price if current_price > 0 else 0.0
                 
-                print(
+                _safe_print(
                     f"🎯 [EXECUTION FIDELITY] LONG {symbol} Filled | "
                     f"Sinyal: {current_price:.6f} | Fill: {fill_price:.6f} | "
-                    f"Slippage: {slippage_pct * 100:+.3f}% ({order_type})"
+                    f"Slippage/Advantage: {slippage_pct * 100:+.3f}% ({order_type})"
                 )
 
                 return {
                     "status": "success",
-                    "order": order,
+                    "order": final_order_data,
                     "quantity": quantity,
                     "price": fill_price,
                     "signal_price": current_price,
@@ -277,11 +341,11 @@ async def place_long_order(
             except Exception as e:
                 error_str = str(e).lower()
                 if "timeout" in error_str or "rate limit" in error_str or "connection" in error_str:
-                    print(f"[RETRY {attempt+1}/{max_retries}] Long order {symbol}: {e}")
+                    _safe_print(f"[RETRY {attempt+1}/{max_retries}] Long order {symbol}: {e}")
                     await asyncio.sleep(2 ** attempt)
                 else:
                     log_error(f"LONG_ORDER_{symbol}", str(e))
-                    print(f"Error placing long order for {symbol}: {e}")
+                    _safe_print(f"Error placing long order for {symbol}: {e}")
                     return {"status": "error", "message": str(e)}
         return {"status": "error", "message": "Max retries reached"}
 
@@ -295,17 +359,19 @@ async def place_short_order(
     use_limit: bool = False,
     limit_timeout: int = 30,
     max_slippage_pct: float = 0.003,
+    limit_price: Optional[float] = None,
 ) -> dict:
     """
-    Membuka posisi Short (Market / Limit Order) dengan Slippage Guard & perlindungan Anti-Double Entry.
+    Membuka posisi Short (Market / Smart Limit Order) dengan Slippage Guard,
+    Active Polling Timeout Cancellation, & perlindungan Anti-Double Entry.
     """
     async with _get_symbol_lock(symbol):
         # 1. Verifikasi langsung ke Exchange sebelum menembak order
         if await check_exchange_active_position(client, symbol):
-            print(f"🛑 [EXCHANGE LOCK] {symbol} sudah memiliki posisi aktif di exchange. Order SHORT dibatalkan (Anti-Double Entry).")
+            _safe_print(f"🛑 [EXCHANGE LOCK] {symbol} sudah memiliki posisi aktif di exchange. Order SHORT dibatalkan (Anti-Double Entry).")
             return {"status": "error", "message": f"Position already active on exchange for {symbol}"}
 
-        # 2. Slippage Guard: Re-fetch harga terkini sesaat sebelum order ditembak
+        # 2. Slippage Guard: Re-fetch harga terkini sesaat sebelum order ditembak (hanya jika mode market)
         fresh_price = current_price
         try:
             if isinstance(client, BaseExchange):
@@ -320,10 +386,10 @@ async def place_short_order(
         except Exception as e_p:
             log_error(f"PRICE_CHECK_{symbol}", f"Gagal re-fetch harga pasar terkini: {e_p}")
 
-        if current_price > 0 and fresh_price > 0:
+        if not use_limit and current_price > 0 and fresh_price > 0:
             price_deviation = (current_price - fresh_price) / current_price
             if price_deviation > max_slippage_pct:
-                print(
+                _safe_print(
                     f"⚠️ [SLIPPAGE GUARD] Order SHORT {symbol} DIBATALKAN (SIGNAL_STALE): "
                     f"Harga pasar ({fresh_price:.6f}) telah anjlok {price_deviation * 100:+.2f}% di bawah harga sinyal ({current_price:.6f}) "
                     f"> batas toleransi ({max_slippage_pct * 100:.2f}%)."
@@ -336,7 +402,8 @@ async def place_short_order(
                     "market_price": fresh_price,
                 }
 
-        exec_ref_price = fresh_price if fresh_price > 0 else current_price
+        target_exec_price = (limit_price if (use_limit and limit_price and limit_price > 0)
+                             else (fresh_price if fresh_price > 0 else current_price))
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -344,14 +411,17 @@ async def place_short_order(
                 await set_margin_type(client, symbol, 'ISOLATED')
                 
                 notional_value = margin_usdt * actual_leverage
-                quantity = notional_value / exec_ref_price
+                quantity = notional_value / target_exec_price
                 
                 precision_info = await get_symbol_precision(client, symbol)
                 qty_precision = precision_info['qty']
+                price_precision = precision_info['price']
                 multiplier = 10 ** qty_precision
                 quantity = math.floor(quantity * multiplier) / multiplier
                 
                 order_type = "LIMIT" if use_limit else "MARKET"
+                order = {}
+                order_id = None
                 
                 if isinstance(client, BaseExchange):
                     order = await client.place_order(
@@ -359,39 +429,90 @@ async def place_short_order(
                         side="SELL",
                         order_type=order_type,
                         quantity=quantity,
-                        price=exec_ref_price if use_limit else None,
+                        price=round(target_exec_price, price_precision) if use_limit else None,
                     )
+                    if isinstance(order, dict):
+                        order_id = order.get("orderId") or order.get("order_id") or (order.get("data", {}).get("orderId") if isinstance(order.get("data"), dict) else None)
                 else:
                     qty_str = str(int(quantity)) if qty_precision == 0 else f"{quantity:.{qty_precision}f}"
                     if use_limit:
-                        price_str = f"{exec_ref_price:.{precision_info['price']}f}"
+                        price_str = f"{target_exec_price:.{price_precision}f}"
                         order = await client.futures_create_order(
                             symbol=symbol, side=SIDE_SELL, type=ORDER_TYPE_LIMIT,
                             timeInForce=TIME_IN_FORCE_GTC, quantity=qty_str, price=price_str
                         )
-                        await asyncio.sleep(limit_timeout)
-                        check_order = await client.futures_get_order(symbol=symbol, orderId=order['orderId'])
-                        if check_order['status'] != 'FILLED':
-                            await client.futures_cancel_order(symbol=symbol, orderId=order['orderId'])
-                            return {"status": "error", "message": "Limit order timeout / Trap avoided"}
-                        order = check_order
+                        order_id = order.get("orderId")
                     else:
                         order = await client.futures_create_order(
                             symbol=symbol, side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=qty_str
                         )
 
-                fill_price = _get_average_fill_price(order, exec_ref_price)
+                # Active Polling & Timeout Cancellation untuk Limit Order
+                final_order_data = order
+                if use_limit:
+                    poll_interval = 2.0
+                    elapsed = 0.0
+                    is_filled = False
+                    _safe_print(f"⏳ [SMART LIMIT] SHORT {symbol} @ {target_exec_price:.6f} ditempatkan. Menunggu pullback (Timeout: {limit_timeout}s)...")
+
+                    while elapsed < limit_timeout:
+                        await asyncio.sleep(poll_interval)
+                        elapsed += poll_interval
+
+                        if order_id:
+                            try:
+                                if hasattr(client, "get_order"):
+                                    chk = await client.get_order(symbol, order_id)
+                                elif hasattr(client, "futures_get_order"):
+                                    chk = await client.futures_get_order(symbol=symbol, orderId=order_id)
+                                else:
+                                    chk = {}
+
+                                status_raw = str(chk.get("status", chk.get("orderStatus", chk.get("state", "")))).upper()
+                                if status_raw in ("FILLED", "COMPLETE", "2", "SUCCESS"):
+                                    is_filled = True
+                                    final_order_data = chk
+                                    break
+                                elif status_raw in ("CANCELED", "CANCELLED", "EXPIRED", "REJECTED", "-1"):
+                                    return {"status": "error", "message": f"Limit order {symbol} was {status_raw}"}
+                            except Exception as e_chk:
+                                log_error(f"LIMIT_POLL_{symbol}", str(e_chk))
+
+                        # Cek fallback langsung ke posisi exchange
+                        if await check_exchange_active_position(client, symbol):
+                            is_filled = True
+                            break
+
+                    if not is_filled:
+                        if order_id:
+                            try:
+                                if hasattr(client, "cancel_order"):
+                                    await client.cancel_order(symbol, order_id)
+                                elif hasattr(client, "futures_cancel_order"):
+                                    await client.futures_cancel_order(symbol=symbol, orderId=order_id)
+                            except Exception as e_c:
+                                log_error(f"CANCEL_TIMEOUT_{symbol}", str(e_c))
+
+                        _safe_print(f"🛑 [SMART LIMIT TIMEOUT] SHORT {symbol} @ {target_exec_price:.6f} dibatalkan setelah {limit_timeout}s (Pullback tidak tersentuh / Trap Terhindar).")
+                        return {
+                            "status": "timeout",
+                            "reason": "LIMIT_RETRACEMENT_TIMEOUT",
+                            "message": f"Smart Limit order {symbol} timed out after {limit_timeout}s without pullback fill (Trap Avoided)",
+                            "target_price": target_exec_price,
+                        }
+
+                fill_price = _get_average_fill_price(final_order_data, target_exec_price)
                 slippage_pct = (current_price - fill_price) / current_price if current_price > 0 else 0.0
                 
-                print(
+                _safe_print(
                     f"🎯 [EXECUTION FIDELITY] SHORT {symbol} Filled | "
                     f"Sinyal: {current_price:.6f} | Fill: {fill_price:.6f} | "
-                    f"Slippage: {slippage_pct * 100:+.3f}% ({order_type})"
+                    f"Slippage/Advantage: {slippage_pct * 100:+.3f}% ({order_type})"
                 )
 
                 return {
                     "status": "success",
-                    "order": order,
+                    "order": final_order_data,
                     "quantity": quantity,
                     "price": fill_price,
                     "signal_price": current_price,
@@ -401,11 +522,11 @@ async def place_short_order(
             except Exception as e:
                 error_str = str(e).lower()
                 if "timeout" in error_str or "rate limit" in error_str or "connection" in error_str:
-                    print(f"[RETRY {attempt+1}/{max_retries}] Short order {symbol}: {e}")
+                    _safe_print(f"[RETRY {attempt+1}/{max_retries}] Short order {symbol}: {e}")
                     await asyncio.sleep(2 ** attempt)
                 else:
                     log_error(f"SHORT_ORDER_{symbol}", str(e))
-                    print(f"Error placing short order for {symbol}: {e}")
+                    _safe_print(f"Error placing short order for {symbol}: {e}")
                     return {"status": "error", "message": str(e)}
         return {"status": "error", "message": "Max retries reached"}
 

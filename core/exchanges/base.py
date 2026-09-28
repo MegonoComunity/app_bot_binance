@@ -150,3 +150,21 @@ class BaseExchange(ABC):
         """
         return []
 
+    async def cancel_order(self, symbol: str, order_id: Union[str, int]) -> Dict[str, Any]:
+        """
+        Membatalkan order aktif di exchange berdasarkan symbol dan orderId.
+        """
+        return {"status": "unsupported", "symbol": symbol, "order_id": order_id}
+
+    async def get_order(self, symbol: str, order_id: Union[str, int]) -> Dict[str, Any]:
+        """
+        Mengambil detail status order aktif dari exchange.
+        """
+        return {}
+
+    async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Mengambil daftar open orders dari exchange.
+        """
+        return []
+

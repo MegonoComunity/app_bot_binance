@@ -485,6 +485,23 @@ async def get_daily_trade_stats(days: int = 14, exchange: Optional[str] = None) 
 
 
 
+async def clear_trade_history(exchange: Optional[str] = None) -> int:
+    """Menghapus record trade_history berdasarkan exchange atau semua jika None."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            if exchange and exchange.upper() not in ("ALL", "*"):
+                ex_clean = exchange.upper().strip()
+                res = await conn.execute("DELETE FROM trade_history WHERE COALESCE(exchange, 'BINANCE') LIKE $1", f"{ex_clean}%")
+            else:
+                res = await conn.execute("DELETE FROM trade_history")
+            parts = res.split()
+            return int(parts[-1]) if len(parts) > 1 else 0
+    except Exception as exc:
+        logger.error(f"[DB] Gagal menghapus trade_history: {exc}")
+        return 0
+
+
 async def migrate_from_json(json_path: str = "data/trade_stats.json") -> int:
     """Migrasi data lama dari file data/trade_stats.json ke PostgreSQL."""
     if not os.path.exists(json_path):
