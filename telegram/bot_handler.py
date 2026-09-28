@@ -97,47 +97,71 @@ bot_state = {
 }
 
 async def setup_bot_commands(bot_instance: Bot) -> None:
-    """Reset dan daftarkan perintah resmi bot ke Telegram."""
+    """Reset dan daftarkan perintah resmi bot ke Telegram (Menu Popup Scroll Lengkap)."""
     commands = [
-        BotCommand(command="start", description="Buka Menu Utama & Keyboard"),
-        BotCommand(command="help", description="Panduan & Daftar Perintah Lengkap"),
+        # --- Navigasi & Utama ---
+        BotCommand(command="start", description="🚀 Buka Menu Utama & Keyboard Interaktif"),
+        BotCommand(command="help", description="📖 Panduan Lengkap & Manual Fitur Bot"),
+        BotCommand(command="status", description="📊 Cek Saldo Akun & Posisi Terbuka"),
+        BotCommand(command="mode", description="🎯 Cek & Ganti Mode (REAL / TESTNET / PAPER)"),
+        BotCommand(command="set_exchange", description="🏛️ Pilih Exchange (Binance / Bitunix)"),
+
+        # --- Scanning & Eksekusi ---
+        BotCommand(command="scan_order_real", description="🟢 Mulai Scan & Auto-Trade Akun REAL"),
+        BotCommand(command="scan_order_paper", description="🔵 Mulai Scan Mode Paper Trade"),
+        BotCommand(command="scan_binance_testnet", description="🌐 Mulai Scan Mode Binance Testnet"),
+        BotCommand(command="analisa", description="🔎 Analisis Teknikal & ML Koin Tertentu"),
+        BotCommand(command="pause", description="⏸️ Jeda Aktivitas Scanning Bot"),
+        BotCommand(command="resume", description="▶️ Lanjutkan Scanning Otomatis"),
+        BotCommand(command="close_all", description="⛔ Tutup Paksa Semua Posisi Terbuka"),
+
+        # --- Konfigurasi & Manajemen Risiko ---
+        BotCommand(command="pengaturan", description="⚙️ Tampilkan Seluruh Pengaturan Aktif"),
+        BotCommand(command="hitung_margin", description="🧮 Kalkulator Margin & Lot Aman"),
+        BotCommand(command="set_modal", description="💰 Atur Modal Sizing Simulasi ($)"),
+        BotCommand(command="reset_modal", description="🔄 Kembalikan Modal Sizing ke $100"),
+        BotCommand(command="set_margin", description="💵 Mode Margin (DYNAMIC / FIXED)"),
+        BotCommand(command="set_risk", description="🛡️ Risk Per Trade (% Modal)"),
+        BotCommand(command="set_leverage", description="⚡ Ubah Leverage (1x - 125x)"),
+        BotCommand(command="set_tp", description="🎯 Target Take Profit ROI (%)"),
+        BotCommand(command="set_sl", description="🛑 Target Stop Loss ROI (%)"),
+        BotCommand(command="set_max_ratio", description="🔒 Max Margin per Posisi (% Modal)"),
+        BotCommand(command="set_max_positions", description="🔢 Batas Maksimal Posisi Terbuka"),
+        BotCommand(command="set_confluence", description="🎚️ Skor Konfluensi Min (50 - 100)"),
+        BotCommand(command="set_breakeven", description="🛡️ Auto Break-Even (ON / OFF)"),
+
+        # --- Eksekusi Presisi & Limit Pullback ---
+        BotCommand(command="set_exec_mode", description="⚡ Mode Eksekusi (SMART_LIMIT / HYBRID / MARKET)"),
+        BotCommand(command="set_limit_retrace", description="🎯 Diskon Limit Pullback (%)"),
+        BotCommand(command="set_limit_timeout", description="⏱️ Timeout Batal Limit Order (Detik)"),
+        BotCommand(command="set_atr_sl", description="📏 Multiplier Buffer ATR Stop Loss"),
+
+        # --- Filter Target Scanner ---
+        BotCommand(command="set_scan", description="🌐 Target Scan & Urutan (ALL / Vol / Change)"),
+        BotCommand(command="set_scan_target", description="🎯 Jumlah Koin Scan (all / 50 / 100 / 200 / 500)"),
+        BotCommand(command="set_scan_sort", description="📶 Urutan Sort (volume / change / gainers / losers)"),
+
+        # --- AI Learning, Winrate & Reset ---
         BotCommand(command="ai_stats", description="🧠 Monitoring Berkala AI & Win Rate Pola"),
-        BotCommand(command="winrate", description="📊 Rekap Win Rate Multi-Timeframe"),
-        BotCommand(command="update_bot", description="🔄 Auto-Pull & Self-Healing dari GitHub"),
-        BotCommand(command="git_sync", description="🔄 Cek & Tarik Update GitHub"),
-        BotCommand(command="scan_order_paper", description="🔵 Mulai Scan & Simulasi Paper Trade"),
-        BotCommand(command="scan_order_real", description="🟢 Mulai Scan & Order REAL Account"),
-        BotCommand(command="mode", description="Cek / Ganti Mode Trading (REAL/SIMULASI)"),
-        BotCommand(command="status", description="Cek Saldo & Posisi Terbuka"),
-        BotCommand(command="set_exchange", description="Pilih Exchange (binance/bitunix)"),
-        BotCommand(command="set_scan", description="🌐 Atur Target Scan & Urutan (ALL/Volume/Change)"),
-        BotCommand(command="set_scan_target", description="Target Scan (all/50/100/200/500)"),
-        BotCommand(command="set_scan_sort", description="Urutan Scan (volume/change/gainers/losers)"),
-        BotCommand(command="pengaturan", description="Menu Pengaturan Lengkap"),
-        BotCommand(command="reset_demo", description="Reset Modal ($100) & Statistik"),
-        BotCommand(command="hitung_margin", description="Kalkulator Margin Aman"),
-        BotCommand(command="set_modal", description="Atur Nominal Modal Simulasi"),
-        BotCommand(command="set_margin", description="Atur Mode Margin (auto/nominal)"),
-        BotCommand(command="set_risk", description="Atur Risk Per Trade (% Saldo)"),
-        BotCommand(command="set_leverage", description="Ubah Leverage"),
-        BotCommand(command="set_tp", description="Target Take Profit (%)"),
-        BotCommand(command="set_sl", description="Target Stop Loss (%)"),
-        BotCommand(command="set_confluence", description="Skor Konfluensi Minimum (50-100, Rekomendasi: 80)"),
-        BotCommand(command="set_breakeven", description="Auto Break-Even (on/off, target ROI %)"),
-        BotCommand(command="set_exec_mode", description="Mode Eksekusi (SMART_LIMIT/HYBRID/MARKET)"),
-        BotCommand(command="set_limit_retrace", description="Diskon Limit Retracement (%)"),
-        BotCommand(command="set_limit_timeout", description="Timeout Batal Limit Order (Detik)"),
-        BotCommand(command="set_atr_sl", description="Multiplier ATR Stop Loss Dinamis"),
-        BotCommand(command="backup_db", description="Backup Database ke Telegram"),
-        BotCommand(command="close_all", description="Tutup Semua Posisi Terbuka"),
-        BotCommand(command="pause", description="Jeda Scanning"),
-        BotCommand(command="resume", description="Lanjutkan Scanning"),
+        BotCommand(command="winrate", description="📈 Rekap Win Rate Multi-Timeframe"),
+        BotCommand(command="explain", description="🔍 Penjelasan Log Keputusan Trade Terakhir"),
+        BotCommand(command="reset_demo", description="🔄 Reset Total History & Memori Pola AI"),
+        BotCommand(command="reset_binance_history", description="🔄 Reset History Khusus Binance"),
+        BotCommand(command="reset_pola", description="🧠 Bersihkan Blacklist & Refresh Pola AI"),
+
+        # --- Akun, Database & GitHub ---
+        BotCommand(command="deposit", description="💵 Cek Saldo & Info Deposit Exchange"),
+        BotCommand(command="upload_dataset", description="📸 Upload Gambar Chart Dataset Vision"),
+        BotCommand(command="backup_db", description="💾 Backup Database PostgreSQL ke Telegram"),
+        BotCommand(command="git_sync", description="🔄 Cek & Sinkronkan Update GitHub"),
+        BotCommand(command="update_bot", description="🚀 Auto-Pull & Self-Healing dari GitHub"),
     ]
     try:
         await bot_instance.delete_my_commands()
         await bot_instance.set_my_commands(commands)
     except Exception as exc:
         print(f"[TELEGRAM] Gagal update commands: {exc}")
+
 
 def get_main_keyboard(active_exchange: Optional[str] = None) -> ReplyKeyboardMarkup:
     """Membuat Reply Keyboard dinamis sesuai exchange aktif (Binance Testnet vs Bitunix Paper)."""
@@ -1105,15 +1129,17 @@ async def trade_stats_handler(message: types.Message):
 
 
 @dp.message(Command("analyze"))
+@dp.message(Command("analisa"))
+@dp.message(Command("cek"))
 async def analyze_handler(message: types.Message, command: CommandObject):
     symbol = (command.args or "").strip().upper()
     if not symbol:
-        await message.answer("Format: /analyze BTCUSDT")
+        await message.answer("Format: `/analisa BTCUSDT` atau `/analyze BTCUSDT`", parse_mode="Markdown")
         return
 
     client = bot_state.get("client")
     if not client:
-        await message.answer("⚠️ Koneksi Binance belum siap.")
+        await message.answer("⚠️ Koneksi exchange belum siap.")
         return
 
     wait_msg = await message.answer(f"🔎 Menganalisis {symbol} dengan candle Daily...")
@@ -1151,6 +1177,71 @@ async def analyze_handler(message: types.Message, command: CommandObject):
         await wait_msg.edit_text(text, parse_mode="Markdown")
     except Exception as error:
         await wait_msg.edit_text(f"❌ Analisis {symbol} gagal: {error}")
+
+
+@dp.message(Command("explain"))
+async def explain_handler(message: types.Message, command: CommandObject = None):
+    """Menampilkan snapshot penjelasan keputusan trading terakhir (AI Model Explainability)."""
+    import json
+    import os
+    from core.trade_stats import EXPLAINABILITY_FILE
+
+    if not os.path.exists(EXPLAINABILITY_FILE):
+        await message.answer("ℹ️ Belum ada rekaman snapshot explainability trade.", parse_mode="Markdown")
+        return
+
+    try:
+        with open(EXPLAINABILITY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if not isinstance(data, list) or not data:
+                await message.answer("ℹ️ Belum ada rekaman snapshot explainability trade.", parse_mode="Markdown")
+                return
+
+        target_symbol = (command.args or "").strip().upper() if command else ""
+        if target_symbol:
+            filtered = [d for d in data if d.get("symbol", "").upper() == target_symbol]
+            item = filtered[-1] if filtered else None
+            if not item:
+                await message.answer(f"ℹ️ Belum ada snapshot trade untuk simbol `{target_symbol}`.", parse_mode="Markdown")
+                return
+        else:
+            item = data[-1]
+
+        symbol = item.get("symbol", "UNKNOWN")
+        side = item.get("side", "LONG")
+        price = item.get("entry_price", 0.0)
+        time_str = item.get("timestamp", "-")
+        regime = item.get("market_regime", "UNKNOWN")
+        adx = item.get("adx")
+        atr_rel = item.get("relative_atr")
+        prob = item.get("meta_probability_win")
+        prob_str = f"{prob * 100:.1f}%" if prob is not None else "-"
+        kelly = item.get("half_kelly_multiplier")
+        kelly_str = f"{kelly:.2f}x" if kelly is not None else "-"
+        alasan = item.get("alasan_eksekusi", "-")
+        confluence = item.get("confluence_breakdown", {})
+        conf_score = confluence.get("total_score", "-")
+
+        side_emoji = "🟢 LONG" if side == "LONG" else "🔴 SHORT"
+        msg = (
+            f"🧠 **AI TRADE EXPLAINABILITY SNAPSHOT**\n"
+            f"──────────────\n"
+            f"🪙 **Simbol**: `{symbol}` ({side_emoji})\n"
+            f"💵 **Harga Entry**: `{price}`\n"
+            f"⏱️ **Waktu Analisis**: `{time_str}`\n"
+            f"──────────────\n"
+            f"🌐 **Market Regime**: `{regime}`\n"
+            f"📊 **ADX Strength**: `{adx if adx is not None else '-'}` | **Relative ATR**: `{atr_rel if atr_rel is not None else '-'}`\n"
+            f"🎯 **Meta-Labeler Win Prob**: `{prob_str}`\n"
+            f"⚖️ **Half-Kelly Multiplier**: `{kelly_str}`\n"
+            f"🎚️ **Confluence Score**: `{conf_score}/100`\n"
+            f"──────────────\n"
+            f"📝 **Alasan Sinyal**: {alasan}\n"
+        )
+        await message.answer(msg, parse_mode="Markdown")
+    except Exception as exc:
+        await message.answer(f"❌ Gagal memuat explainability snapshot: {exc}")
+
 
 
 @dp.message(Command("scan_modus"))
