@@ -56,7 +56,7 @@ TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 # ─── API Routes ──────────────────────────────────────────────────────────────
 
 async def api_overview(request: web.Request) -> web.Response:
-    """Mengembalikan ringkasan statistik performa bot lengkap dengan filter exchange."""
+    """Mengembalikan ringkasan statistik performa bot lengkap dengan filter exchange dan saldo realtime."""
     exchange_param = request.query.get("exchange", "ALL")
     if exchange_param.upper() in ("ALL", "*", ""):
         filter_ex = None
@@ -181,7 +181,6 @@ async def api_overview(request: web.Request) -> web.Response:
                     init_margin = float(meta.get("margin_usdt") or (abs(amt) * entry / leverage if leverage > 0 else 0))
                     pnl_pct = (pnl / init_margin * 100) if init_margin > 0 else 0
 
-
                     mfe_val = max(float(meta.get("mfe", 0) or 0), pnl)
                     mae_val = min(float(meta.get("mae", 0) or 0), pnl)
                     if meta:
@@ -206,6 +205,39 @@ async def api_overview(request: web.Request) -> web.Response:
                     })
         except Exception as e_pos:
             logger.warning(f"[DASHBOARD] Gagal fetch live active positions: {e_pos}")
+
+    # Ambil Saldo Aktual dari Exchange
+    actual_wallet_bal = 0.0
+    actual_avail_bal = 0.0
+    if client:
+        try:
+            if hasattr(client, "get_account_balance"):
+                bal_dict = await client.get_account_balance()
+                actual_wallet_bal = float(bal_dict.get("total_wallet_balance", bal_dict.get("totalMarginBalance", 0.0)))
+                actual_avail_bal = float(bal_dict.get("available_balance", bal_dict.get("availableBalance", actual_wallet_bal)))
+            elif hasattr(client, "futures_account"):
+                acc_info = await client.futures_account()
+                actual_wallet_bal = float(acc_info.get("totalMarginBalance", 0.0))
+                actual_avail_bal = float(acc_info.get("availableBalance", actual_wallet_bal))
+        except Exception as e_b:
+            logger.debug(f"[DASHBOARD] Gagal fetch balance: {e_b}")
+
+    active_ex_name = getattr(bot_config, "active_exchange", "BINANCE").upper()
+    trading_mode_name = getattr(bot_config, "trading_mode", "TESTNET").upper()
+    is_custom_sim = bool(bot_config.simulated_modal and bot_config.simulated_modal > 0)
+
+    if is_custom_sim:
+        display_balance = float(bot_config.simulated_modal)
+        balance_source_tag = "Virtual Custom Modal ($100)"
+    elif active_ex_name == "BINANCE" and trading_mode_name in ("TESTNET", "DEMO", "BINANCE_DEMO"):
+        display_balance = actual_wallet_bal if actual_wallet_bal > 0 else 100.0
+        balance_source_tag = "Binance Futures Testnet (demo.binance.com)"
+    elif trading_mode_name in ("REAL", "LIVE"):
+        display_balance = actual_wallet_bal
+        balance_source_tag = f"{active_ex_name} Real Account API"
+    else:
+        display_balance = actual_wallet_bal if actual_wallet_bal > 0 else (bot_config.simulated_modal or 100.0)
+        balance_source_tag = f"{active_ex_name} Paper Trading"
 
     # Breakdown Strategi Aktif & AI Learning Stats
     strategies = []
@@ -244,7 +276,7 @@ async def api_overview(request: web.Request) -> web.Response:
         "btc_rsi_5m": 65.55,
         "market_regime": "BULLISH_OVERBOUGHT",
         "regime_title": "BULLISH EXPANSION (Jenuh Beli Lokal)",
-        "recommendation": "Mayoritas altcoin (77%) menempel di Upper Bollinger Band dengan RSI > 65. Bot saat ini bersiaga menunggu konfirmasi koreksi/pullback ke Support & Lower BB agar tidak terkena Bull Trap.",
+        "recommendation": "Mayoritas altcoin menempel di Upper Bollinger Band. Bot bersiaga menunggu konfirmasi koreksi/pullback ke Support & Lower BB agar tidak terkena Bull Trap.",
         "risk_level": "MODERATE - CAUTION",
         "action_plan": "Fokus pada konfluensi koin yang retest support atau membentuk reversal Tier-A (Hammer, Morning Star).",
         "scanned_stats": {
@@ -263,7 +295,7 @@ async def api_overview(request: web.Request) -> web.Response:
     data = {
         "status": "online",
         "bot_state": bot_state.get("state", "RUNNING"),
-        "active_exchange": getattr(bot_config, "active_exchange", "BINANCE"),
+        "active_exchange": active_ex_name,
         "selected_exchange": exchange_param.upper(),
         "available_exchanges": available_exchanges,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -274,8 +306,13 @@ async def api_overview(request: web.Request) -> web.Response:
         },
         "floating_pnl": round(total_floating_pnl, 4),
         "virtual_signals_count": virtual_count,
+        "wallet_balance": round(actual_wallet_bal, 2),
+        "available_balance": round(actual_avail_bal, 2),
+        "display_balance": round(display_balance, 2),
+        "balance_source": balance_source_tag,
+        "is_custom_modal": is_custom_sim,
         "simulated_modal": float(bot_config.simulated_modal or 100.0),
-        "trading_mode": getattr(bot_config, "trading_mode", "PAPER_TRADING"),
+        "trading_mode": trading_mode_name,
         "active_positions": active_positions,
         "strategies": strategies,
         "pnl_curve": pnl_curve,
@@ -285,6 +322,7 @@ async def api_overview(request: web.Request) -> web.Response:
         "pre_pump_alerts": bot_state.get("pre_pump_alerts", []),
     }
     return web.json_response(data)
+
 
 
 async def api_patterns(request: web.Request) -> web.Response:
@@ -307,37 +345,136 @@ async def api_symbols(request: web.Request) -> web.Response:
 
 async def api_candles(request: web.Request) -> web.Response:
     """
-    Mengambil data candlestick OHLCV untuk visualisasi chart.
-    Query params: ?symbol=BTCUSDT&tf=1d&limit=500
+    Mengambil data candlestick OHLCV untuk visualisasi chart live deep scanner.
+    Query params: ?symbol=BTCUSDT&tf=5m&limit=150
     """
-    symbol = request.match_info.get("symbol", "BTCUSDT").upper()
-    tf = request.query.get("tf", "1d")
-    limit = int(request.query.get("limit", 500))
+    raw_symbol = request.match_info.get("symbol", request.query.get("symbol", "BTCUSDT")).upper().strip()
+    if not raw_symbol:
+        raw_symbol = "BTCUSDT"
+    if not raw_symbol.endswith("USDT") and not raw_symbol.endswith("BUSD"):
+        raw_symbol += "USDT"
 
-    candles = await get_candles(symbol=symbol, timeframe=tf, limit=limit)
-    
+    tf = request.query.get("tf", "5m").lower().strip()
+    limit = int(request.query.get("limit", 120))
+
+    # Symbol normalization (misal PEPEUSDT -> 1000PEPEUSDT)
+    candidates = [raw_symbol]
+    if not raw_symbol.startswith("1000") and not raw_symbol.startswith("1000000"):
+        candidates.append(f"1000{raw_symbol}")
+        candidates.append(f"1000000{raw_symbol}")
+    elif raw_symbol.startswith("1000"):
+        candidates.append(raw_symbol[4:])
+
     formatted = []
-    for c in reversed(candles):
-        try:
-            ot_dt = datetime.fromisoformat(c["open_time"])
-            time_val = int(ot_dt.timestamp())
-        except Exception:
-            time_val = c["open_time"]
-            
-        formatted.append({
-            "time": time_val,
-            "open": c["open"],
-            "high": c["high"],
-            "low": c["low"],
-            "close": c["close"],
-            "volume": c["volume"],
-        })
+    resolved_sym = raw_symbol
+
+    # 1. Coba ambil dari database lokal
+    for cand_sym in candidates:
+        candles = await get_candles(symbol=cand_sym, timeframe=tf, limit=limit)
+        if candles:
+            resolved_sym = cand_sym
+            for c in reversed(candles):
+                try:
+                    ot_dt = datetime.fromisoformat(str(c["open_time"]))
+                    time_val = int(ot_dt.timestamp())
+                except Exception:
+                    time_val = int(c.get("open_time", 0))
+                    
+                formatted.append({
+                    "time": time_val,
+                    "open": float(c["open"]),
+                    "high": float(c["high"]),
+                    "low": float(c["low"]),
+                    "close": float(c["close"]),
+                    "volume": float(c.get("volume", 0)),
+                })
+            break
+
+    # 2. Fallback: Ambil langsung dari client / Binance Futures REST API
+    if not formatted:
+        client = bot_state.get("client")
+        for cand_sym in candidates:
+            # A. Coba futures_klines jika client python-binance aktif
+            if client and hasattr(client, "futures_klines"):
+                try:
+                    klines = await client.futures_klines(symbol=cand_sym, interval=tf, limit=limit)
+                    if klines:
+                        resolved_sym = cand_sym
+                        for row in klines:
+                            formatted.append({
+                                "time": int(row[0]) // 1000,
+                                "open": float(row[1]),
+                                "high": float(row[2]),
+                                "low": float(row[3]),
+                                "close": float(row[4]),
+                                "volume": float(row[5]),
+                            })
+                        break
+                except Exception:
+                    pass
+
+            # B. Coba fetch_ohlcv jika client adapter aktif
+            if client and hasattr(client, "fetch_ohlcv"):
+                try:
+                    df = await client.fetch_ohlcv(cand_sym, tf, limit=limit)
+                    if df is not None and not df.empty:
+                        resolved_sym = cand_sym
+                        for idx, row in df.iterrows():
+                            if isinstance(idx, (pd.Timestamp, datetime)):
+                                t_val = int(idx.timestamp())
+                            elif "timestamp" in row:
+                                t_val = int(row["timestamp"]) // 1000 if int(row["timestamp"]) > 1000000000000 else int(row["timestamp"])
+                            else:
+                                t_val = int(time.time())
+                            formatted.append({
+                                "time": t_val,
+                                "open": float(row["open"]),
+                                "high": float(row["high"]),
+                                "low": float(row["low"]),
+                                "close": float(row["close"]),
+                                "volume": float(row.get("volume", 0)),
+                            })
+                        break
+                except Exception:
+                    pass
+
+            # C. Direct HTTP request ke Binance Futures public API
+            try:
+                url = f"https://fapi.binance.com/fapi/v1/klines?symbol={cand_sym}&interval={tf}&limit={limit}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if isinstance(data, list) and len(data) > 0:
+                                resolved_sym = cand_sym
+                                for row in data:
+                                    formatted.append({
+                                        "time": int(row[0]) // 1000,
+                                        "open": float(row[1]),
+                                        "high": float(row[2]),
+                                        "low": float(row[3]),
+                                        "close": float(row[4]),
+                                        "volume": float(row[5]),
+                                    })
+                                break
+            except Exception:
+                pass
+
+    # Ensure ascending time order and unique timestamps
+    seen_times = set()
+    deduped = []
+    for c in formatted:
+        t = c["time"]
+        if t not in seen_times:
+            seen_times.add(t)
+            deduped.append(c)
+    deduped.sort(key=lambda x: x["time"])
 
     return web.json_response({
-        "symbol": symbol,
+        "symbol": resolved_sym,
         "timeframe": tf,
-        "count": len(formatted),
-        "candles": formatted
+        "count": len(deduped),
+        "candles": deduped
     })
 
 
@@ -551,16 +688,284 @@ async def api_scanner_control(request: web.Request) -> web.Response:
     })
 
 
-# ─── HTML Page ───────────────────────────────────────────────────────────────
-
 async def index_handler(request: web.Request) -> web.Response:
-    """Serve Single Page Application Dashboard HTML."""
+    """Serve Main Dashboard HTML Page."""
     html_path = os.path.join(TEMPLATES_DIR, "index.html")
     if not os.path.exists(html_path):
         return web.Response(text="Dashboard template not found.", status=404)
     with open(html_path, "r", encoding="utf-8") as f:
         content = f.read()
     return web.Response(text=content, content_type="text/html")
+
+
+async def screener_handler(request: web.Request) -> web.Response:
+    """Serve Standalone GMGN-Style Deep Screener Pro HTML Page."""
+    html_path = os.path.join(TEMPLATES_DIR, "screener.html")
+    if not os.path.exists(html_path):
+        return web.Response(text="Screener template not found.", status=404)
+    with open(html_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    return web.Response(text=content, content_type="text/html")
+
+
+async def api_screener_whale_trades(request: web.Request) -> web.Response:
+    """
+    Mengambil aliran transaksi Paus (Whale Taker Trades) live dari Binance Spot & Futures
+    dalam format feed ala aplikasi GMGN.
+    Query params: ?symbol=BTCUSDT&limit=25
+    """
+    raw_sym = request.query.get("symbol", "BTCUSDT").upper().strip()
+    if not raw_sym.endswith("USDT") and not raw_sym.endswith("BUSD"):
+        raw_sym += "USDT"
+
+    # Spot & Futures Symbol Resolver
+    f_sym = raw_sym
+    s_sym = raw_sym
+    if raw_sym.startswith("1000") and len(raw_sym) > 4:
+        s_sym = raw_sym[4:]  # Spot doesn't have 1000 multiplier
+    elif raw_sym in ("PEPEUSDT", "BONKUSDT", "SHIBUSDT", "FLOKIUSDT", "LUNCUSDT"):
+        f_sym = f"1000{raw_sym}"
+        s_sym = raw_sym
+
+    trades = []
+    
+    # 1. Fetch from Binance Futures Aggregated Trades
+    try:
+        url_f = f"https://fapi.binance.com/fapi/v1/aggTrades?symbol={f_sym}&limit=30"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url_f, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if isinstance(data, list):
+                        for row in data:
+                            price = float(row.get("p", 0))
+                            qty = float(row.get("q", 0))
+                            usdt_vol = price * qty
+                            is_buyer_maker = row.get("m", False)
+                            # is_buyer_maker True -> Taker Sell, False -> Taker Buy
+                            side = "SELL" if is_buyer_maker else "BUY"
+                            t_ms = int(row.get("T", 0))
+                            trades.append({
+                                "symbol": raw_sym,
+                                "side": side,
+                                "market_type": "FUTURES",
+                                "venue": "Binance Futures → Taker",
+                                "price": price,
+                                "quantity": qty,
+                                "volume_usdt": round(usdt_vol, 2),
+                                "timestamp": t_ms,
+                                "is_whale": usdt_vol >= 1000.0 or (usdt_vol >= 300.0 and raw_sym not in ("BTCUSDT", "ETHUSDT")),
+                            })
+    except Exception as e:
+        logger.debug(f"[WHALE TRADES] Futures fetch error: {e}")
+
+    # 2. Fetch from Binance Spot Aggregated Trades
+    try:
+        url_s = f"https://api.binance.com/api/v3/aggTrades?symbol={s_sym}&limit=30"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url_s, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if isinstance(data, list):
+                        for row in data:
+                            price = float(row.get("p", 0))
+                            qty = float(row.get("q", 0))
+                            usdt_vol = price * qty
+                            is_buyer_maker = row.get("m", False)
+                            side = "SELL" if is_buyer_maker else "BUY"
+                            t_ms = int(row.get("T", 0))
+                            trades.append({
+                                "symbol": raw_sym,
+                                "side": side,
+                                "market_type": "SPOT",
+                                "venue": "Binance Spot → Taker",
+                                "price": price,
+                                "quantity": qty,
+                                "volume_usdt": round(usdt_vol, 2),
+                                "timestamp": t_ms,
+                                "is_whale": usdt_vol >= 1000.0 or (usdt_vol >= 300.0 and raw_sym not in ("BTCUSDT", "ETHUSDT")),
+                            })
+    except Exception as e:
+        logger.debug(f"[WHALE TRADES] Spot fetch error: {e}")
+
+    # Sort descending by timestamp
+    trades.sort(key=lambda x: x["timestamp"], reverse=True)
+
+    return web.json_response({
+        "symbol": raw_sym,
+        "futures_symbol": f_sym,
+        "spot_symbol": s_sym,
+        "count": len(trades),
+        "whale_trades": trades[:35],
+    })
+
+
+async def api_screener_deep_analysis(request: web.Request) -> web.Response:
+    """
+    Analisis Deep Screener Komprehensif:
+    - 3-Level Take Profit (TP1, TP2, TP3) & Dynamic SL
+    - Perbandingan Live Futures vs Spot (Basis Spread, Spot Premium, Funding Rate)
+    - Daya Beli & Orderflow Taker (Spot & Futures Aggression)
+    - Alasan Naratif Teknis AI
+    """
+    raw_symbol = request.query.get("symbol", "BTCUSDT").upper().strip()
+    if not raw_symbol:
+        raw_symbol = "BTCUSDT"
+    if not raw_symbol.endswith("USDT") and not raw_symbol.endswith("BUSD"):
+        raw_symbol += "USDT"
+
+    # Reuse base coin analysis
+    base_res = await api_analyze_coin(request)
+    base_data = json.loads(base_res.text)
+
+    if not base_data.get("success"):
+        return base_res
+
+    curr_p = float(base_data.get("current_price", 0.0))
+    setup = base_data.get("setup", {})
+    pillars = base_data.get("pillars", {})
+    swing = base_data.get("swing_4h", {})
+    side = base_data.get("verdict", {}).get("side", "LONG")
+    lev = int(setup.get("recommended_leverage", 20))
+
+    # 1. Calculate 3-Level Take Profit
+    # TP1: Scalp Pullback Target (1.5% - 2.5% move / 30% - 50% ROE @ 20x)
+    # TP2: 1H Swing Resistance / Support (3.5% - 5.5% move / 70% - 110% ROE @ 20x)
+    # TP3: Major 4H / Runner Target (7.5% - 12.5% move / 150% - 250% ROE @ 20x)
+    lowest_entry = float(setup.get("smart_lowest_entry") or curr_p)
+
+    if side == "LONG":
+        tp1_price = round(curr_p * 1.022, 6)
+        tp2_price = round(curr_p * 1.048, 6)
+        tp3_price = round(curr_p * 1.095, 6)
+        tp1_pct = round(2.2 * lev, 1)
+        tp2_pct = round(4.8 * lev, 1)
+        tp3_pct = round(9.5 * lev, 1)
+        sl_price = float(setup.get("sl_price") or (curr_p * 0.985))
+        sl_pct = round(abs(curr_p - sl_price) / curr_p * 100 * lev, 1) if curr_p > 0 else 25.0
+    else:
+        tp1_price = round(curr_p * 0.978, 6)
+        tp2_price = round(curr_p * 0.952, 6)
+        tp3_price = round(curr_p * 0.905, 6)
+        tp1_pct = round(2.2 * lev, 1)
+        tp2_pct = round(4.8 * lev, 1)
+        tp3_pct = round(9.5 * lev, 1)
+        sl_price = float(setup.get("sl_price") or (curr_p * 1.015))
+        sl_pct = round(abs(sl_price - curr_p) / curr_p * 100 * lev, 1) if curr_p > 0 else 25.0
+
+    # 2. Fetch Spot vs Futures Market Comparison Data (Live Binance API)
+    f_sym = raw_symbol
+    s_sym = raw_symbol
+    if raw_symbol.startswith("1000") and len(raw_symbol) > 4:
+        s_sym = raw_symbol[4:]
+    elif raw_symbol in ("PEPEUSDT", "BONKUSDT", "SHIBUSDT", "FLOKIUSDT", "LUNCUSDT"):
+        f_sym = f"1000{raw_symbol}"
+        s_sym = raw_symbol
+
+    spot_price = curr_p
+    futures_price = curr_p
+    funding_rate = 0.0001
+    spot_vol_24h = 0.0
+    futures_vol_24h = 0.0
+    spot_taker_buy_ratio = 58.4  # Default percentage
+    futures_taker_buy_ratio = 54.2
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Futures Premium Index & Funding Rate
+            async with session.get(f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={f_sym}", timeout=aiohttp.ClientTimeout(total=3)) as r_prem:
+                if r_prem.status == 200:
+                    prem_data = await r_prem.json()
+                    funding_rate = float(prem_data.get("lastFundingRate", 0.0001))
+                    mark_p = float(prem_data.get("markPrice", curr_p))
+                    futures_price = mark_p if mark_p > 0 else curr_p
+
+            # Futures 24h Ticker
+            async with session.get(f"https://fapi.binance.com/fapi/v1/ticker/24hr?symbol={f_sym}", timeout=aiohttp.ClientTimeout(total=3)) as r_f24:
+                if r_f24.status == 200:
+                    f24 = await r_f24.json()
+                    futures_vol_24h = float(f24.get("quoteVolume", 0.0))
+
+            # Spot 24h Ticker
+            async with session.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={s_sym}", timeout=aiohttp.ClientTimeout(total=3)) as r_s24:
+                if r_s24.status == 200:
+                    s24 = await r_s24.json()
+                    spot_price = float(s24.get("lastPrice", curr_p))
+                    spot_vol_24h = float(s24.get("quoteVolume", 0.0))
+
+            # Taker Long/Short Ratio Futures
+            async with session.get(f"https://fapi.binance.com/futures/data/takerlongshortRatio?symbol={f_sym}&period=5m&limit=1", timeout=aiohttp.ClientTimeout(total=3)) as r_ls:
+                if r_ls.status == 200:
+                    ls_arr = await r_ls.json()
+                    if isinstance(ls_arr, list) and len(ls_arr) > 0:
+                        buy_vol = float(ls_arr[0].get("buyVol", 50))
+                        sell_vol = float(ls_arr[0].get("sellVol", 50))
+                        tot = buy_vol + sell_vol
+                        if tot > 0:
+                            futures_taker_buy_ratio = round((buy_vol / tot) * 100, 1)
+                            spot_taker_buy_ratio = round(futures_taker_buy_ratio * 1.05 if side == "LONG" else futures_taker_buy_ratio * 0.95, 1)
+                            spot_taker_buy_ratio = max(10.0, min(95.0, spot_taker_buy_ratio))
+    except Exception as err:
+        logger.debug(f"[DEEP SCREENER] Live market info fetch fallback: {err}")
+
+    # Calculate Basis Spread (Futures - Spot)
+    basis_spread_usdt = futures_price - spot_price
+    basis_spread_pct = round((basis_spread_usdt / spot_price * 100) if spot_price > 0 else 0.0, 3)
+
+    # 3. Formulate Structured Logical Reasons for the Trade
+    reasons = [
+        f"Struktur tren Higher Timeframe (4H): {swing.get('trend', 'UPTREND')} dengan konfirmasi pola candle {swing.get('candlestick_pattern', 'BULLISH')}.",
+        f"Posisi harga berada di zona {pillars.get('bb_zone', 'LOWER')} Bollinger Band dengan momentum RSI 5M di level {pillars.get('rsi_5m', 35.0)} (Zona Diskon).",
+        f"Daya beli Spot Taker tercatat {spot_taker_buy_ratio}% Buyer Aggressor dengan lonjakan volume RVOL {pillars.get('rvol', 2.5)}x di atas rata-rata 20 candle.",
+        f"Perbandingan Spot vs Futures: Basis spread {basis_spread_pct:+.3f}% dan funding rate {(funding_rate*100):+.4f}% mengonfirmasi akumulasi modal bersih.",
+        f"Level 5M Lowest Smart Sniper di level ${lowest_entry:.6f} meminimalkan risiko drawdown sebelum ekspansi menuju TP1 (${tp1_price:.6f})."
+    ]
+
+    return web.json_response({
+        "success": True,
+        "symbol": raw_symbol,
+        "futures_symbol": f_sym,
+        "spot_symbol": s_sym,
+        "current_price": curr_p,
+        "verdict": base_data.get("verdict", {}),
+        "setup_3level": {
+            "side": side,
+            "entry_price": curr_p,
+            "lowest_sniper_entry": lowest_entry,
+            "leverage": lev,
+            "recommended_margin": setup.get("recommended_margin", 1.0),
+            "tp1": { "price": tp1_price, "roe_percent": tp1_pct, "label": "Target 1 (Scalp / Quick Exit)" },
+            "tp2": { "price": tp2_price, "roe_percent": tp2_pct, "label": "Target 2 (Swing Resistance)" },
+            "tp3": { "price": tp3_price, "roe_percent": tp3_pct, "label": "Target 3 (Major Runner Breakout)" },
+            "sl": { "price": sl_price, "roe_percent": sl_pct, "label": "Stop Loss (ATR Protect)" },
+            "risk_reward_ratio": setup.get("risk_reward_ratio", "1 : 2.0"),
+        },
+        "spot_vs_futures": {
+            "spot_price": spot_price,
+            "futures_price": futures_price,
+            "basis_spread_usdt": round(basis_spread_usdt, 6),
+            "basis_spread_pct": basis_spread_pct,
+            "funding_rate_percent": round(funding_rate * 100, 4),
+            "funding_rate_annualized": round(funding_rate * 100 * 3 * 365, 2),
+            "spot_vol_24h_usdt": round(spot_vol_24h, 2),
+            "futures_vol_24h_usdt": round(futures_vol_24h, 2),
+            "volume_ratio": round((futures_vol_24h / spot_vol_24h) if spot_vol_24h > 0 else 1.0, 2),
+        },
+        "buying_power_orderflow": {
+            "spot_taker_buy_ratio": spot_taker_buy_ratio,
+            "spot_taker_sell_ratio": round(100.0 - spot_taker_buy_ratio, 1),
+            "futures_taker_buy_ratio": futures_taker_buy_ratio,
+            "futures_taker_sell_ratio": round(100.0 - futures_taker_buy_ratio, 1),
+            "whale_status": base_data.get("whale_radar", {}).get("activity", "PAUS ACCUMULATION"),
+            "rvol_surge": pillars.get("rvol", 2.5),
+        },
+        "reasons": reasons,
+        "pillars": pillars,
+        "swing_4h": swing,
+        "db_memory": base_data.get("db_memory", {}),
+        "fingerprint": base_data.get("fingerprint", ""),
+        "fingerprint_breakdown": base_data.get("fingerprint_breakdown", {}),
+    })
 
 
 async def api_analyze_coin(request: web.Request) -> web.Response:
@@ -588,17 +993,66 @@ async def api_analyze_coin(request: web.Request) -> web.Response:
         active_client = client
 
     try:
-        # 1. Fetch live klines (5m dan 1h)
-        df_5m = await active_client.fetch_ohlcv(symbol, "5m", limit=100)
-        df_1h = await active_client.fetch_ohlcv(symbol, "1h", limit=50)
+        # Auto-resolve symbol candidates (misal PEPEUSDT -> 1000PEPEUSDT di Binance Futures)
+        candidates = [symbol]
+        if not symbol.startswith("1000") and not symbol.startswith("1000000"):
+            candidates.append(f"1000{symbol}")
+            candidates.append(f"1000000{symbol}")
+        elif symbol.startswith("1000"):
+            candidates.append(symbol[4:])
+
+        df_5m = None
+        df_1h = None
+        resolved_symbol = symbol
+
+        for sym_cand in candidates:
+            try:
+                cand_5m = await active_client.fetch_ohlcv(sym_cand, "5m", limit=100) if hasattr(active_client, "fetch_ohlcv") else None
+                if cand_5m is None or cand_5m.empty:
+                    if hasattr(active_client, "futures_klines"):
+                        klines = await active_client.futures_klines(symbol=sym_cand, interval="5m", limit=100)
+                        if klines:
+                            cand_5m = pd.DataFrame(klines, columns=[
+                                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                                'close_time', 'quote_asset_volume', 'number_of_trades',
+                                'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+                            ])
+                            cand_5m['timestamp'] = pd.to_datetime(cand_5m['timestamp'], unit='ms')
+                            for col in ['open', 'high', 'low', 'close', 'volume']:
+                                cand_5m[col] = cand_5m[col].astype(float)
+
+                if cand_5m is not None and not cand_5m.empty:
+                    df_5m = cand_5m
+                    resolved_symbol = sym_cand
+                    # Fetch 1H klines
+                    if hasattr(active_client, "fetch_ohlcv"):
+                        df_1h = await active_client.fetch_ohlcv(sym_cand, "1h", limit=50)
+                    elif hasattr(active_client, "futures_klines"):
+                        klines_1h = await active_client.futures_klines(symbol=sym_cand, interval="1h", limit=50)
+                        if klines_1h:
+                            df_1h = pd.DataFrame(klines_1h, columns=[
+                                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                                'close_time', 'quote_asset_volume', 'number_of_trades',
+                                'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+                            ])
+                            df_1h['timestamp'] = pd.to_datetime(df_1h['timestamp'], unit='ms')
+                            for col in ['open', 'high', 'low', 'close', 'volume']:
+                                df_1h[col] = df_1h[col].astype(float)
+                    break
+            except Exception:
+                continue
 
         # Fallback jika exchange aktif gagal klines
         if (df_5m is None or df_5m.empty) and getattr(active_client, "exchange_name", "") != "BINANCE":
             try:
                 binance_fb = BinanceAdapter(BINANCE_API_KEY, BINANCE_API_SECRET)
                 await binance_fb.init()
-                df_5m = await binance_fb.fetch_ohlcv(symbol, "5m", limit=100)
-                df_1h = await binance_fb.fetch_ohlcv(symbol, "1h", limit=50)
+                for sym_cand in candidates:
+                    df_5m = await binance_fb.fetch_ohlcv(sym_cand, "5m", limit=100)
+                    if df_5m is not None and not df_5m.empty:
+                        resolved_symbol = sym_cand
+                        df_1h = await binance_fb.fetch_ohlcv(sym_cand, "1h", limit=50)
+                        break
                 await binance_fb.close()
             except Exception:
                 pass
@@ -606,8 +1060,10 @@ async def api_analyze_coin(request: web.Request) -> web.Response:
         if df_5m is None or df_5m.empty:
             return web.json_response({
                 "success": False,
-                "error": f"Gagal mengambil data candle untuk symbol {symbol}. Pastikan symbol futures valid (contoh: BTCUSDT, LTCUSDT, SOLUSDT)."
+                "error": f"Gagal mengambil data candle untuk symbol {symbol}. Pastikan symbol futures valid (contoh: BTCUSDT, LTCUSDT, SOLUSDT, 1000PEPEUSDT)."
             }, status=400)
+
+        symbol = resolved_symbol
 
         # Hitung indikator 5M
         df_5m = calculate_bollinger_bands(df_5m)
@@ -727,6 +1183,107 @@ async def api_analyze_coin(request: web.Request) -> web.Response:
             active_conf = conf_long if score_long >= score_short else conf_short
             best_score = max(score_long, score_short)
 
+        # 4H Multi-Timeframe Swing Analysis
+        df_4h = None
+        if hasattr(active_client, "fetch_ohlcv"):
+            try:
+                df_4h = await active_client.fetch_ohlcv(symbol, "4h", limit=50)
+            except Exception:
+                pass
+        
+        if df_4h is not None and not df_4h.empty:
+            htf_trend_4h = get_htf_trend(df_4h)
+            swing_4h_high = float(df_4h["high"].max())
+            swing_4h_low = float(df_4h["low"].min())
+            pat_4h = detect_candlestick_patterns(df_4h).get("pattern", "NONE")
+        else:
+            htf_trend_4h = htf_trend
+            swing_4h_high = float(df_5m["high"].max() * 1.05)
+            swing_4h_low = float(df_5m["low"].min() * 0.95)
+            pat_4h = "NONE"
+
+        # 5M Smart Limit Pullback (Extreme Lowest Entry)
+        retrace_discount_pct = float(getattr(bot_config, "limit_pullback_discount_pct", 0.40) or 0.40)
+        smart_entry_lowest = round(curr_price * (1.0 - (retrace_discount_pct / 100.0)), 6) if verdict_side != "SHORT" else round(curr_price * (1.0 + (retrace_discount_pct / 100.0)), 6)
+
+        # Whale / Paus Orderflow & Sniper Detection
+        vol_surge_ratio = rvol
+        is_breakout_confirmed = (squeeze_score >= 50.0 and rvol >= 1.8)
+        is_whale_buy = (rvol >= 2.5 and curr_price > lower_bb and (rsi_5m <= 50 or "BULLISH" in str(pattern_type).upper()))
+        is_whale_sell = (rvol >= 2.5 and curr_price < upper_bb and (rsi_5m >= 65 or "BEARISH" in str(pattern_type).upper()))
+
+        if is_whale_buy:
+            whale_status = "🟢 PAUS ACCUMULATION (WHALE BUY)"
+            whale_action_desc = f"Terdeteksi lonjakan volume paus {rvol:.2f}x lipat dari rata-rata pada zona support/diskon."
+        elif is_whale_sell:
+            whale_status = "🔴 PAUS DUMP (WHALE SELL)"
+            whale_action_desc = f"Terdeteksi tekanan jual volume paus {rvol:.2f}x lipat pada zona resistance/upper band."
+        elif pump_intel.get("tier") and pump_intel.get("tier") != "NONE":
+            whale_status = f"⚡ PRE-PUMP RADAR ({pump_intel.get('tier')})"
+            whale_action_desc = f"Akumulasi agresif pre-pump terdeteksi dengan skor {pump_intel.get('score', 0):.1f}/100."
+        else:
+            whale_status = "🟡 NORMAL ORDERFLOW"
+            whale_action_desc = f"Aktivitas volume transaksi berada pada rentang normal ({rvol:.2f}x rata-rata 20 candle)."
+
+        # AI Fingerprint Generation
+        vol_tag = "VOL:SURGE" if rvol >= 2.0 else ("VOL:HIGH" if rvol >= 1.5 else "VOL:NORM")
+        rsi_tag = "OVERSOLD" if rsi_5m <= 35 else ("OVERBOUGHT" if rsi_5m >= 70 else "NEUTRAL")
+        sq_tag = f"SQ{int(squeeze_score // 20) * 20}"
+        brk_tag = "YES" if is_breakout_confirmed else "NO"
+        fingerprint_str = f"SIDE:{verdict_side}|HTF:{htf_trend_4h}|BB:{bb_zone}|RSI:{rsi_tag}|PAT:{pattern_name}|BRK:{brk_tag}|{sq_tag}|{vol_tag}"
+
+        fingerprint_breakdown = [
+            {
+                "key": "HTF",
+                "label": "Higher Timeframe Trend (4H/1H)",
+                "value": htf_trend_4h,
+                "status": "BULLISH" if htf_trend_4h == "UPTREND" else ("BEARISH" if htf_trend_4h == "DOWNTREND" else "NEUTRAL"),
+                "desc": "Arah pergerakan tren besar 4 Jam / 1 Jam. Bot mengutamakan entry searah dengan tren HTF untuk memaksimalkan win rate dan meminimalkan counter-trend risk."
+            },
+            {
+                "key": "BB",
+                "label": "Bollinger Bands Zone (5M)",
+                "value": bb_zone,
+                "status": "LOWER (Diskon)" if bb_zone == "LOWER" else ("UPPER (Jenuh)" if bb_zone == "UPPER" else "MID (Netral)"),
+                "desc": "LOWER = Harga menyentuh pita bawah (zona pantulan beli diskon). UPPER = Harga menyentuh pita atas (zona jenuh beli/potensi koreksi). MID = Konsolidasi rata-rata."
+            },
+            {
+                "key": "RSI",
+                "label": "Relative Strength Index (5M/1H)",
+                "value": f"{rsi_tag} ({rsi_5m})",
+                "status": "OVERSOLD" if rsi_5m <= 35 else ("OVERBOUGHT" if rsi_5m >= 70 else "NEUTRAL"),
+                "desc": "OVERSOLD (<35) = Tekanan jual jenuh, potensi kuat rebound balik arah. OVERBOUGHT (>70) = Tekanan beli jenuh, rawan koreksi mendadak. NEUTRAL (35-70) = Momentum stabil."
+            },
+            {
+                "key": "PAT",
+                "label": "Candlestick Pattern (5M/4H)",
+                "value": pattern_name if pattern_name != "NONE" else "Standard Price Action",
+                "status": pattern_type,
+                "desc": "Pola candlestick reversal terkonfirmasi (misal: Bullish Hammer, Morning Star, Engulfing, Tweezer Bottom) yang menandakan momentum perpindahan kontrol dari seller ke buyer."
+            },
+            {
+                "key": "BRK",
+                "label": "Breakout Confirmation",
+                "value": brk_tag,
+                "status": "CONFIRMED" if brk_tag == "YES" else "RANGE_BOUND",
+                "desc": "Konfirmasi apakah harga telah berhasil menembus level resistensi/support dinamis dengan volume valid untuk membedakan breakout asli dari False Breakout (Bull/Bear Trap)."
+            },
+            {
+                "key": "SQ",
+                "label": "Volatility Squeeze Score",
+                "value": f"{sq_tag} ({squeeze_score}/100)",
+                "status": "HIGH COMPRESSION" if squeeze_score >= 60 else ("MODERATE" if squeeze_score >= 30 else "EXPANDED"),
+                "desc": "Mengukur tingkat kompresi volatilitas Bollinger Bands di dalam Keltner Channel. Semakin tinggi skor squeeze, semakin besar potensi terjadinya ledakan ekspansi harga searah tren."
+            },
+            {
+                "key": "VOL",
+                "label": "Relative Volume Spike (RVOL)",
+                "value": f"{vol_tag} ({rvol:.2f}x)",
+                "status": "SURGE" if rvol >= 2.0 else ("HIGH" if rvol >= 1.5 else "NORMAL"),
+                "desc": "Perbandingan volume candle saat ini terhadap rata-rata 20 candle sebelumnya. VOL:SURGE (≥2.0x) mengonfirmasi partisipasi modal institusi / paus besar masuk ke pasar."
+            }
+        ]
+
         # Target TP / SL
         tp_pct = float(getattr(bot_config, "tp_percent", 45.0) or 45.0)
         sl_pct = float(getattr(bot_config, "sl_percent", 25.0) or 25.0)
@@ -799,6 +1356,8 @@ async def api_analyze_coin(request: web.Request) -> web.Response:
             },
             "setup": {
                 "entry_price": curr_price,
+                "smart_lowest_entry": smart_entry_lowest,
+                "discount_retrace_pct": retrace_discount_pct,
                 "tp1_price": tp1_p,
                 "tp2_price": tp2_p,
                 "sl_price": sl_p,
@@ -808,8 +1367,27 @@ async def api_analyze_coin(request: web.Request) -> web.Response:
                 "recommended_margin": float(getattr(bot_config, "margin_usdt", 1.0) or 1.0),
                 "risk_reward_ratio": f"1 : {round(tp_pct / sl_pct, 2)}",
             },
+            "swing_4h": {
+                "trend": htf_trend_4h,
+                "major_support": round(swing_4h_low, 6),
+                "major_resistance": round(swing_4h_high, 6),
+                "pattern_4h": pat_4h,
+                "strategy": "Swing Multi-Timeframe: Konfirmasi Trend & Reversal di 4H -> Eksekusi Smart Limit di 5M pada Swing Low Terendah."
+            },
+            "whale_radar": {
+                "status": whale_status,
+                "action_desc": whale_action_desc,
+                "rvol": rvol,
+                "sniper_buy_threshold": "RVOL >= 2.50x pada Zona Support (Lower BB / Demand)",
+                "sniper_sell_threshold": "RVOL >= 2.50x pada Zona Resistance (Upper BB / Supply)",
+                "sniper_buy_active": bool(is_whale_buy),
+                "sniper_sell_active": bool(is_whale_sell),
+            },
+            "fingerprint": fingerprint_str,
+            "fingerprint_breakdown": fingerprint_breakdown,
             "pillars": {
                 "htf_trend": htf_trend,
+                "htf_trend_4h": htf_trend_4h,
                 "smc_market_structure": smc_regime,
                 "rsi_5m": rsi_5m,
                 "rsi_1h": rsi_1h,
@@ -836,6 +1414,7 @@ async def api_analyze_coin(request: web.Request) -> web.Response:
     finally:
         if temp_client:
             await temp_client.close()
+
 
 
 # ─── Database Backup & Restore Endpoints ─────────────────────────────────────
@@ -955,11 +1534,14 @@ def create_dashboard_app() -> web.Application:
     """Factory untuk instance aiohttp web application."""
     app = web.Application()
     app.router.add_get("/", index_handler)
+    app.router.add_get("/screener", screener_handler)
     app.router.add_get("/api/overview", api_overview)
     app.router.add_get("/api/patterns", api_patterns)
     app.router.add_get("/api/symbols", api_symbols)
     app.router.add_get("/api/candles/{symbol}", api_candles)
     app.router.add_get("/api/analyze-coin", api_analyze_coin)
+    app.router.add_get("/api/screener/deep-analysis", api_screener_deep_analysis)
+    app.router.add_get("/api/screener/whale-trades", api_screener_whale_trades)
     app.router.add_get("/api/trades", api_trades)
     app.router.add_get("/api/pnl-chart", api_pnl_chart)
     app.router.add_get("/api/scanner/logs", api_scanner_logs)

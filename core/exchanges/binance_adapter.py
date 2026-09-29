@@ -90,30 +90,55 @@ class BinanceAdapter(BaseExchange):
             print(f"[BINANCE] Error fetching scan coins: {e}")
             return []
 
+    def _get_symbol_candidates(self, symbol: str) -> List[str]:
+        sym = symbol.upper().strip()
+        candidates = [sym]
+        if not sym.startswith("1000") and not sym.startswith("1000000"):
+            candidates.append(f"1000{sym}")
+            candidates.append(f"1000000{sym}")
+        elif sym.startswith("1000000"):
+            candidates.append(sym[7:])
+            candidates.append(sym[3:])
+        elif sym.startswith("1000"):
+            candidates.append(sym[4:])
+            candidates.append(f"1000000{sym[4:]}")
+        return candidates
+
     async def fetch_ohlcv(self, symbol: str, interval: str, limit: int = 100) -> pd.DataFrame:
-        try:
-            klines = await self.client.futures_klines(symbol=symbol, interval=interval, limit=limit)
-            df = pd.DataFrame(klines, columns=[
-                'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                'close_time', 'quote_asset_volume', 'number_of_trades',
-                'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
-            ])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            for col in ['open', 'high', 'low', 'close', 'volume']:
-                df[col] = df[col].astype(float)
-            return df
-        except Exception as e:
-            log_error(f"BINANCE_OHLCV_{symbol}", str(e))
-            print(f"[BINANCE] Error fetching OHLCV for {symbol}: {e}")
-            return pd.DataFrame()
+        candidates = self._get_symbol_candidates(symbol)
+        last_err = None
+        for sym in candidates:
+            try:
+                klines = await self.client.futures_klines(symbol=sym, interval=interval, limit=limit)
+                if klines and len(klines) > 0:
+                    df = pd.DataFrame(klines, columns=[
+                        'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                        'close_time', 'quote_asset_volume', 'number_of_trades',
+                        'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+                    ])
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                    for col in ['open', 'high', 'low', 'close', 'volume']:
+                        df[col] = df[col].astype(float)
+                    return df
+            except Exception as e:
+                last_err = e
+                continue
+
+        log_error(f"BINANCE_OHLCV_{symbol}", str(last_err))
+        print(f"[BINANCE] Error fetching OHLCV for {symbol} (tried {candidates}): {last_err}")
+        return pd.DataFrame()
 
     async def get_symbol_price(self, symbol: str) -> float:
-        try:
-            ticker = await self.client.futures_symbol_ticker(symbol=symbol.upper())
-            return float(ticker.get("price", 0.0))
-        except Exception as e:
-            log_error(f"BINANCE_PRICE_{symbol}", str(e))
-            return 0.0
+        candidates = self._get_symbol_candidates(symbol)
+        for sym in candidates:
+            try:
+                ticker = await self.client.futures_symbol_ticker(symbol=sym)
+                price = float(ticker.get("price", 0.0))
+                if price > 0:
+                    return price
+            except Exception:
+                continue
+        return 0.0
 
     async def get_orderbook_spread(self, symbol: str) -> Dict[str, float]:
         try:
@@ -154,14 +179,21 @@ class BinanceAdapter(BaseExchange):
             for pos in positions:
                 amt = float(pos.get('positionAmt', 0.0))
                 if abs(amt) > 0:
+                    entry_p = float(pos.get('entryPrice', 0.0))
+                    lev = int(pos.get('leverage', 1) or 1)
+                    raw_margin = float(pos.get('isolatedMargin', 0.0) or pos.get('positionInitialMargin', 0.0) or 0.0)
+                    if raw_margin <= 0 and lev > 0 and entry_p > 0:
+                        raw_margin = abs(amt) * entry_p / lev
+
                     active_positions.append({
                         'symbol': pos['symbol'],
                         'side': 'LONG' if amt > 0 else 'SHORT',
                         'position_amt': amt,
-                        'entry_price': float(pos.get('entryPrice', 0.0)),
+                        'entry_price': entry_p,
                         'mark_price': float(pos.get('markPrice', 0.0)),
                         'unrealized_pnl': float(pos.get('unRealizedProfit', 0.0)),
-                        'leverage': int(pos.get('leverage', 1)),
+                        'leverage': lev,
+                        'margin': raw_margin,
                         'liquidation_price': float(pos.get('liquidationPrice', 0.0)),
                         'update_time': int(pos.get('updateTime', 0)),
                     })

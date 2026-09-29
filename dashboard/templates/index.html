@@ -827,23 +827,82 @@
       border-bottom: none;
     }
 
-    /* PnL Growth Curve Section */
-    .pnl-chart-section {
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 16px;
-      padding: 20px 24px;
+    /* AI Deep Scanner & Whale Radar Styling */
+    .whale-radar-box {
+      background: linear-gradient(135deg, rgba(157, 78, 221, 0.1), rgba(0, 242, 254, 0.08));
+      border: 1px solid rgba(157, 78, 221, 0.3);
+      border-radius: 12px;
+      padding: 16px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
-      backdrop-filter: blur(14px);
+      gap: 10px;
     }
-    #pnl-curve-container {
-      width: 100%;
-      height: 220px;
+    .fingerprint-container {
+      background: rgba(8, 12, 22, 0.8);
+      border: 1px solid rgba(0, 242, 254, 0.25);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .fingerprint-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .fp-chip {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 6px 12px;
       border-radius: 8px;
-      overflow: hidden;
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--accent-cyan);
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
+    .glossary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+      margin-top: 8px;
+    }
+    .glossary-card {
+      background: rgba(15, 22, 36, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+    .glossary-card:hover {
+      border-color: rgba(0, 242, 254, 0.35);
+      background: rgba(20, 30, 50, 0.85);
+      transform: translateY(-2px);
+    }
+    .glossary-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .glossary-tag {
+      font-size: 0.82rem;
+      font-weight: 800;
+      color: var(--accent-cyan);
+      background: rgba(0, 242, 254, 0.12);
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+    .glossary-desc {
+      font-size: 0.80rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
 
     /* Tab Section */
     .tab-section {
@@ -1221,6 +1280,10 @@
     </div>
 
     <div class="nav-status">
+      <a href="/screener" target="_blank" style="display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, rgba(0, 242, 254, 0.2), rgba(157, 78, 221, 0.25)); border: 1px solid #00f2fe; color: #fff; padding: 7px 15px; border-radius: 9px; font-weight: 700; font-size: 0.85rem; text-decoration: none; box-shadow: 0 0 15px rgba(0,242,254,0.25); transition: all 0.2s ease;">
+        <i data-lucide="scan-line" style="width: 16px; height: 16px; color: #00f2fe;"></i>
+        <span>🛰️ Deep Screener Pro (GMGN)</span>
+      </a>
       <div class="badge-live">
         <div class="pulse-dot"></div>
         <span id="bot-status-text">BOT ACTIVE (24/7)</span>
@@ -1331,33 +1394,21 @@
       </div>
     </section>
 
-    <!-- Top 6 Hero Metrics Grid -->
+    <!-- Top 6 Hero Metrics Grid (Urutan KPI Utama Bot) -->
     <section class="metrics-grid">
-      <!-- 1. Daily Realized Net PnL -->
+      <!-- 1. Floating Live Unrealized PnL (Paling Atas / Prioritas Utama) -->
       <div class="metric-card">
         <div class="metric-header">
-          <span>PnL Harian (Realized)</span>
-          <div class="metric-icon" style="color: var(--accent-cyan);">
-            <i data-lucide="calendar" style="width: 18px;"></i>
-          </div>
-        </div>
-        <div class="metric-value" id="val-daily-pnl">$0.00</div>
-        <div class="metric-sub" id="sub-daily-pnl">Gross: +$0.00 | -$0.00</div>
-      </div>
-
-      <!-- 2. Floating Live Unrealized PnL -->
-      <div class="metric-card">
-        <div class="metric-header">
-          <span>Floating PnL Live</span>
+          <span>Floating PnL Live (Realtime)</span>
           <div class="metric-icon" style="color: var(--accent-emerald);">
-            <i data-lucide="trending-up" style="width: 18px;"></i>
+            <i data-lucide="activity" style="width: 18px;"></i>
           </div>
         </div>
         <div class="metric-value" id="val-floating-pnl">$0.00</div>
         <div class="metric-sub" id="sub-floating-pnl">Posisi Aktif Berjalan</div>
       </div>
 
-      <!-- 3. Daily Win Rate -->
+      <!-- 2. Daily Win Rate -->
       <div class="metric-card">
         <div class="metric-header">
           <span>Winrate Harian</span>
@@ -1369,22 +1420,22 @@
         <div class="metric-sub" id="sub-daily-wr">0 Menang / 0 Kalah</div>
       </div>
 
-      <!-- 4. Profit Factor -->
+      <!-- 3. Daily Realized Net PnL -->
       <div class="metric-card">
         <div class="metric-header">
-          <span>Profit Factor</span>
-          <div class="metric-icon" style="color: var(--accent-purple);">
-            <i data-lucide="bar-chart-3" style="width: 18px;"></i>
+          <span>Profit PnL Harian (Net)</span>
+          <div class="metric-icon" style="color: var(--accent-cyan);">
+            <i data-lucide="calendar" style="width: 18px;"></i>
           </div>
         </div>
-        <div class="metric-value" id="val-profit-factor">0.00</div>
-        <div class="metric-sub" id="sub-profit-factor">All-Time PF: 0.00</div>
+        <div class="metric-value" id="val-daily-pnl">$0.00</div>
+        <div class="metric-sub" id="sub-daily-pnl">Gross: +$0.00 | -$0.00</div>
       </div>
 
-      <!-- 5. All-Time Net Realized PnL -->
+      <!-- 4. All-Time Net Realized PnL -->
       <div class="metric-card">
         <div class="metric-header">
-          <span>All-Time Net PnL</span>
+          <span>Profit All-Time Net</span>
           <div class="metric-icon" style="color: var(--accent-blue);">
             <i data-lucide="dollar-sign" style="width: 18px;"></i>
           </div>
@@ -1393,29 +1444,29 @@
         <div class="metric-sub" id="sub-alltime-pnl">Total All-Time WR: 0.0%</div>
       </div>
 
-      <!-- 6. Active Positions Count & Simulated Modal -->
+      <!-- 5. Realtime Wallet Balance (Live Exchange / Testnet Sync) -->
       <div class="metric-card">
         <div class="metric-header">
-          <span>Posisi Aktif & Saldo Simulasi</span>
-          <div class="metric-icon" style="color: var(--accent-cyan);">
+          <span>Saldo Akun Realtime</span>
+          <div class="metric-icon" style="color: var(--accent-purple);">
             <i data-lucide="wallet" style="width: 18px;"></i>
           </div>
         </div>
-        <div class="metric-value" id="val-active-positions">0 / 4</div>
-        <div class="metric-sub" id="sub-virtual-trades">Saldo Simulasi: $100.00 USDT</div>
+        <div class="metric-value" id="val-account-balance" style="color: var(--accent-purple);">$0.00 USDT</div>
+        <div class="metric-sub" id="sub-account-balance">Sinkronisasi Live Exchange API</div>
       </div>
-    </section>
 
-    <!-- Cumulative PnL Growth Curve Section -->
-    <section class="pnl-chart-section">
-      <div class="section-title">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <i data-lucide="trending-up" style="color: var(--accent-emerald); width: 20px;"></i>
-          <span>Kurva Pertumbuhan Kumulatif PnL (Equity Curve)</span>
+      <!-- 6. Active Positions Count -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span>Posisi Terbuka Aktif</span>
+          <div class="metric-icon" style="color: var(--accent-cyan);">
+            <i data-lucide="layers" style="width: 18px;"></i>
+          </div>
         </div>
-        <span class="badge badge-approved" id="pnl-curve-filter-badge">ALL EXCHANGES</span>
+        <div class="metric-value" id="val-active-positions">0 Posisi</div>
+        <div class="metric-sub" id="sub-virtual-trades">Maksimal 4 Slot Simultan</div>
       </div>
-      <div id="pnl-curve-container"></div>
     </section>
 
     <!-- Real-time Active Open Positions Section -->
@@ -1512,27 +1563,70 @@
             </div>
           </div>
 
-          <!-- 3 Columns Detail Grid -->
-          <div class="analysis-card-grid">
-            <!-- Box 1: Trade Setup & Execution Targets -->
+          <!-- Live Candlestick Chart & Target Visualizer Section -->
+          <div class="analyzer-chart-wrapper" style="background: rgba(13, 19, 33, 0.75); border: 1px solid var(--border-color); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <i data-lucide="line-chart" style="color: var(--accent-cyan); width: 20px; height: 20px;"></i>
+                <span class="font-heading" style="font-weight: 700; color: #fff; font-size: 1.05rem;">Live Candlestick & Target Execution Overlay</span>
+                <span id="chart-symbol-badge" class="badge badge-approved" style="font-size: 0.78rem;">BTCUSDT • 5M</span>
+                <span id="chart-live-badge" class="badge" style="background: rgba(0, 230, 118, 0.12); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.25); display: flex; align-items: center; gap: 6px; font-size: 0.75rem;">
+                  <span id="chart-ws-live-dot" style="width: 7px; height: 7px; border-radius: 50%; background: #00e676; display: inline-block;"></span>
+                  <span id="chart-ws-live-text">LIVE WS</span>
+                </span>
+              </div>
+              
+              <!-- Timeframe Selector & Overlay Legend -->
+              <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 12px; font-size: 0.78rem;">
+                  <span style="display: flex; align-items: center; gap: 5px; color: #00f2fe;"><span style="width: 12px; height: 3px; background: #00f2fe; display: inline-block; border-radius: 2px;"></span> 🎯 Entry</span>
+                  <span style="display: flex; align-items: center; gap: 5px; color: var(--accent-emerald);"><span style="width: 12px; height: 3px; background: var(--accent-emerald); display: inline-block; border-radius: 2px;"></span> 🏆 TP1</span>
+                  <span style="display: flex; align-items: center; gap: 5px; color: var(--accent-rose);"><span style="width: 12px; height: 3px; background: var(--accent-rose); display: inline-block; border-radius: 2px;"></span> 🛡️ SL</span>
+                </div>
+                <div class="quick-coin-pills" style="gap: 4px;">
+                  <span class="coin-pill active" id="tf-btn-5m" onclick="changeAnalyzerTf('5m', this)">5M</span>
+                  <span class="coin-pill" id="tf-btn-15m" onclick="changeAnalyzerTf('15m', this)">15M</span>
+                  <span class="coin-pill" id="tf-btn-1h" onclick="changeAnalyzerTf('1h', this)">1H</span>
+                  <span class="coin-pill" id="tf-btn-4h" onclick="changeAnalyzerTf('4h', this)">4H</span>
+                  <span class="coin-pill" id="tf-btn-1d" onclick="changeAnalyzerTf('1d', this)">1D</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Candlestick Chart Container -->
+            <div id="analyzer-candle-chart-container" style="height: 380px; width: 100%; position: relative; border-radius: 10px; overflow: hidden; background: #070a12; border: 1px solid rgba(255,255,255,0.05);">
+              <div id="analyzer-chart-loading" style="position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(7,10,18,0.7); z-index: 10;">
+                <div style="display: inline-block; width: 32px; height: 32px; border: 3px solid rgba(0,242,254,0.2); border-top-color: var(--accent-cyan); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Multi-Pillars & Advanced AI Intelligence Grid -->
+          <div class="analysis-card-grid" style="grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));">
+            
+            <!-- Box 1: Trade Setup & 5M Lowest Sniper Pullback Level -->
             <div class="analyzer-panel">
               <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
                 <span class="font-heading" style="font-weight: 700; font-size: 0.98rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 6px;">
-                  <i data-lucide="crosshair" style="width: 16px;"></i> Trade Setup & Targets
+                  <i data-lucide="crosshair" style="width: 16px;"></i> Setup Trade & 5M Sniper Entry
                 </span>
                 <span id="analyzed-rrr-badge" class="badge badge-primary" style="font-size: 0.75rem;">RRR 1 : 1.8</span>
               </div>
               <div class="pillar-row">
-                <span style="color: var(--text-muted);">Entry Price Target:</span>
-                <strong id="setup-entry-price" style="color: #fff;">$84,260.50</strong>
+                <span style="color: var(--text-muted);">Harga Pasar Saat Ini:</span>
+                <strong id="setup-entry-price" style="color: #fff;">$0.00</strong>
+              </div>
+              <div class="pillar-row" style="background: rgba(0, 242, 254, 0.05); padding: 6px 8px; border-radius: 6px; border: 1px dashed rgba(0, 242, 254, 0.25);">
+                <span style="color: var(--accent-cyan); font-weight: 600;">🎯 5M Lowest Sniper Entry:</span>
+                <strong id="setup-lowest-entry" style="color: var(--accent-cyan);">$0.00 (Pullback Discount)</strong>
               </div>
               <div class="pillar-row">
                 <span style="color: var(--text-muted);">Take Profit 1 (Target):</span>
-                <strong id="setup-tp1-price" style="color: var(--accent-emerald);">$86,156.35 (+45.0% ROE)</strong>
+                <strong id="setup-tp1-price" style="color: var(--accent-emerald);">$0.00</strong>
               </div>
               <div class="pillar-row">
                 <span style="color: var(--text-muted);">Stop Loss (Batas Risiko):</span>
-                <strong id="setup-sl-price" style="color: var(--accent-rose);">$83,207.24 (-25.0% ROE)</strong>
+                <strong id="setup-sl-price" style="color: var(--accent-rose);">$0.00</strong>
               </div>
               <div class="pillar-row">
                 <span style="color: var(--text-muted);">Dynamic Leverage (ATR):</span>
@@ -1544,11 +1638,71 @@
               </div>
             </div>
 
-            <!-- Box 2: 5 Pillars Multi-Indikator Live -->
+            <!-- Box 2: 4H Swing Trend & Multi-TF Confluence -->
+            <div class="analyzer-panel">
+              <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
+                <span class="font-heading" style="font-weight: 700; font-size: 0.98rem; color: #a78bfa; display: flex; align-items: center; gap: 6px;">
+                  <i data-lucide="clock" style="width: 16px;"></i> Swing 4-Jam (HTF Multi-TF)
+                </span>
+                <span id="analyzed-4h-trend-badge" class="badge badge-approved" style="font-size: 0.75rem;">4H UPTREND</span>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Struktur Tren Swing 4H:</span>
+                <strong id="swing-4h-trend" style="color: #fff;">UPTREND</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Pola Candlestick 4H:</span>
+                <strong id="swing-4h-pattern" style="color: var(--accent-emerald);">HAMMER_BULLISH</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">RSI Swing 4-Jam:</span>
+                <strong id="swing-4h-rsi" style="color: #fff;">52.4</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Zona Support Kunci 4H:</span>
+                <strong id="swing-4h-support" style="color: var(--accent-emerald);">$0.00</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Zona Resistance Kunci 4H:</span>
+                <strong id="swing-4h-resistance" style="color: var(--accent-rose);">$0.00</strong>
+              </div>
+            </div>
+
+            <!-- Box 3: Whale / Paus Radar & Sniper Volume Threshold -->
+            <div class="analyzer-panel">
+              <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
+                <span class="font-heading" style="font-weight: 700; font-size: 0.98rem; color: #00f2fe; display: flex; align-items: center; gap: 6px;">
+                  <i data-lucide="waves" style="width: 16px;"></i> Whale Orderflow & Sniper Volume
+                </span>
+                <span id="analyzed-whale-badge" class="badge badge-approved" style="font-size: 0.75rem;">PAUS ACCUMULATION</span>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Aktivitas Whale / Paus (DEX/CEX):</span>
+                <strong id="whale-activity-status" style="color: var(--accent-emerald);">🟢 PAUS BUY ACCUMULATION</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Volume Spike (RVOL):</span>
+                <strong id="pillar-rvol" style="color: var(--accent-cyan);">2.99x vs SMA20</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">🎯 Ambang Sniper Buy:</span>
+                <strong id="whale-sniper-buy-threshold" style="color: var(--accent-emerald);">RVOL ≥ 2.50x @ Support / Lower BB</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">🎯 Ambang Sniper Sell:</span>
+                <strong id="whale-sniper-sell-threshold" style="color: var(--accent-rose);">RVOL ≥ 2.50x @ Resist / Upper BB</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Status Pre-Pump / Squeeze:</span>
+                <strong id="pillar-pump" style="color: var(--accent-amber);">PRE_PUMP (Score 85/100)</strong>
+              </div>
+            </div>
+
+            <!-- Box 4: 5 Pillars Multi-Indikator 5M & 1H -->
             <div class="analyzer-panel">
               <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
                 <span class="font-heading" style="font-weight: 700; font-size: 0.98rem; color: var(--accent-blue); display: flex; align-items: center; gap: 6px;">
-                  <i data-lucide="layers" style="width: 16px;"></i> 5 Pilar Indikator Live
+                  <i data-lucide="layers" style="width: 16px;"></i> 5 Pilar Indikator 5M & 1H
                 </span>
                 <span id="analyzed-htf-badge" class="badge badge-approved" style="font-size: 0.75rem;">HTF UPTREND</span>
               </div>
@@ -1561,46 +1715,128 @@
                 <strong id="pillar-bb" style="color: #fff;">LOWER BAND</strong>
               </div>
               <div class="pillar-row">
-                <span style="color: var(--text-muted);">Volume Spike (RVOL):</span>
-                <strong id="pillar-rvol" style="color: var(--accent-cyan);">2.99x vs SMA20</strong>
-              </div>
-              <div class="pillar-row">
-                <span style="color: var(--text-muted);">Pola Candlestick:</span>
+                <span style="color: var(--text-muted);">Pola Candlestick 5M:</span>
                 <strong id="pillar-pattern" style="color: var(--accent-emerald);">Tweezer Bottom (Tier-A)</strong>
-              </div>
-              <div class="pillar-row">
-                <span style="color: var(--text-muted);">Pre-Pump / Squeeze:</span>
-                <strong id="pillar-pump" style="color: var(--accent-amber);">PRE_PUMP (Score 85/100)</strong>
-              </div>
-            </div>
-
-            <!-- Box 3: Database Historical Memory AI -->
-            <div class="analyzer-panel">
-              <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
-                <span class="font-heading" style="font-weight: 700; font-size: 0.98rem; color: var(--accent-purple); display: flex; align-items: center; gap: 6px;">
-                  <i data-lucide="database" style="width: 16px;"></i> Memory Database PostgreSQL
-                </span>
-                <span id="analyzed-db-wr-badge" class="badge badge-approved" style="font-size: 0.75rem;">WR 80.0%</span>
-              </div>
-              <div class="pillar-row">
-                <span style="color: var(--text-muted);">Total Trade Tercatat:</span>
-                <strong id="db-total-trades" style="color: #fff;">16 Transaksi</strong>
-              </div>
-              <div class="pillar-row">
-                <span style="color: var(--text-muted);">Win / Loss Ratio:</span>
-                <strong id="db-win-loss" style="color: #fff;"><span style="color: var(--accent-emerald);">12 Win</span> / <span style="color: var(--accent-rose);">4 Loss</span></strong>
               </div>
               <div class="pillar-row">
                 <span style="color: var(--text-muted);">SMC Market Structure:</span>
                 <strong id="pillar-smc" style="color: var(--accent-cyan);">UPTREND_HEALTHY</strong>
               </div>
               <div class="pillar-row">
-                <span style="color: var(--text-muted);">Dynamic AVWAP:</span>
-                <strong id="pillar-avwap" style="color: #fff;">$84,180.20</strong>
+                <span style="color: var(--text-muted);">Dynamic AVWAP Fair Value:</span>
+                <strong id="pillar-avwap" style="color: #fff;">$0.00</strong>
+              </div>
+            </div>
+
+            <!-- Box 5: Database Historical Memory AI PostgreSQL -->
+            <div class="analyzer-panel">
+              <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
+                <span class="font-heading" style="font-weight: 700; font-size: 0.98rem; color: var(--accent-purple); display: flex; align-items: center; gap: 6px;">
+                  <i data-lucide="database" style="width: 16px;"></i> Database Memory & AI Pattern
+                </span>
+                <span id="analyzed-db-wr-badge" class="badge badge-approved" style="font-size: 0.75rem;">WR 80.0%</span>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Total Trade Tercatat:</span>
+                <strong id="db-total-trades" style="color: #fff;">0 Transaksi</strong>
+              </div>
+              <div class="pillar-row">
+                <span style="color: var(--text-muted);">Win / Loss Ratio:</span>
+                <strong id="db-win-loss" style="color: #fff;"><span style="color: var(--accent-emerald);">0 Win</span> / <span style="color: var(--accent-rose);">0 Loss</span></strong>
               </div>
               <div class="pillar-row">
                 <span style="color: var(--text-muted);">Status Bot Pembelajaran:</span>
                 <strong id="db-learner-status" style="color: var(--accent-emerald);">🟢 AKTIF (Terverifikasi)</strong>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Interactive AI Fingerprint Decoder & Technical Glossary Suite -->
+          <div class="fingerprint-suite-card">
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <i data-lucide="fingerprint" style="color: #00f2fe; width: 22px; height: 22px;"></i>
+                <div>
+                  <span class="font-heading" style="font-size: 1.05rem; font-weight: 700; color: #fff;">AI Candlestick Fingerprint & Parameter Glossary</span>
+                  <p style="font-size: 0.8rem; color: var(--text-dim); margin: 0;">Sidik jari teknikal multi-dimensi yang disimpan ke database pola AI bot.</p>
+                </div>
+              </div>
+              <div class="fingerprint-tag-string" id="analyzed-fingerprint-string">
+                SIDE:LONG | HTF:UPTREND | BB:LOWER | RSI:OVERSOLD | PAT:HAMMER | BRK:NO | SQ40 | VOL:SURGE
+              </div>
+            </div>
+
+            <!-- Dynamic 7 Technical Pillars Glossary Cards -->
+            <div class="glossary-grid" id="fingerprint-glossary-container">
+              <!-- HTF Glossary -->
+              <div class="glossary-item-card">
+                <div class="glossary-item-header">
+                  <span class="glossary-code-badge">HTF</span>
+                  <span class="glossary-title">Higher Timeframe (1H/4H Trend)</span>
+                </div>
+                <div class="glossary-current-val" id="gloss-htf-val">UPTREND (EMA50 > EMA200)</div>
+                <div class="glossary-desc">Arah tren besar di timeframe 1 Jam & 4 Jam. Memastikan bot hanya open posisi yang searah dengan arus utama pasar.</div>
+              </div>
+
+              <!-- BB Glossary -->
+              <div class="glossary-item-card">
+                <div class="glossary-item-header">
+                  <span class="glossary-code-badge">BB</span>
+                  <span class="glossary-title">Bollinger Bands Zone</span>
+                </div>
+                <div class="glossary-current-val" id="gloss-bb-val">LOWER (Harga Menempel Band Bawah)</div>
+                <div class="glossary-desc">Posisi harga relatif terhadap pita volatilitas 20-periode. Zona LOWER adalah area diskon untuk LONG; zona UPPER adalah plafon resistensi.</div>
+              </div>
+
+              <!-- RSI Glossary -->
+              <div class="glossary-item-card">
+                <div class="glossary-item-header">
+                  <span class="glossary-code-badge">RSI</span>
+                  <span class="glossary-title">Relative Strength Index (14)</span>
+                </div>
+                <div class="glossary-current-val" id="gloss-rsi-val">OVERSOLD (&lt; 35) / NEUTRAL</div>
+                <div class="glossary-desc">Indikator momentum kejenuhan harga (0-100). RSI &lt; 35 menandakan harga sudah jenuh jual (peluang rebound); RSI &gt; 70 menandakan jenuh beli.</div>
+              </div>
+
+              <!-- PAT Glossary -->
+              <div class="glossary-item-card">
+                <div class="glossary-item-header">
+                  <span class="glossary-code-badge">PAT</span>
+                  <span class="glossary-title">Candlestick Reversal Pattern</span>
+                </div>
+                <div class="glossary-current-val" id="gloss-pat-val">HAMMER_BULLISH / TWEEZER</div>
+                <div class="glossary-desc">Deteksi formasi candle pembalikan arah (Hammer, Engulfing, Morning Star, Pinbar) yang divalidasi oleh engine AI bot.</div>
+              </div>
+
+              <!-- BRK Glossary -->
+              <div class="glossary-item-card">
+                <div class="glossary-item-header">
+                  <span class="glossary-code-badge">BRK</span>
+                  <span class="glossary-title">Key Level Breakout Status</span>
+                </div>
+                <div class="glossary-current-val" id="gloss-brk-val">NO (Pullback Entry) / YES (Breakout)</div>
+                <div class="glossary-desc">Status penembusan level support/resistance kunci atau All-Time High. Membedakan gaya entry Pullback Diskon vs Momentum Breakout.</div>
+              </div>
+
+              <!-- SQ Glossary -->
+              <div class="glossary-item-card">
+                <div class="glossary-item-header">
+                  <span class="glossary-code-badge">SQ</span>
+                  <span class="glossary-title">Squeeze Volatility Compression</span>
+                </div>
+                <div class="glossary-current-val" id="gloss-sq-val">SQ40 (Kompresi Volatilitas 40/100)</div>
+                <div class="glossary-desc">Tingkat pemadatan energi harga di dalam pita Bollinger Band & Keltner Channel. Squeeze tinggi (SQ ≥ 60) menandakan ledakan harga besar akan terjadi.</div>
+              </div>
+
+              <!-- VOL Glossary -->
+              <div class="glossary-item-card">
+                <div class="glossary-item-header">
+                  <span class="glossary-code-badge">VOL</span>
+                  <span class="glossary-title">Volume Surge Multiplier (RVOL)</span>
+                </div>
+                <div class="glossary-current-val" id="gloss-vol-val">SURGE (RVOL &gt; 2.0x SMA20)</div>
+                <div class="glossary-desc">Lonjakan volume transaksi dibanding rata-rata 20 bar. Menandakan partisipasi Smart Money / Whale yang mengonfirmasi validitas sinyal.</div>
               </div>
             </div>
           </div>
@@ -2241,6 +2477,305 @@
       });
     }
 
+    // Live Candlestick & Target Execution Overlay Chart for Deep Screener
+    let analyzerChart = null;
+    let analyzerCandleSeries = null;
+    let analyzerVolumeSeries = null;
+    let currentAnalyzerSymbol = 'BTCUSDT';
+    let currentAnalyzerTf = '5m';
+    let currentAnalyzerSetup = null;
+    let currentPriceLines = [];
+
+    function initAnalyzerChart() {
+      const container = document.getElementById('analyzer-candle-chart-container');
+      if (!container || analyzerChart) return;
+
+      analyzerChart = LightweightCharts.createChart(container, {
+        layout: {
+          background: { color: '#070a12' },
+          textColor: '#94a3b8',
+        },
+        grid: {
+          vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
+          horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
+        },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        rightPriceScale: {
+          borderColor: 'rgba(255, 255, 255, 0.08)',
+          scaleMargins: {
+            top: 0.1,
+            bottom: 0.2,
+          },
+        },
+        timeScale: {
+          borderColor: 'rgba(255, 255, 255, 0.08)',
+          timeVisible: true,
+          secondsVisible: false,
+        },
+      });
+
+      analyzerCandleSeries = analyzerChart.addCandlestickSeries({
+        upColor: '#00e676',
+        downColor: '#ff1744',
+        borderVisible: false,
+        wickUpColor: '#00e676',
+        wickDownColor: '#ff1744',
+      });
+
+      analyzerVolumeSeries = analyzerChart.addHistogramSeries({
+        color: 'rgba(0, 242, 254, 0.3)',
+        priceFormat: {
+          type: 'volume',
+        },
+        priceScaleId: '',
+        scaleMargins: {
+          top: 0.82,
+          bottom: 0,
+        },
+      });
+
+      window.addEventListener('resize', () => {
+        if (analyzerChart && container) {
+          analyzerChart.applyOptions({ width: container.clientWidth });
+        }
+      });
+    }
+
+    async function loadAnalyzerCandles(symbol, tf, setup) {
+      currentAnalyzerSymbol = symbol || currentAnalyzerSymbol || 'BTCUSDT';
+      currentAnalyzerTf = tf || currentAnalyzerTf || '5m';
+      if (setup) currentAnalyzerSetup = setup;
+
+      const badge = document.getElementById('chart-symbol-badge');
+      if (badge) badge.innerText = `${currentAnalyzerSymbol} • ${currentAnalyzerTf.toUpperCase()}`;
+
+      const loader = document.getElementById('analyzer-chart-loading');
+      if (loader) loader.style.display = 'flex';
+
+      try {
+        if (!analyzerChart) initAnalyzerChart();
+
+        let candles = [];
+        try {
+          const res = await fetch(`/api/candles/${encodeURIComponent(currentAnalyzerSymbol)}?tf=${encodeURIComponent(currentAnalyzerTf)}&limit=120`);
+          const data = await res.json();
+          candles = data.candles || [];
+        } catch (e) {
+          console.warn('[CANDLES] Backend API fetch failed, trying direct Binance fallback:', e);
+        }
+
+        // Direct Browser Fallback to Binance Futures REST if backend returned empty
+        if (!candles || candles.length === 0) {
+          let directSym = currentAnalyzerSymbol.toUpperCase();
+          if (directSym === 'PEPEUSDT') directSym = '1000PEPEUSDT';
+          if (directSym === 'BONKUSDT') directSym = '1000BONKUSDT';
+          if (directSym === 'SHIBUSDT') directSym = '1000SHIBUSDT';
+          if (directSym === 'FLOKIUSDT') directSym = '1000FLOKIUSDT';
+
+          try {
+            const fbRes = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${directSym}&interval=${encodeURIComponent(currentAnalyzerTf)}&limit=120`);
+            const fbData = await fbRes.json();
+            if (Array.isArray(fbData) && fbData.length > 0) {
+              candles = fbData.map(row => ({
+                time: Math.floor(Number(row[0]) / 1000),
+                open: parseFloat(row[1]),
+                high: parseFloat(row[2]),
+                low: parseFloat(row[3]),
+                close: parseFloat(row[4]),
+                volume: parseFloat(row[5]),
+              }));
+            }
+          } catch (fbErr) {
+            console.error('[CANDLES] Direct Binance fallback failed:', fbErr);
+          }
+        }
+
+        if (candles.length > 0 && analyzerCandleSeries) {
+          analyzerCandleSeries.setData(candles);
+
+          const volumeData = candles.map(c => ({
+            time: c.time,
+            value: c.volume || 0,
+            color: c.close >= c.open ? 'rgba(0, 230, 118, 0.25)' : 'rgba(255, 23, 68, 0.25)',
+          }));
+          if (analyzerVolumeSeries) analyzerVolumeSeries.setData(volumeData);
+
+          // Render Price Lines: Entry, TP1, SL
+          if (currentPriceLines && currentPriceLines.length > 0) {
+            currentPriceLines.forEach(pl => {
+              try { analyzerCandleSeries.removePriceLine(pl); } catch (e) {}
+            });
+            currentPriceLines = [];
+          }
+
+          if (currentAnalyzerSetup) {
+            const entryVal = Number(currentAnalyzerSetup.smart_lowest_entry || currentAnalyzerSetup.entry_price || 0);
+            const tpVal = Number(currentAnalyzerSetup.tp1_price || 0);
+            const slVal = Number(currentAnalyzerSetup.sl_price || 0);
+
+            if (entryVal > 0) {
+              const entryLine = analyzerCandleSeries.createPriceLine({
+                price: entryVal,
+                color: '#00f2fe',
+                lineWidth: 2,
+                lineStyle: LightweightCharts.LineStyle.Solid,
+                axisLabelVisible: true,
+                title: `🎯 ENTRY ($${entryVal.toLocaleString()})`,
+              });
+              currentPriceLines.push(entryLine);
+            }
+
+            if (tpVal > 0) {
+              const tpLine = analyzerCandleSeries.createPriceLine({
+                price: tpVal,
+                color: '#00e676',
+                lineWidth: 2,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: `🏆 TP1 ($${tpVal.toLocaleString()}) +${currentAnalyzerSetup.tp_percent || 0}%`,
+              });
+              currentPriceLines.push(tpLine);
+            }
+
+            if (slVal > 0) {
+              const slLine = analyzerCandleSeries.createPriceLine({
+                price: slVal,
+                color: '#ff1744',
+                lineWidth: 2,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: `🛡️ SL ($${slVal.toLocaleString()}) -${currentAnalyzerSetup.sl_percent || 0}%`,
+              });
+              currentPriceLines.push(slLine);
+            }
+          }
+
+          analyzerChart.timeScale().fitContent();
+
+          // Connect Live Binance WebSocket Kline Stream (TradingView realtime experience)
+          connectBinanceKlineWs(currentAnalyzerSymbol, currentAnalyzerTf);
+        }
+      } catch (err) {
+        console.error('Error loading analyzer candles:', err);
+      } finally {
+        if (loader) loader.style.display = 'none';
+      }
+    }
+
+    // Live WebSocket connection to Binance Kline Stream
+    let activeKlineWs = null;
+
+    function connectBinanceKlineWs(symbol, tf) {
+      if (activeKlineWs) {
+        try {
+          activeKlineWs.onclose = null;
+          activeKlineWs.onerror = null;
+          activeKlineWs.close();
+        } catch (e) {}
+        activeKlineWs = null;
+      }
+
+      let cleanSym = (symbol || 'BTCUSDT').toLowerCase().trim();
+      if (cleanSym === 'pepeusdt') cleanSym = '1000pepeusdt';
+      if (cleanSym === 'bonkusdt') cleanSym = '1000bonkusdt';
+      if (cleanSym === 'shibusdt') cleanSym = '1000shibusdt';
+      if (cleanSym === 'flokiusdt') cleanSym = '1000flokiusdt';
+      if (cleanSym === 'luncusdt') cleanSym = '1000luncusdt';
+
+      let streamInterval = (tf || '5m').toLowerCase().trim();
+
+      // Binance stream endpoint (Futures primary, Spot fallback)
+      const wsUrl = `wss://fstream.binance.com/ws/${cleanSym}@kline_${streamInterval}`;
+      
+      const wsTextEl = document.getElementById('chart-ws-live-text');
+      const wsDotEl = document.getElementById('chart-ws-live-dot');
+
+      try {
+        activeKlineWs = new WebSocket(wsUrl);
+
+        activeKlineWs.onopen = () => {
+          if (wsTextEl) wsTextEl.innerText = 'LIVE WS (BINANCE)';
+          if (wsDotEl) {
+            wsDotEl.style.background = '#00e676';
+            wsDotEl.style.boxShadow = '0 0 8px #00e676';
+          }
+        };
+
+        activeKlineWs.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data && data.k) {
+              const k = data.k;
+              const candleTime = Math.floor(k.t / 1000);
+              const openP = parseFloat(k.o);
+              const highP = parseFloat(k.h);
+              const lowP = parseFloat(k.l);
+              const closeP = parseFloat(k.c);
+              const vol = parseFloat(k.v);
+
+              if (analyzerCandleSeries) {
+                analyzerCandleSeries.update({
+                  time: candleTime,
+                  open: openP,
+                  high: highP,
+                  low: lowP,
+                  close: closeP,
+                });
+              }
+
+              if (analyzerVolumeSeries) {
+                analyzerVolumeSeries.update({
+                  time: candleTime,
+                  value: vol,
+                  color: closeP >= openP ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)',
+                });
+              }
+
+              // Update live price in banner header
+              const livePriceEl = document.getElementById('analyzed-live-price');
+              if (livePriceEl) {
+                livePriceEl.innerText = '$' + closeP.toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 6
+                });
+              }
+            }
+          } catch (err) {
+            console.error('[WS KLINE] Error parsing msg:', err);
+          }
+        };
+
+        activeKlineWs.onerror = () => {
+          // Try Spot WebSocket stream as fallback
+          const spotWsUrl = `wss://stream.binance.com:9443/ws/${cleanSym}@kline_${streamInterval}`;
+          try {
+            const spotWs = new WebSocket(spotWsUrl);
+            spotWs.onmessage = activeKlineWs.onmessage;
+            activeKlineWs = spotWs;
+          } catch (e) {}
+        };
+
+        activeKlineWs.onclose = () => {
+          if (wsTextEl) wsTextEl.innerText = 'WS RECONNECTING';
+          if (wsDotEl) {
+            wsDotEl.style.background = 'var(--accent-amber)';
+            wsDotEl.style.boxShadow = 'none';
+          }
+        };
+      } catch (e) {
+        console.error('[WS KLINE] Failed to connect WebSocket:', e);
+      }
+    }
+
+    function changeAnalyzerTf(tf, el) {
+      document.querySelectorAll('#tf-btn-5m, #tf-btn-15m, #tf-btn-1h, #tf-btn-4h, #tf-btn-1d').forEach(b => b.classList.remove('active'));
+      if (el) el.classList.add('active');
+      currentAnalyzerTf = tf;
+      loadAnalyzerCandles(currentAnalyzerSymbol, tf, currentAnalyzerSetup);
+    }
+
     // AI Deep Scanner & Manual Coin Analyzer Logic
     function setAnalyzeSymbol(sym, el) {
       document.querySelectorAll('.coin-pill').forEach(p => p.classList.remove('active'));
@@ -2255,6 +2790,7 @@
       let sym = (input ? input.value : 'BTCUSDT').trim().toUpperCase();
       if (!sym) sym = 'BTCUSDT';
       if (!sym.endsWith('USDT') && !sym.endsWith('BUSD')) sym += 'USDT';
+      currentAnalyzerSymbol = sym;
       
       const loadingEl = document.getElementById('analyzer-loading');
       const contentEl = document.getElementById('analyzer-content');
@@ -2302,13 +2838,16 @@
           scoreEl.style.color = data.verdict.confluence_score >= 70 ? 'var(--accent-emerald)' : (data.verdict.confluence_score >= 55 ? 'var(--accent-amber)' : 'var(--text-muted)');
         }
 
-        // 2. Update Trade Setup Box
+        // 2. Update Trade Setup Box & 5M Lowest Sniper Entry
         const rrrEl = document.getElementById('analyzed-rrr-badge');
         if (rrrEl) rrrEl.innerText = `RRR ${data.setup.risk_reward_ratio}`;
         
         const entryEl = document.getElementById('setup-entry-price');
         if (entryEl) entryEl.innerText = '$' + Number(data.setup.entry_price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6});
         
+        const lowestEntryEl = document.getElementById('setup-lowest-entry');
+        if (lowestEntryEl) lowestEntryEl.innerText = '$' + Number(data.setup.smart_lowest_entry || data.setup.entry_price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6}) + ' (Pullback Discount)';
+
         const tp1El = document.getElementById('setup-tp1-price');
         if (tp1El) tp1El.innerText = '$' + Number(data.setup.tp1_price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6}) + ` (+${data.setup.tp_percent}% ROE)`;
         
@@ -2321,7 +2860,52 @@
         const marginEl = document.getElementById('setup-margin');
         if (marginEl) marginEl.innerText = `$${Number(data.setup.recommended_margin).toFixed(2)} USDT`;
 
-        // 3. Update 5 Pillars Box
+        // 3. Update 4H Swing Multi-TF Box
+        if (data.swing_4h) {
+          const swingTrendEl = document.getElementById('swing-4h-trend');
+          if (swingTrendEl) swingTrendEl.innerText = data.swing_4h.trend;
+
+          const swing4hBadge = document.getElementById('analyzed-4h-trend-badge');
+          if (swing4hBadge) {
+            swing4hBadge.innerText = `4H ${data.swing_4h.trend}`;
+            swing4hBadge.className = data.swing_4h.trend === 'UPTREND' ? 'badge badge-approved' : (data.swing_4h.trend === 'DOWNTREND' ? 'badge badge-rejected' : 'badge badge-pending');
+          }
+
+          const swingPatEl = document.getElementById('swing-4h-pattern');
+          if (swingPatEl) swingPatEl.innerText = data.swing_4h.candlestick_pattern;
+
+          const swingRsiEl = document.getElementById('swing-4h-rsi');
+          if (swingRsiEl) swingRsiEl.innerText = data.swing_4h.rsi;
+
+          const swingSupEl = document.getElementById('swing-4h-support');
+          if (swingSupEl) swingSupEl.innerText = '$' + Number(data.swing_4h.key_support).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6});
+
+          const swingResEl = document.getElementById('swing-4h-resistance');
+          if (swingResEl) swingResEl.innerText = '$' + Number(data.swing_4h.key_resistance).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6});
+        }
+
+        // 4. Update Whale / Paus Radar & Sniper Volume Thresholds
+        if (data.whale_radar) {
+          const whaleActEl = document.getElementById('whale-activity-status');
+          if (whaleActEl) {
+            whaleActEl.innerText = data.whale_radar.activity;
+            whaleActEl.style.color = data.whale_radar.activity.includes('BUY') ? 'var(--accent-emerald)' : (data.whale_radar.activity.includes('DUMP') ? 'var(--accent-rose)' : 'var(--accent-cyan)');
+          }
+
+          const whaleBadge = document.getElementById('analyzed-whale-badge');
+          if (whaleBadge) {
+            whaleBadge.innerText = data.whale_radar.activity;
+            whaleBadge.className = data.whale_radar.activity.includes('BUY') ? 'badge badge-approved' : (data.whale_radar.activity.includes('DUMP') ? 'badge badge-rejected' : 'badge badge-pending');
+          }
+
+          const buyThreshEl = document.getElementById('whale-sniper-buy-threshold');
+          if (buyThreshEl) buyThreshEl.innerText = data.whale_radar.sniper_buy_threshold;
+
+          const sellThreshEl = document.getElementById('whale-sniper-sell-threshold');
+          if (sellThreshEl) sellThreshEl.innerText = data.whale_radar.sniper_sell_threshold;
+        }
+
+        // 5. Update 5 Pillars Box (5M & 1H)
         const htfBadge = document.getElementById('analyzed-htf-badge');
         if (htfBadge) {
           htfBadge.innerText = `HTF ${data.pillars.htf_trend}`;
@@ -2346,7 +2930,7 @@
           pumpEl.innerText = pumpText;
         }
 
-        // 4. Update Database Memory Box
+        // 6. Update Database Memory Box
         const mem = data.db_memory;
         const wrBadge = document.getElementById('analyzed-db-wr-badge');
         if (wrBadge) {
@@ -2365,6 +2949,26 @@
         
         const avwapEl = document.getElementById('pillar-avwap');
         if (avwapEl) avwapEl.innerText = '$' + Number(data.pillars.avwap_fair_value).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6});
+
+        // 7. Update AI Fingerprint String & Educational Glossary Cards
+        const fpStringEl = document.getElementById('analyzed-fingerprint-string');
+        if (fpStringEl && data.fingerprint) {
+          fpStringEl.innerText = data.fingerprint;
+        }
+
+        if (data.fingerprint_breakdown) {
+          const fb = data.fingerprint_breakdown;
+          if (fb.HTF && document.getElementById('gloss-htf-val')) document.getElementById('gloss-htf-val').innerText = `${fb.HTF.label} (${fb.HTF.meaning})`;
+          if (fb.BB && document.getElementById('gloss-bb-val')) document.getElementById('gloss-bb-val').innerText = `${fb.BB.label} (${fb.BB.meaning})`;
+          if (fb.RSI && document.getElementById('gloss-rsi-val')) document.getElementById('gloss-rsi-val').innerText = `${fb.RSI.label} (${fb.RSI.meaning})`;
+          if (fb.PAT && document.getElementById('gloss-pat-val')) document.getElementById('gloss-pat-val').innerText = `${fb.PAT.label} (${fb.PAT.meaning})`;
+          if (fb.BRK && document.getElementById('gloss-brk-val')) document.getElementById('gloss-brk-val').innerText = `${fb.BRK.label} (${fb.BRK.meaning})`;
+          if (fb.SQ && document.getElementById('gloss-sq-val')) document.getElementById('gloss-sq-val').innerText = `${fb.SQ.label} (${fb.SQ.meaning})`;
+          if (fb.VOL && document.getElementById('gloss-vol-val')) document.getElementById('gloss-vol-val').innerText = `${fb.VOL.label} (${fb.VOL.meaning})`;
+        }
+
+        // 8. Load Interactive Live Candlestick Chart with Entry/TP/SL Overlay
+        await loadAnalyzerCandles(data.symbol, currentAnalyzerTf, data.setup);
         
         lucide.createIcons();
       } catch (err) {
@@ -2393,41 +2997,57 @@
 
         const s = data.trade_summary || {};
 
-        // 1. Daily Realized PnL
-        const dailyPnl = s.daily_net_pnl || 0;
-        const elDailyPnl = document.getElementById('val-daily-pnl');
-        elDailyPnl.innerText = `${dailyPnl >= 0 ? '+$' : '-$'}${Math.abs(dailyPnl).toFixed(2)}`;
-        elDailyPnl.className = `metric-value ${dailyPnl >= 0 ? 'val-positive' : 'val-negative'}`;
-        document.getElementById('sub-daily-pnl').innerText = `Gross: +$${(s.daily_gross_profit || 0).toFixed(2)} | -$${(s.daily_gross_loss || 0).toFixed(2)}`;
-
-        // 2. Floating Live PnL
+        // 1. Floating Live PnL (Top Priority)
         const floatPnl = data.floating_pnl || 0;
         const elFloat = document.getElementById('val-floating-pnl');
-        elFloat.innerText = `${floatPnl >= 0 ? '+$' : '-$'}${Math.abs(floatPnl).toFixed(2)}`;
-        elFloat.className = `metric-value ${floatPnl >= 0 ? 'val-positive' : 'val-negative'}`;
+        if (elFloat) {
+          elFloat.innerText = `${floatPnl >= 0 ? '+$' : '-$'}${Math.abs(floatPnl).toFixed(2)}`;
+          elFloat.className = `metric-value ${floatPnl >= 0 ? 'val-positive' : 'val-negative'}`;
+        }
 
-        // 3. Daily Win Rate
+        // 2. Daily Win Rate
         const dailyWr = s.daily_win_rate || 0;
-        document.getElementById('val-daily-wr').innerText = `${dailyWr.toFixed(1)}%`;
-        document.getElementById('sub-daily-wr').innerText = `${s.daily_wins || 0} Menang / ${s.daily_losses || 0} Kalah (${s.daily_total || 0} Trade)`;
+        const elDailyWr = document.getElementById('val-daily-wr');
+        if (elDailyWr) elDailyWr.innerText = `${dailyWr.toFixed(1)}%`;
+        const subDailyWr = document.getElementById('sub-daily-wr');
+        if (subDailyWr) subDailyWr.innerText = `${s.daily_wins || 0} Menang / ${s.daily_losses || 0} Kalah (${s.daily_total || 0} Trade)`;
 
-        // 4. Profit Factor
-        document.getElementById('val-profit-factor').innerText = `${s.daily_profit_factor || 0.0}`;
-        document.getElementById('sub-profit-factor').innerText = `All-Time PF: ${s.profit_factor || 0.0}`;
+        // 3. Daily Realized PnL
+        const dailyPnl = s.daily_net_pnl || 0;
+        const elDailyPnl = document.getElementById('val-daily-pnl');
+        if (elDailyPnl) {
+          elDailyPnl.innerText = `${dailyPnl >= 0 ? '+$' : '-$'}${Math.abs(dailyPnl).toFixed(2)}`;
+          elDailyPnl.className = `metric-value ${dailyPnl >= 0 ? 'val-positive' : 'val-negative'}`;
+        }
+        const subDailyPnl = document.getElementById('sub-daily-pnl');
+        if (subDailyPnl) subDailyPnl.innerText = `Gross: +$${(s.daily_gross_profit || 0).toFixed(2)} | -$${(s.daily_gross_loss || 0).toFixed(2)}`;
 
-        // 5. All-Time Net PnL
+        // 4. All-Time Net PnL
         const netPnl = s.net_pnl || 0;
         const elNet = document.getElementById('val-net-pnl');
-        elNet.innerText = `${netPnl >= 0 ? '+$' : '-$'}${Math.abs(netPnl).toFixed(2)}`;
-        elNet.className = `metric-value ${netPnl >= 0 ? 'val-positive' : 'val-negative'}`;
-        document.getElementById('sub-alltime-pnl').innerText = `All-Time WR: ${(s.win_rate || 0).toFixed(1)}% (${s.wins || 0}W / ${s.losses || 0}L)`;
+        if (elNet) {
+          elNet.innerText = `${netPnl >= 0 ? '+$' : '-$'}${Math.abs(netPnl).toFixed(2)}`;
+          elNet.className = `metric-value ${netPnl >= 0 ? 'val-positive' : 'val-negative'}`;
+        }
+        const subAlltimePnl = document.getElementById('sub-alltime-pnl');
+        if (subAlltimePnl) subAlltimePnl.innerText = `All-Time WR: ${(s.win_rate || 0).toFixed(1)}% (${s.wins || 0}W / ${s.losses || 0}L)`;
 
-        // 6. Active Positions Count & Simulated Modal
+        // 5. Realtime Wallet Balance (Live Exchange / Testnet Sync)
+        const elBal = document.getElementById('val-account-balance');
+        if (elBal) {
+          elBal.innerText = data.display_balance || `$${Number(data.wallet_balance || 0).toFixed(2)} USDT`;
+        }
+        const subBal = document.getElementById('sub-account-balance');
+        if (subBal) {
+          subBal.innerHTML = `<span style="color: var(--accent-emerald);">●</span> ${data.balance_source || 'Sinkronisasi Live API'}`;
+        }
+
+        // 6. Active Positions Count
         const activeCount = (data.active_positions || []).length;
-        const simModal = data.simulated_modal !== undefined ? data.simulated_modal : 100.0;
-        document.getElementById('val-active-positions').innerText = `${activeCount} Posisi Aktif`;
-        document.getElementById('sub-virtual-trades').innerHTML = `Saldo Simulasi: <strong style="color: var(--accent-emerald);">$${simModal.toFixed(2)} USDT</strong> (+${data.virtual_signals_count || 0} Sinyal Latihan)`;
-        document.getElementById('active-pos-count-badge').innerText = `${activeCount} POSISI TERBUKA`;
+        const elActPos = document.getElementById('val-active-positions');
+        if (elActPos) elActPos.innerText = `${activeCount} Posisi`;
+        const actPosBadge = document.getElementById('active-pos-count-badge');
+        if (actPosBadge) actPosBadge.innerText = `${activeCount} POSISI TERBUKA`;
 
         // Render Active Positions Cards
         renderActivePositions(data.active_positions || []);

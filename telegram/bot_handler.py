@@ -869,6 +869,8 @@ async def callback_goto_exchange_handler(callback: types.CallbackQuery):
 @dp.message(Command("balance"))
 @dp.message(F.text == "📊 Status Bot")
 @dp.message(F.text == "💰 Saldo")
+@dp.message(Command("status"))
+@dp.message(Command("saldo"))
 async def status_handler(message: types.Message):
     state = bot_state.get("state", "PAUSED")
     if state == "DEGRADED" and bot_state.get("websocket_connected"):
@@ -885,7 +887,7 @@ async def status_handler(message: types.Message):
         await message.answer(f"Status Bot: {status_emoji}\n⚠️ Koneksi ke {active_ex} belum siap. Coba lagi dalam beberapa detik.")
         return
         
-    wait_msg = await message.answer(f"🔄 Mengambil data dari {active_ex}...")
+    wait_msg = await message.answer(f"🔄 Mengambil data realtime dari {active_ex}...")
     
     try:
         curr_mode = getattr(bot_config, "trading_mode", "PAPER_TRADING")
@@ -893,21 +895,46 @@ async def status_handler(message: types.Message):
         is_paper_mode = curr_mode.upper() in ("PAPER_TRADING", "SIMULATION", "VIRTUAL")
         
         if is_paper_mode and not bal_res.get("is_api_demo"):
-            total_margin = bal_res.get("total_balance", 100.0)
-            unrealized_pnl = 0.0
+            total_margin = bal_res.get("total_balance", bot_config.simulated_modal or 100.0)
+            unrealized_pnl = bal_res.get("unrealized_pnl", 0.0)
             active_positions = []
         else:
-            if isinstance(client, BaseExchange):
-                balance_info = await client.get_account_balance()
-                total_margin = balance_info.get('total_wallet_balance', 0.0)
-                unrealized_pnl = balance_info.get('unrealized_pnl', 0.0)
-                active_positions = await client.get_open_positions()
-            else:
-                account_info = await client.futures_account()
-                total_margin = float(account_info['totalMarginBalance'])
-                unrealized_pnl = float(account_info['totalUnrealizedProfit'])
-                positions = account_info.get('positions', [])
-                active_positions = [p for p in positions if float(p.get('positionAmt', 0)) != 0]
+            total_margin = bal_res.get("total_balance", 0.0)
+            unrealized_pnl = bal_res.get("unrealized_pnl", 0.0)
+            active_positions = bal_res.get("positions", [])
+            
+            # Fallback jika bal_res belum mengisi positions
+            if not active_positions:
+                if isinstance(client, BaseExchange):
+                    active_positions = await client.get_open_positions()
+                elif hasattr(client, "futures_position_information"):
+                    pos_info_raw = await client.futures_position_information()
+                    active_positions = []
+                    for pos in pos_info_raw:
+                        amt = float(pos.get("positionAmt", 0.0))
+                        if abs(amt) > 0:
+                            entry_p = float(pos.get("entryPrice", 0.0))
+                            lev = int(pos.get("leverage", 1) or 1)
+                            raw_margin = float(pos.get("isolatedMargin", 0.0) or pos.get("positionInitialMargin", 0.0) or 0.0)
+                            if raw_margin <= 0 and lev > 0 and entry_p > 0:
+                                raw_margin = abs(amt) * entry_p / lev
+                            active_positions.append({
+                                "symbol": pos["symbol"],
+                                "side": "LONG" if amt > 0 else "SHORT",
+                                "position_amt": amt,
+                                "entry_price": entry_p,
+                                "mark_price": float(pos.get("markPrice", 0.0)),
+                                "unrealized_pnl": float(pos.get("unRealizedProfit", 0.0)),
+                                "leverage": lev,
+                                "margin": raw_margin,
+                                "update_time": int(pos.get("updateTime", 0)),
+                            })
+                elif hasattr(client, "futures_account"):
+                    account_info = await client.futures_account()
+                    total_margin = float(account_info.get("totalMarginBalance", total_margin))
+                    unrealized_pnl = float(account_info.get("totalUnrealizedProfit", unrealized_pnl))
+                    positions = account_info.get("positions", [])
+                    active_positions = [p for p in positions if float(p.get("positionAmt", 0)) != 0]
         
         longs = []
         shorts = []
@@ -915,21 +942,12 @@ async def status_handler(message: types.Message):
         for p in active_positions:
             symbol = p['symbol']
             amt = float(p.get('position_amt', p.get('positionAmt', 0)))
-            pnl = float(p.get('unrealized_pnl', p.get('unrealizedProfit', 0)))
+            pnl = float(p.get('unrealized_pnl', p.get('unRealizedProfit', p.get('unrealizedProfit', 0))))
             entry = float(p.get('entry_price', p.get('entryPrice', 0)))
-            leverage = float(p.get('leverage', 0) or bot_config.leverage)
-            margin_target = float(p.get('margin', 0) or 0)
-            if margin_target <= 0:
-                margin_target = abs(amt) * entry / leverage if leverage > 0 else 0
-            
-            pnl_percent = (pnl / margin_target * 100) if margin_target > 0 else calculate_position_pnl_percent(p)
-            
-            mark = float(p.get('mark_price', p.get('markPrice', 0)) or 0)
-            if mark <= 0 and amt != 0 and entry > 0:
-                mark = entry + (pnl / amt)
-            elif mark <= 0:
+            mark = float(p.get('mark_price', p.get('markPrice', p.get('last_price', 0.0))) or 0.0)
+            if mark <= 0:
                 mark = entry
-                
+            
             meta = bot_state.setdefault("active_trade_meta", {}).get(symbol, {})
             if meta:
                 meta["mfe"] = max(float(meta.get("mfe", 0.0)), pnl)
@@ -938,24 +956,23 @@ async def status_handler(message: types.Message):
             else:
                 mfe_val = max(0.0, pnl)
 
-            # 1. Ambil leverage yang benar (prioritas: meta -> position -> config)
+            # 1. Ambil leverage yang benar dari API posisi exchange
             raw_pos_lev = p.get('leverage')
-            pos_lev = int(raw_pos_lev) if raw_pos_lev and int(raw_pos_lev) > 1 else None
-            leverage = int(meta.get("leverage") or pos_lev or bot_config.leverage or 20)
+            pos_lev = int(raw_pos_lev) if raw_pos_lev and int(raw_pos_lev) >= 1 else None
+            leverage = int(pos_lev or meta.get("leverage") or bot_config.leverage or 20)
             if leverage <= 0:
                 leverage = int(bot_config.leverage or 20)
 
             # 2. Ambil margin modal yang sebenarnya digunakan (bukan notional)
-            if meta.get("margin_usdt") and float(meta["margin_usdt"]) > 0:
+            raw_pos_margin = float(p.get('margin', 0.0) or p.get('isolatedMargin', 0.0) or p.get('positionInitialMargin', 0.0) or p.get('initialMargin', 0.0) or 0.0)
+            if raw_pos_margin > 0:
+                margin_target = raw_pos_margin
+            elif meta.get("margin_usdt") and float(meta["margin_usdt"]) > 0:
                 margin_target = float(meta["margin_usdt"])
-            elif p.get("positionInitialMargin") and float(p.get("positionInitialMargin")) > 0:
-                margin_target = float(p.get("positionInitialMargin"))
-            elif p.get("initialMargin") and float(p.get("initialMargin")) > 0:
-                margin_target = float(p.get("initialMargin"))
             else:
                 margin_target = (abs(amt) * entry / leverage) if leverage > 0 else (abs(amt) * entry)
 
-            pnl_percent = (pnl / margin_target * 100) if margin_target > 0 else 0.0
+            pnl_percent = (pnl / margin_target * 100) if margin_target > 0 else calculate_position_pnl_percent(p)
 
             # 3. Ambil target TP & SL yang persis sesuai trade setup order
             if meta.get("tp_price") and meta.get("sl_price"):
@@ -2048,22 +2065,60 @@ async def set_ts_callback_handler(message: types.Message, command: CommandObject
 @dp.message(Command("set_modal"))
 async def set_modal_handler(message: types.Message, command: CommandObject):
     arg = (command.args or "").strip().lower()
+    active_ex = getattr(bot_config, "active_exchange", "BINANCE").upper()
+    trading_mode = getattr(bot_config, "trading_mode", "TESTNET").upper()
+
+    # Ambil info saldo aktual dari client jika ada
+    client = bot_state.get("client")
+    actual_balance = 0.0
+    if client:
+        try:
+            if hasattr(client, "get_account_balance"):
+                bal = await client.get_account_balance()
+                actual_balance = float(bal.get("total_wallet_balance", bal.get("totalMarginBalance", 0.0)))
+            elif hasattr(client, "futures_account"):
+                acc = await client.futures_account()
+                actual_balance = float(acc.get("totalMarginBalance", 0.0))
+        except Exception:
+            pass
+
     if not arg:
-        current_modal_desc = f"{bot_config.simulated_modal:.2f} USDT (Simulasi Custom)" if bot_config.simulated_modal else "AUTO (Saldo Real Exchange)"
+        if bot_config.simulated_modal and bot_config.simulated_modal > 0:
+            current_modal_desc = f"{bot_config.simulated_modal:.2f} USDT (Simulasi Custom)"
+        else:
+            if active_ex == "BINANCE" and trading_mode == "TESTNET":
+                current_modal_desc = f"AUTO (${actual_balance:.2f} USDT Saldo Asli Binance Testnet)" if actual_balance > 0 else "AUTO (Saldo Asli Binance Testnet demo.binance.com)"
+            else:
+                current_modal_desc = f"AUTO (${actual_balance:.2f} USDT Saldo Real Exchange)" if actual_balance > 0 else f"AUTO (Saldo Asli Exchange {active_ex})"
+
         await message.answer(
-            f"ℹ️ **Pengaturan Modal Sizing Saat Ini:** `{current_modal_desc}`\n\n"
+            f"ℹ️ **Pengaturan Modal Sizing Saat Ini:** `{current_modal_desc}`\n"
+            f"🏛️ **Exchange:** `{active_ex}` | 🎯 **Mode:** `{trading_mode}`\n\n"
             "**Cara Penggunaan:**\n"
+            "• `/set_modal auto` (Otomatis gunakan saldo asli Exchange/Testnet Binance)\n"
             "• `/set_modal 50` (Simulasi sizing dengan modal $50 USDT)\n"
             "• `/set_modal 100` (Simulasi sizing dengan modal $100 USDT)\n"
-            "• `/set_modal auto` (Kembali menggunakan saldo asli Exchange/Testnet)\n"
-            "• `/reset_modal` (Reset modal simulasi ke default $100)",
+            "• `/reset_modal` (Reset modal simulasi custom ke default $100)",
             parse_mode="Markdown",
         )
         return
 
-    if arg in ["auto", "real", "reset"]:
+    if arg in ["auto", "real", "tested", "testnet", "reset_auto"]:
         bot_config.update_simulated_modal(None)
-        await message.answer("✅ **Modal Sizing diubah ke AUTO** (Menggunakan saldo riil akun Binance).", parse_mode="Markdown")
+        if active_ex == "BINANCE" and trading_mode == "TESTNET":
+            bal_str = f"sebesar `${actual_balance:.2f} USDT`" if actual_balance > 0 else "dari API Testnet"
+            await message.answer(
+                f"✅ **Modal Sizing Diubah ke AUTO (Binance Testnet)!** 🌐\n\n"
+                f"Bot sekarang otomatis menghitung margin & lot sizing langsung dari **Saldo Asli Binance Testnet** {bal_str} (`demo.binance.com`).",
+                parse_mode="Markdown"
+            )
+        else:
+            bal_str = f"sebesar `${actual_balance:.2f} USDT`" if actual_balance > 0 else "dari Exchange"
+            await message.answer(
+                f"✅ **Modal Sizing Diubah ke AUTO!** 🏛️\n\n"
+                f"Bot sekarang otomatis menghitung margin & lot sizing langsung dari **Saldo Real Exchange** `{active_ex}` {bal_str}.",
+                parse_mode="Markdown"
+            )
     else:
         try:
             val = float(arg)
@@ -2072,12 +2127,14 @@ async def set_modal_handler(message: types.Message, command: CommandObject):
                 return
             bot_config.update_simulated_modal(val)
             await message.answer(
-                f"✅ **Modal Sizing diset ke `{val:.2f} USDT`**!\n"
-                f"Bot akan menghitung margin dan risiko trading seolah-olah saldo Anda adalah `{val:.2f} USDT`.",
+                f"✅ **Modal Sizing Diset ke `{val:.2f} USDT` (Custom)!** 💰\n\n"
+                f"Bot akan menghitung kalkulasi margin & risiko seolah-olah modal Anda adalah `{val:.2f} USDT`.\n"
+                f"💡 Ketik `/set_modal auto` kapan saja untuk kembali memakai saldo asli Exchange/Testnet.",
                 parse_mode="Markdown",
             )
         except ValueError:
             await message.answer("❌ Format salah. Contoh: `/set_modal 100` atau `/set_modal auto`", parse_mode="Markdown")
+
 
 @dp.message(Command("reset_modal"))
 async def reset_modal_handler(message: types.Message):

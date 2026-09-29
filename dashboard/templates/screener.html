@@ -1,0 +1,1298 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Megono Deep Screener Pro • GMGN Intelligence Terminal</title>
+  
+  <!-- Google Fonts: Syne & Plus Jakarta Sans -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=Syne:wght@600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Lightweight Charts (TradingView) -->
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+
+  <style>
+    :root {
+      --bg-base: #06090e;
+      --bg-surface: #0a0f18;
+      --bg-card: rgba(14, 21, 37, 0.7);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --border-focus: rgba(0, 242, 254, 0.4);
+      --accent-cyan: #00f2fe;
+      --accent-emerald: #00e676;
+      --accent-amber: #ffb300;
+      --accent-rose: #ff1744;
+      --accent-purple: #a855f7;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    .font-heading {
+      font-family: 'Syne', sans-serif;
+    }
+
+    .font-mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Navbar */
+    .terminal-nav {
+      height: 64px;
+      background: rgba(10, 15, 24, 0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: #fff;
+    }
+
+    .brand-icon {
+      width: 38px;
+      height: 38px;
+      background: linear-gradient(135deg, rgba(0,242,254,0.2), rgba(168,85,247,0.2));
+      border: 1px solid rgba(0,242,254,0.4);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent-cyan);
+    }
+
+    .btn-back-dashboard {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 8px 16px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 0.85rem;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .btn-back-dashboard:hover {
+      background: rgba(0, 242, 254, 0.1);
+      border-color: var(--accent-cyan);
+      color: var(--accent-cyan);
+    }
+
+    /* Main Container */
+    .screener-layout {
+      flex: 1;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      max-width: 1720px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* Search & Coin Pills Bar */
+    .control-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 14px 18px;
+    }
+
+    .search-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 6px 14px;
+      width: 100%;
+      max-width: 380px;
+    }
+
+    .search-group input {
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #fff;
+      font-size: 0.95rem;
+      font-weight: 600;
+      width: 100%;
+    }
+
+    .btn-action-analyze {
+      background: linear-gradient(135deg, #00f2fe, #4facfe);
+      color: #000;
+      border: none;
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 0.88rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: opacity 0.2s;
+    }
+
+    .btn-action-analyze:hover {
+      opacity: 0.9;
+    }
+
+    .coin-pills {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .coin-pill {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .coin-pill:hover, .coin-pill.active {
+      background: rgba(0, 242, 254, 0.12);
+      border-color: var(--accent-cyan);
+      color: var(--accent-cyan);
+    }
+
+    /* Top 4 Hero Intelligence Cards */
+    .intel-cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+    }
+
+    .intel-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      padding-bottom: 8px;
+    }
+
+    .card-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .badge-long {
+      background: rgba(0, 230, 118, 0.15);
+      color: #00e676;
+      border: 1px solid rgba(0, 230, 118, 0.3);
+    }
+
+    .badge-short {
+      background: rgba(255, 23, 68, 0.15);
+      color: #ff1744;
+      border: 1px solid rgba(255, 23, 68, 0.3);
+    }
+
+    .badge-wait {
+      background: rgba(255, 179, 0, 0.15);
+      color: #ffb300;
+      border: 1px solid rgba(255, 179, 0, 0.3);
+    }
+
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+    }
+
+    .metric-label {
+      color: var(--text-muted);
+    }
+
+    .metric-val {
+      font-weight: 700;
+      color: #fff;
+    }
+
+    /* TP Steps Grid */
+    .tp-steps-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .tp-step-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+    }
+
+    /* Progress bar for buying power */
+    .power-bar-container {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .power-bar-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+
+    .power-track {
+      height: 8px;
+      background: rgba(255, 23, 68, 0.8);
+      border-radius: 4px;
+      overflow: hidden;
+      display: flex;
+    }
+
+    .power-fill-buy {
+      height: 100%;
+      background: var(--accent-emerald);
+      transition: width 0.4s ease;
+    }
+
+    /* Chart & Orderflow 2-Column Section */
+    .main-workspace-grid {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 18px;
+    }
+
+    @media (max-width: 1200px) {
+      .main-workspace-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .chart-panel-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .chart-control-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .chart-container-box {
+      height: 520px;
+      width: 100%;
+      position: relative;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #06090e;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    /* GMGN Style Whale Orderflow Feed */
+    .orderflow-panel-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      height: 100%;
+      max-height: 600px;
+    }
+
+    .orderflow-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-right: 4px;
+    }
+
+    /* Custom Scrollbar */
+    .orderflow-list::-webkit-scrollbar {
+      width: 5px;
+    }
+    .orderflow-list::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+    }
+
+    .whale-trade-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.82rem;
+      transition: transform 0.15s;
+    }
+
+    .whale-trade-item:hover {
+      transform: translateX(2px);
+      border-color: rgba(0, 242, 254, 0.3);
+    }
+
+    .whale-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .coin-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #00f2fe, #4facfe);
+      color: #000;
+      font-weight: 800;
+      font-size: 0.65rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .trade-badge-buy {
+      background: rgba(0, 230, 118, 0.15);
+      color: #00e676;
+      font-weight: 700;
+      font-size: 0.68rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .trade-badge-sell {
+      background: rgba(255, 23, 68, 0.15);
+      color: #ff1744;
+      font-weight: 700;
+      font-size: 0.68rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .venue-tag {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .trade-amt-buy {
+      font-weight: 800;
+      color: var(--accent-emerald);
+      font-size: 0.9rem;
+    }
+
+    .trade-amt-sell {
+      font-weight: 800;
+      color: var(--accent-rose);
+      font-size: 0.9rem;
+    }
+
+    /* Reasons Section */
+    .reasons-panel-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .reason-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .reason-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: var(--text-main);
+    }
+
+    .reason-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-cyan);
+      margin-top: 6px;
+      flex-shrink: 0;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-emerald);
+      box-shadow: 0 0 8px var(--accent-emerald);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.9); opacity: 0.8; }
+      50% { transform: scale(1.3); opacity: 1; }
+      100% { transform: scale(0.9); opacity: 0.8; }
+    }
+
+    /* Disclaimer & DYOR Banner */
+    .disclaimer-banner-card {
+      background: linear-gradient(135deg, rgba(255, 179, 0, 0.06), rgba(255, 23, 68, 0.04));
+      border: 1px solid rgba(255, 179, 0, 0.25);
+      border-radius: 14px;
+      padding: 16px 22px;
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      backdrop-filter: blur(12px);
+      margin-top: 10px;
+    }
+
+    .disclaimer-icon-badge {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: rgba(255, 179, 0, 0.15);
+      border: 1px solid rgba(255, 179, 0, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent-amber);
+      flex-shrink: 0;
+    }
+
+    .disclaimer-content {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.82rem;
+      line-height: 1.5;
+      color: #cbd5e1;
+    }
+
+    .disclaimer-title {
+      font-weight: 800;
+      color: #fbbf24;
+      font-size: 0.88rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="terminal-nav">
+    <div style="display: flex; align-items: center; gap: 16px;">
+      <a href="/" class="nav-brand">
+        <div class="brand-icon">
+          <i data-lucide="radar" style="width: 22px; height: 22px;"></i>
+        </div>
+        <div>
+          <div class="font-heading" style="font-size: 1.1rem; font-weight: 800; letter-spacing: -0.5px;">MEGONO DEEP SCREENER</div>
+          <div style="font-size: 0.72rem; color: var(--accent-cyan); font-weight: 600;">GMGN.AI PRO INTELLIGENCE TERMINAL</div>
+        </div>
+      </a>
+      <span class="badge" style="background: rgba(0, 242, 254, 0.1); color: var(--accent-cyan); border: 1px solid rgba(0, 242, 254, 0.25);">
+        <i data-lucide="zap" style="width: 12px; height: 12px;"></i> SPOT & FUTURES CVD ORDERFLOW
+      </span>
+      <span class="badge" style="background: rgba(255, 179, 0, 0.12); color: #fbbf24; border: 1px solid rgba(255, 179, 0, 0.35); font-weight: 700;">
+        <i data-lucide="shield-alert" style="width: 13px; height: 13px;"></i> DYOR & RISK DISCIPLINE
+      </span>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <a href="/" class="btn-back-dashboard">
+        <i data-lucide="layout-dashboard" style="width: 16px; height: 16px;"></i>
+        <span>Kembali ke Dashboard Utama</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- Main Screener Layout -->
+  <main class="screener-layout">
+
+    <!-- Search & Control Header -->
+    <div class="control-bar">
+      <div style="display: flex; align-items: center; gap: 10px; width: 100%; max-width: 480px;">
+        <div class="search-group">
+          <i data-lucide="search" style="color: var(--accent-cyan); width: 18px; height: 18px;"></i>
+          <input type="text" id="screener-input" placeholder="Cari Koin (contoh: SUI, BTC, PEPE, SOL)..." value="SUIUSDT" onkeydown="if(event.key==='Enter') runDeepAnalysis()" />
+        </div>
+        <button class="btn-action-analyze" onclick="runDeepAnalysis()">
+          <i data-lucide="sparkles" style="width: 16px; height: 16px;"></i>
+          <span>Analisa Pro</span>
+        </button>
+      </div>
+
+      <!-- Popular Coin Switchers -->
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 0.78rem; color: var(--text-dim); font-weight: 600;">Top Market:</span>
+        <div class="coin-pills">
+          <span class="coin-pill active" onclick="setScreenerSymbol('SUIUSDT', this)">SUI</span>
+          <span class="coin-pill" onclick="setScreenerSymbol('BTCUSDT', this)">BTC</span>
+          <span class="coin-pill" onclick="setScreenerSymbol('ETHUSDT', this)">ETH</span>
+          <span class="coin-pill" onclick="setScreenerSymbol('SOLUSDT', this)">SOL</span>
+          <span class="coin-pill" onclick="setScreenerSymbol('PEPEUSDT', this)">PEPE</span>
+          <span class="coin-pill" onclick="setScreenerSymbol('LTCUSDT', this)">LTC</span>
+          <span class="coin-pill" onclick="setScreenerSymbol('DOGEUSDT', this)">DOGE</span>
+          <span class="coin-pill" onclick="setScreenerSymbol('ONDOUSDT', this)">ONDO</span>
+          <span class="coin-pill" onclick="setScreenerSymbol('XRPUSDT', this)">XRP</span>
+          <span class="coin-pill" onclick="setScreenerSymbol('NEARUSDT', this)">NEAR</span>
+          <span class="coin-pill" onclick="setScreenerSymbol('BNBUSDT', this)">BNB</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top 4 Hero Intelligence Cards Grid -->
+    <section class="intel-cards-grid">
+      
+      <!-- Card 1: AI Verdict & Confluence -->
+      <div class="intel-card">
+        <div class="card-head">
+          <span class="card-title"><i data-lucide="target" style="color: var(--accent-cyan); width: 16px;"></i> Rekomendasi AI & Arah</span>
+          <span id="card-verdict-badge" class="badge badge-long">🟢 STRONG BUY / LONG</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+          <div>
+            <div style="font-size: 0.75rem; color: var(--text-dim);">HARGA LIVE TICKER</div>
+            <div id="card-live-price" class="font-mono" style="font-size: 1.6rem; font-weight: 800; color: var(--accent-cyan);">$1.1503</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 0.75rem; color: var(--text-dim);">KONFLUENSI SCORE</div>
+            <div id="card-confluence-score" style="font-size: 1.4rem; font-weight: 800; color: var(--accent-emerald);">95 / 100</div>
+          </div>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Struktur Tren 4H:</span>
+          <strong id="card-4h-trend" style="color: #fff;">UPTREND (BULLISH)</strong>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Risk-Reward Ratio (RRR):</span>
+          <strong id="card-rrr" style="color: var(--accent-amber);">1 : 2.2</strong>
+        </div>
+      </div>
+
+      <!-- Card 2: 3-Level Take Profit Setup -->
+      <div class="intel-card">
+        <div class="card-head">
+          <span class="card-title"><i data-lucide="crosshair" style="color: var(--accent-emerald); width: 16px;"></i> Setup 3-Level Take Profit</span>
+          <span class="badge" style="background: rgba(255, 179, 0, 0.12); color: var(--accent-amber); border: 1px solid rgba(255, 179, 0, 0.25);" id="card-leverage-tag">20x LEVERAGE</span>
+        </div>
+        <div class="tp-steps-grid">
+          <div class="tp-step-item" style="border-left: 3px solid #00f2fe;">
+            <span style="color: var(--accent-cyan); font-weight: 600;">🎯 Entry Diskon (Smart Limit)</span>
+            <strong id="setup-entry" class="font-mono" style="color: #fff;">$1.1450</strong>
+          </div>
+          <div class="tp-step-item" style="border-left: 3px solid #69f0ae;">
+            <span style="color: #69f0ae;">🏆 TP 1 (Scalp / Quick Exit)</span>
+            <strong id="setup-tp1" class="font-mono" style="color: #69f0ae;">$1.1756 (+44.0% ROE)</strong>
+          </div>
+          <div class="tp-step-item" style="border-left: 3px solid #00e676;">
+            <span style="color: #00e676;">🏆 TP 2 (Swing Resistance)</span>
+            <strong id="setup-tp2" class="font-mono" style="color: #00e676;">$1.2055 (+96.0% ROE)</strong>
+          </div>
+          <div class="tp-step-item" style="border-left: 3px solid #ffd700;">
+            <span style="color: #ffd700;">🚀 TP 3 (Major Runner ATH)</span>
+            <strong id="setup-tp3" class="font-mono" style="color: #ffd700;">$1.2595 (+190.0% ROE)</strong>
+          </div>
+          <div class="tp-step-item" style="border-left: 3px solid #ff1744;">
+            <span style="color: #ff1744;">🛡️ Stop Loss (ATR Protect)</span>
+            <strong id="setup-sl" class="font-mono" style="color: #ff1744;">$1.1280 (-25.0% ROE)</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 3: Spot vs Futures Comparison -->
+      <div class="intel-card">
+        <div class="card-head">
+          <span class="card-title"><i data-lucide="scale" style="color: #a855f7; width: 16px;"></i> Perbandingan Spot vs Futures</span>
+          <span class="badge" style="background: rgba(168, 85, 247, 0.12); color: #a855f7; border: 1px solid rgba(168, 85, 247, 0.25);" id="card-basis-badge">BASIS SPREAD</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Harga Spot Binance:</span>
+          <strong id="comp-spot-price" class="font-mono" style="color: #fff;">$1.1500</strong>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Harga Futures Binance:</span>
+          <strong id="comp-futures-price" class="font-mono" style="color: #fff;">$1.1503</strong>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Basis Spread (Futures - Spot):</span>
+          <strong id="comp-basis-spread" style="color: var(--accent-emerald);">+$0.0003 (+0.026%)</strong>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Funding Rate (8 Jam):</span>
+          <strong id="comp-funding-rate" style="color: var(--accent-amber);">+0.0100% (+10.95%/thn)</strong>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Volume 24H (Futures / Spot):</span>
+          <strong id="comp-volume-ratio" style="color: var(--accent-cyan);">$142M / $58M (2.45x)</strong>
+        </div>
+      </div>
+
+      <!-- Card 4: Daya Beli & Taker Orderflow -->
+      <div class="intel-card">
+        <div class="card-head">
+          <span class="card-title"><i data-lucide="activity" style="color: #ff3366; width: 16px;"></i> Daya Beli & Spot Taker Flow</span>
+          <span class="badge" style="background: rgba(0, 230, 118, 0.15); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.3);" id="card-whale-status">PAUS ACCUMULATION</span>
+        </div>
+        <div class="power-bar-container">
+          <div class="power-bar-labels">
+            <span style="color: var(--accent-emerald);" id="power-spot-buy-label">Spot Taker Buy: 68.4%</span>
+            <span style="color: var(--accent-rose);" id="power-spot-sell-label">Sell: 31.6%</span>
+          </div>
+          <div class="power-track">
+            <div class="power-fill-buy" id="power-spot-bar" style="width: 68.4%;"></div>
+          </div>
+        </div>
+        <div class="power-bar-container">
+          <div class="power-bar-labels">
+            <span style="color: var(--accent-emerald);" id="power-fut-buy-label">Futures Taker Buy: 54.2%</span>
+            <span style="color: var(--accent-rose);" id="power-fut-sell-label">Sell: 45.8%</span>
+          </div>
+          <div class="power-track">
+            <div class="power-fill-buy" id="power-fut-bar" style="width: 54.2%;"></div>
+          </div>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Volume Surge (RVOL vs SMA20):</span>
+          <strong id="comp-rvol" style="color: var(--accent-cyan);">2.85x (Smart Money Inflow)</strong>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">SMC Market Structure:</span>
+          <strong id="comp-smc" style="color: var(--accent-emerald);">UPTREND_HEALTHY</strong>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Main Workspace: Wide Candlestick Chart + GMGN Live Whale Feed -->
+    <div class="main-workspace-grid">
+      
+      <!-- Left Column: Full Candlestick Chart with 3 TP Overlay -->
+      <div class="chart-panel-card">
+        <div class="chart-control-header">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="pulse-dot"></div>
+            <span class="font-heading" style="font-weight: 700; font-size: 1.05rem;" id="chart-main-title">SUIUSDT • Live Candlestick & Target Overlay</span>
+            <span class="badge" style="background: rgba(0, 230, 118, 0.12); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.25);" id="chart-ws-badge">
+              ● LIVE WS (BINANCE)
+            </span>
+          </div>
+
+          <!-- Timeframe Selector & Overlay Legend -->
+          <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 10px; font-size: 0.78rem;">
+              <span style="color: #00f2fe;"><span style="width: 10px; height: 3px; background: #00f2fe; display: inline-block;"></span> Entry</span>
+              <span style="color: #69f0ae;"><span style="width: 10px; height: 3px; background: #69f0ae; display: inline-block;"></span> TP1</span>
+              <span style="color: #00e676;"><span style="width: 10px; height: 3px; background: #00e676; display: inline-block;"></span> TP2</span>
+              <span style="color: #ffd700;"><span style="width: 10px; height: 3px; background: #ffd700; display: inline-block;"></span> TP3</span>
+              <span style="color: #ff1744;"><span style="width: 10px; height: 3px; background: #ff1744; display: inline-block;"></span> SL</span>
+            </div>
+            <div class="coin-pills" style="gap: 4px;">
+              <span class="coin-pill" id="tf-1m" onclick="setChartTimeframe('1m', this)">1M</span>
+              <span class="coin-pill active" id="tf-5m" onclick="setChartTimeframe('5m', this)">5M</span>
+              <span class="coin-pill" id="tf-15m" onclick="setChartTimeframe('15m', this)">15M</span>
+              <span class="coin-pill" id="tf-1h" onclick="setChartTimeframe('1h', this)">1H</span>
+              <span class="coin-pill" id="tf-4h" onclick="setChartTimeframe('4h', this)">4H</span>
+              <span class="coin-pill" id="tf-1d" onclick="setChartTimeframe('1d', this)">1D</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chart Container Box -->
+        <div id="chart-box" class="chart-container-box">
+          <div id="chart-loader" style="position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(6,9,14,0.7); z-index: 10;">
+            <div style="width: 36px; height: 36px; border: 3px solid rgba(0,242,254,0.2); border-top-color: var(--accent-cyan); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+          </div>
+        </div>
+
+        <!-- AI Reasoning Box -->
+        <div class="reasons-panel-card">
+          <div style="font-weight: 700; font-size: 0.92rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 6px;">
+            <i data-lucide="bot" style="width: 18px; height: 18px;"></i>
+            <span>Alasan Teknis & Logika Eksekusi AI (Multi-Level TP & Orderflow):</span>
+          </div>
+          <div class="reason-list" id="reasons-container">
+            <div class="reason-item"><span class="reason-dot"></span><span>Memuat analisis alasan teknikal...</span></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Right Column: GMGN-Style Live Whale Orderflow Feed -->
+      <div class="orderflow-panel-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 10px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <i data-lucide="waves" style="color: var(--accent-cyan); width: 18px; height: 18px;"></i>
+            <span class="font-heading" style="font-weight: 700; font-size: 0.95rem;">Transaksi Whale (GMGN Style)</span>
+          </div>
+          <span class="badge" style="background: rgba(0, 242, 254, 0.1); color: var(--accent-cyan); font-size: 0.7rem;">
+            SPOT & FUTURES
+          </span>
+        </div>
+
+        <!-- Whale Trades Scrollable Feed List -->
+        <div class="orderflow-list" id="whale-trades-feed">
+          <div style="text-align: center; color: var(--text-dim); padding: 30px 10px; font-size: 0.85rem;">
+            Menghubungkan ke live orderflow stream Binance...
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Official Trading Disclaimer & DYOR Notice Card -->
+    <section class="disclaimer-banner-card">
+      <div class="disclaimer-icon-badge">
+        <i data-lucide="alert-triangle" style="width: 22px; height: 22px;"></i>
+      </div>
+      <div class="disclaimer-content">
+        <div class="disclaimer-title">
+          <span>⚠️ DISCLAIMER RESMI & ATURAN DYOR (DO YOUR OWN RESEARCH)</span>
+          <span style="font-size: 0.72rem; background: rgba(255, 179, 0, 0.2); color: #fbbf24; padding: 2px 7px; border-radius: 5px; font-weight: 700;">RISK NOTICE</span>
+        </div>
+        <p>
+          Perdagangan aset kripto dan instrumen derivatif <strong>Futures dengan leverage</strong> memiliki tingkat volatilitas dan risiko finansial yang sangat tinggi. Seluruh data kalkulasi, sinyal konfluensi, target Take Profit (TP 1, TP 2, TP 3), perbandingan basis Spot vs Futures, dan deteksi orderflow paus yang ditampilkan di terminal ini adalah hasil pemrosesan <em>Algorithmic Machine Learning & Technical Analytics</em> untuk keperluan riset serta alat bantu pengambilan keputusan.
+        </p>
+        <p style="margin-top: 4px; color: #94a3b8;">
+          Terminal ini <strong>TIDAK</strong> memberikan jaminan kepastian profit mutlak atau anjuran investasi finansial langsung. Selalu terapkan manajemen modal yang disiplin (<em>Strict Position Sizing, Max 1-2% Risk Per Trade</em>), gunakan Stop Loss yang terukur, dan lakukan analisa mandiri (<strong>DYOR</strong>) sebelum mengeksekusi order nyata.
+        </p>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    lucide.createIcons();
+
+    let chart = null;
+    let candleSeries = null;
+    let volumeSeries = null;
+    let activeWs = null;
+    let activeTradesInterval = null;
+    let currentSymbol = 'SUIUSDT';
+    let currentTf = '5m';
+    let currentSetupData = null;
+    let priceLines = [];
+
+    // Initialize Lightweight Chart
+    function initChart() {
+      const container = document.getElementById('chart-box');
+      if (!container || chart) return;
+
+      chart = LightweightCharts.createChart(container, {
+        layout: {
+          background: { color: '#06090e' },
+          textColor: '#94a3b8',
+        },
+        grid: {
+          vertLines: { color: 'rgba(255, 255, 255, 0.03)' },
+          horzLines: { color: 'rgba(255, 255, 255, 0.03)' },
+        },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        rightPriceScale: {
+          borderColor: 'rgba(255, 255, 255, 0.08)',
+          scaleMargins: { top: 0.1, bottom: 0.22 },
+        },
+        timeScale: {
+          borderColor: 'rgba(255, 255, 255, 0.08)',
+          timeVisible: true,
+          secondsVisible: false,
+        },
+      });
+
+      candleSeries = chart.addCandlestickSeries({
+        upColor: '#00e676',
+        downColor: '#ff1744',
+        borderVisible: false,
+        wickUpColor: '#00e676',
+        wickDownColor: '#ff1744',
+      });
+
+      volumeSeries = chart.addHistogramSeries({
+        color: 'rgba(0, 242, 254, 0.25)',
+        priceFormat: { type: 'volume' },
+        priceScaleId: '',
+        scaleMargins: { top: 0.82, bottom: 0 },
+      });
+
+      window.addEventListener('resize', () => {
+        if (chart && container) {
+          chart.applyOptions({ width: container.clientWidth });
+        }
+      });
+    }
+
+    // Set Symbol & Analyze
+    function setScreenerSymbol(sym, el) {
+      document.querySelectorAll('.coin-pill').forEach(p => p.classList.remove('active'));
+      if (el) el.classList.add('active');
+      const input = document.getElementById('screener-input');
+      if (input) input.value = sym;
+      runDeepAnalysis();
+    }
+
+    function setChartTimeframe(tf, el) {
+      document.querySelectorAll('#tf-1m, #tf-5m, #tf-15m, #tf-1h, #tf-4h, #tf-1d').forEach(p => p.classList.remove('active'));
+      if (el) el.classList.add('active');
+      currentTf = tf;
+      loadCandles(currentSymbol, tf);
+    }
+
+    // Main Analysis Loader
+    async function runDeepAnalysis() {
+      const input = document.getElementById('screener-input');
+      let sym = (input ? input.value : 'SUIUSDT').trim().toUpperCase();
+      if (!sym) sym = 'SUIUSDT';
+      if (!sym.endsWith('USDT') && !sym.endsWith('BUSD')) sym += 'USDT';
+      currentSymbol = sym;
+
+      const loader = document.getElementById('chart-loader');
+      if (loader) loader.style.display = 'flex';
+
+      try {
+        const res = await fetch(`/api/screener/deep-analysis?symbol=${encodeURIComponent(sym)}`);
+        const data = await res.json();
+
+        if (!data.success) {
+          alert(`⚠️ Gagal menganalisis: ${data.error || 'Simbol tidak ditemukan'}`);
+          return;
+        }
+
+        currentSetupData = data.setup_3level;
+
+        // 1. Update Card 1 (Verdict)
+        const vBadge = document.getElementById('card-verdict-badge');
+        if (vBadge) {
+          vBadge.innerText = data.verdict.label;
+          vBadge.className = data.verdict.side === 'LONG' ? 'badge badge-long' : (data.verdict.side === 'SHORT' ? 'badge badge-short' : 'badge badge-wait');
+        }
+
+        const priceEl = document.getElementById('card-live-price');
+        if (priceEl) priceEl.innerText = '$' + Number(data.current_price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6});
+
+        const scoreEl = document.getElementById('card-confluence-score');
+        if (scoreEl) scoreEl.innerText = `${data.verdict.confluence_score} / 100`;
+
+        const trendEl = document.getElementById('card-4h-trend');
+        if (trendEl) trendEl.innerText = `${data.swing_4h.trend || 'UPTREND'} (${data.swing_4h.candlestick_pattern || 'BULLISH'})`;
+
+        const rrrEl = document.getElementById('card-rrr');
+        if (rrrEl) rrrEl.innerText = data.setup_3level.risk_reward_ratio || '1 : 2.2';
+
+        // 2. Update Card 2 (3-Level TP Setup)
+        const levTag = document.getElementById('card-leverage-tag');
+        if (levTag) levTag.innerText = `${data.setup_3level.leverage}x LEVERAGE`;
+
+        const sEntry = document.getElementById('setup-entry');
+        if (sEntry) sEntry.innerText = '$' + Number(data.setup_3level.lowest_sniper_entry).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6});
+
+        const sTp1 = document.getElementById('setup-tp1');
+        if (sTp1) sTp1.innerText = '$' + Number(data.setup_3level.tp1.price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6}) + ` (+${data.setup_3level.tp1.roe_percent}% ROE)`;
+
+        const sTp2 = document.getElementById('setup-tp2');
+        if (sTp2) sTp2.innerText = '$' + Number(data.setup_3level.tp2.price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6}) + ` (+${data.setup_3level.tp2.roe_percent}% ROE)`;
+
+        const sTp3 = document.getElementById('setup-tp3');
+        if (sTp3) sTp3.innerText = '$' + Number(data.setup_3level.tp3.price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6}) + ` (+${data.setup_3level.tp3.roe_percent}% ROE)`;
+
+        const sSl = document.getElementById('setup-sl');
+        if (sSl) sSl.innerText = '$' + Number(data.setup_3level.sl.price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6}) + ` (-${data.setup_3level.sl.roe_percent}% ROE)`;
+
+        // 3. Update Card 3 (Spot vs Futures)
+        const svf = data.spot_vs_futures;
+        if (document.getElementById('comp-spot-price')) document.getElementById('comp-spot-price').innerText = '$' + Number(svf.spot_price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6});
+        if (document.getElementById('comp-futures-price')) document.getElementById('comp-futures-price').innerText = '$' + Number(svf.futures_price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6});
+        if (document.getElementById('comp-basis-spread')) {
+          document.getElementById('comp-basis-spread').innerText = `${svf.basis_spread_usdt >= 0 ? '+' : ''}$${Number(svf.basis_spread_usdt).toFixed(4)} (${svf.basis_spread_pct >= 0 ? '+' : ''}${svf.basis_spread_pct}%)`;
+          document.getElementById('comp-basis-spread').style.color = svf.basis_spread_usdt >= 0 ? 'var(--accent-emerald)' : 'var(--accent-rose)';
+        }
+        if (document.getElementById('comp-funding-rate')) document.getElementById('comp-funding-rate').innerText = `${svf.funding_rate_percent >= 0 ? '+' : ''}${svf.funding_rate_percent}% (${svf.funding_rate_annualized >= 0 ? '+' : ''}${svf.funding_rate_annualized}%/thn)`;
+        if (document.getElementById('comp-volume-ratio')) document.getElementById('comp-volume-ratio').innerText = `$${(svf.futures_vol_24h_usdt/1e6).toFixed(1)}M / $${(svf.spot_vol_24h_usdt/1e6).toFixed(1)}M (${svf.volume_ratio}x)`;
+
+        // 4. Update Card 4 (Buying Power)
+        const bp = data.buying_power_orderflow;
+        if (document.getElementById('power-spot-buy-label')) document.getElementById('power-spot-buy-label').innerText = `Spot Taker Buy: ${bp.spot_taker_buy_ratio}%`;
+        if (document.getElementById('power-spot-sell-label')) document.getElementById('power-spot-sell-label').innerText = `Sell: ${bp.spot_taker_sell_ratio}%`;
+        if (document.getElementById('power-spot-bar')) document.getElementById('power-spot-bar').style.width = `${bp.spot_taker_buy_ratio}%`;
+
+        if (document.getElementById('power-fut-buy-label')) document.getElementById('power-fut-buy-label').innerText = `Futures Taker Buy: ${bp.futures_taker_buy_ratio}%`;
+        if (document.getElementById('power-fut-sell-label')) document.getElementById('power-fut-sell-label').innerText = `Sell: ${bp.futures_taker_sell_ratio}%`;
+        if (document.getElementById('power-fut-bar')) document.getElementById('power-fut-bar').style.width = `${bp.futures_taker_buy_ratio}%`;
+
+        if (document.getElementById('comp-rvol')) document.getElementById('comp-rvol').innerText = `${bp.rvol_surge}x (Smart Money Inflow)`;
+        if (document.getElementById('comp-smc')) document.getElementById('comp-smc').innerText = data.pillars.smc_market_structure || 'UPTREND_HEALTHY';
+
+        // 5. Update AI Reasons
+        const rBox = document.getElementById('reasons-container');
+        if (rBox && Array.isArray(data.reasons)) {
+          rBox.innerHTML = data.reasons.map(r => `
+            <div class="reason-item">
+              <span class="reason-dot"></span>
+              <span>${r}</span>
+            </div>
+          `).join('');
+        }
+
+        // 6. Load Candlestick Chart & Target Overlays
+        await loadCandles(data.symbol, currentTf);
+
+        // 7. Load Live Whale Trades Feed
+        loadWhaleTrades(data.symbol);
+
+        // Periodic Whale Feed Refresh
+        if (activeTradesInterval) clearInterval(activeTradesInterval);
+        activeTradesInterval = setInterval(() => {
+          loadWhaleTrades(currentSymbol);
+        }, 3000);
+
+      } catch (err) {
+        console.error('Error deep analysis:', err);
+      } finally {
+        if (loader) loader.style.display = 'none';
+      }
+    }
+
+    // Load Candlestick Series & Visual Target Lines
+    async function loadCandles(symbol, tf) {
+      if (!chart) initChart();
+
+      const titleEl = document.getElementById('chart-main-title');
+      if (titleEl) titleEl.innerText = `${symbol} • Live Candlestick & Target Overlay (${tf.toUpperCase()})`;
+
+      let candles = [];
+      try {
+        const res = await fetch(`/api/candles/${encodeURIComponent(symbol)}?tf=${encodeURIComponent(tf)}&limit=120`);
+        const data = await res.json();
+        candles = data.candles || [];
+      } catch (e) {
+        console.warn('Backend candle fetch failed:', e);
+      }
+
+      // Direct fallback to Binance Futures REST
+      if (!candles || candles.length === 0) {
+        let directSym = symbol.toUpperCase();
+        if (directSym === 'PEPEUSDT') directSym = '1000PEPEUSDT';
+        if (directSym === 'BONKUSDT') directSym = '1000BONKUSDT';
+        if (directSym === 'SHIBUSDT') directSym = '1000SHIBUSDT';
+        if (directSym === 'FLOKIUSDT') directSym = '1000FLOKIUSDT';
+
+        try {
+          const fbRes = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${directSym}&interval=${encodeURIComponent(tf)}&limit=120`);
+          const fbData = await fbRes.json();
+          if (Array.isArray(fbData) && fbData.length > 0) {
+            candles = fbData.map(row => ({
+              time: Math.floor(Number(row[0]) / 1000),
+              open: parseFloat(row[1]),
+              high: parseFloat(row[2]),
+              low: parseFloat(row[3]),
+              close: parseFloat(row[4]),
+              volume: parseFloat(row[5]),
+            }));
+          }
+        } catch (fbErr) {
+          console.error('Direct Binance fallback failed:', fbErr);
+        }
+      }
+
+      if (candles.length > 0 && candleSeries) {
+        candleSeries.setData(candles);
+
+        const volumeData = candles.map(c => ({
+          time: c.time,
+          value: c.volume || 0,
+          color: c.close >= c.open ? 'rgba(0, 230, 118, 0.25)' : 'rgba(255, 23, 68, 0.25)',
+        }));
+        if (volumeSeries) volumeSeries.setData(volumeData);
+
+        // Remove old price lines
+        if (priceLines && priceLines.length > 0) {
+          priceLines.forEach(pl => {
+            try { candleSeries.removePriceLine(pl); } catch (e) {}
+          });
+          priceLines = [];
+        }
+
+        // Render 5 Target Lines (Entry, TP1, TP2, TP3, SL)
+        if (currentSetupData) {
+          const eVal = Number(currentSetupData.lowest_sniper_entry || currentSetupData.entry_price || 0);
+          const tp1Val = Number(currentSetupData.tp1.price || 0);
+          const tp2Val = Number(currentSetupData.tp2.price || 0);
+          const tp3Val = Number(currentSetupData.tp3.price || 0);
+          const slVal = Number(currentSetupData.sl.price || 0);
+
+          if (eVal > 0) {
+            priceLines.push(candleSeries.createPriceLine({
+              price: eVal,
+              color: '#00f2fe',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Solid,
+              axisLabelVisible: true,
+              title: `🎯 ENTRY ($${eVal.toLocaleString()})`,
+            }));
+          }
+
+          if (tp1Val > 0) {
+            priceLines.push(candleSeries.createPriceLine({
+              price: tp1Val,
+              color: '#69f0ae',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+              title: `🏆 TP1 ($${tp1Val.toLocaleString()}) +${currentSetupData.tp1.roe_percent}%`,
+            }));
+          }
+
+          if (tp2Val > 0) {
+            priceLines.push(candleSeries.createPriceLine({
+              price: tp2Val,
+              color: '#00e676',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+              title: `🏆 TP2 ($${tp2Val.toLocaleString()}) +${currentSetupData.tp2.roe_percent}%`,
+            }));
+          }
+
+          if (tp3Val > 0) {
+            priceLines.push(candleSeries.createPriceLine({
+              price: tp3Val,
+              color: '#ffd700',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+              title: `🚀 TP3 ($${tp3Val.toLocaleString()}) +${currentSetupData.tp3.roe_percent}%`,
+            }));
+          }
+
+          if (slVal > 0) {
+            priceLines.push(candleSeries.createPriceLine({
+              price: slVal,
+              color: '#ff1744',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+              title: `🛡️ SL ($${slVal.toLocaleString()}) -${currentSetupData.sl.roe_percent}%`,
+            }));
+          }
+        }
+
+        chart.timeScale().fitContent();
+
+        // Connect Live WebSocket Stream
+        connectKlineWs(symbol, tf);
+      }
+    }
+
+    // Real-Time WebSocket Kline Stream
+    function connectKlineWs(symbol, tf) {
+      if (activeWs) {
+        try {
+          activeWs.onclose = null;
+          activeWs.onerror = null;
+          activeWs.close();
+        } catch (e) {}
+        activeWs = null;
+      }
+
+      let cleanSym = (symbol || 'SUIUSDT').toLowerCase().trim();
+      if (cleanSym === 'pepeusdt') cleanSym = '1000pepeusdt';
+      if (cleanSym === 'bonkusdt') cleanSym = '1000bonkusdt';
+      if (cleanSym === 'shibusdt') cleanSym = '1000shibusdt';
+      if (cleanSym === 'flokiusdt') cleanSym = '1000flokiusdt';
+
+      const streamTf = (tf || '5m').toLowerCase().trim();
+      const wsUrl = `wss://fstream.binance.com/ws/${cleanSym}@kline_${streamTf}`;
+
+      try {
+        activeWs = new WebSocket(wsUrl);
+
+        activeWs.onmessage = (evt) => {
+          try {
+            const data = JSON.parse(evt.data);
+            if (data && data.k) {
+              const k = data.k;
+              const candleTime = Math.floor(k.t / 1000);
+              const o = parseFloat(k.o);
+              const h = parseFloat(k.h);
+              const l = parseFloat(k.l);
+              const c = parseFloat(k.c);
+              const v = parseFloat(k.v);
+
+              if (candleSeries) {
+                candleSeries.update({ time: candleTime, open: o, high: h, low: l, close: c });
+              }
+              if (volumeSeries) {
+                volumeSeries.update({
+                  time: candleTime,
+                  value: v,
+                  color: c >= o ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)',
+                });
+              }
+
+              const livePriceEl = document.getElementById('card-live-price');
+              if (livePriceEl) {
+                livePriceEl.innerText = '$' + c.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+              }
+            }
+          } catch (err) {}
+        };
+      } catch (err) {}
+    }
+
+    // Load Live Whale Orderflow Feed (GMGN Style)
+    async function loadWhaleTrades(symbol) {
+      const feedContainer = document.getElementById('whale-trades-feed');
+      if (!feedContainer) return;
+
+      try {
+        const res = await fetch(`/api/screener/whale-trades?symbol=${encodeURIComponent(symbol)}&limit=30`);
+        const data = await res.json();
+        const trades = data.whale_trades || [];
+
+        if (trades.length === 0) return;
+
+        feedContainer.innerHTML = trades.map(t => {
+          const isBuy = t.side === 'BUY';
+          const nowSec = Math.floor(Date.now() / 1000);
+          const diffSec = Math.max(1, nowSec - Math.floor(t.timestamp / 1000));
+          const timeAgo = diffSec < 60 ? `${diffSec}s ago` : `${Math.floor(diffSec/60)}m ago`;
+          const shortSym = (t.symbol || 'COIN').replace('USDT', '').slice(0, 4);
+
+          return `
+            <div class="whale-trade-item">
+              <div class="whale-left">
+                <div class="coin-avatar">${shortSym}</div>
+                <div>
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <strong style="color: #fff;">${shortSym}</strong>
+                    <span class="${isBuy ? 'trade-badge-buy' : 'trade-badge-sell'}">${t.side}</span>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 4px; margin-top: 2px;">
+                    <span class="venue-tag">${t.venue}</span>
+                    <span style="font-size: 0.7rem; color: var(--text-dim);">• ${timeAgo}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="text-align: right;">
+                <div class="${isBuy ? 'trade-amt-buy' : 'trade-amt-sell'}">
+                  ${isBuy ? '+' : '-'}$${Number(t.volume_usdt).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                </div>
+                <div style="font-size: 0.72rem; color: var(--text-dim);">
+                  ${Number(t.quantity).toLocaleString()} ${shortSym} @ $${Number(t.price).toFixed(4)}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+      } catch (err) {
+        console.error('Error fetching whale feed:', err);
+      }
+    }
+
+    // Initial Startup
+    document.addEventListener('DOMContentLoaded', () => {
+      initChart();
+      runDeepAnalysis();
+    });
+  </script>
+</body>
+</html>

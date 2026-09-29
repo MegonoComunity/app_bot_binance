@@ -2490,7 +2490,8 @@ async def main():
                 pass
 
         try:
-            await bot.session.close()
+            if hasattr(bot, "session") and bot.session and not bot.session.closed:
+                await bot.session.close()
         except Exception:
             pass
 
@@ -2500,8 +2501,15 @@ async def main():
             except Exception:
                 pass
 
-        # Jeda 250ms agar asyncio & aiohttp TCP transport selesai melepaskan socket
-        await asyncio.sleep(0.25)
+        # Batalkan semua background tasks tersisa secara anggun
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Jeda agar asyncio & aiohttp TCP transport selesai melepaskan socket
+        await asyncio.sleep(0.3)
 
 if __name__ == "__main__":
     try:
